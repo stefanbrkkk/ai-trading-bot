@@ -81,7 +81,15 @@ function PublicationCard({ item }: { item: PublicationItem }) {
       className="group block focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-4 focus-visible:outline-gold"
       aria-label={`${item.symbol}, rank ${item.rank}, conviction ${integer(item.conviction)} of 100. Open the full attribution.`}
     >
-      <Panel className="h-full transition-colors duration-200 group-hover:border-parchment-ghost">
+      {/*
+        A column, so the driver block can be pushed to the bottom.
+        The grid already stretches every card in a row to the tallest, but the
+        contents floated: "Low-volatility drift" wraps to two lines where
+        "Trending bull" does not, which pushed TSLA's rule and driver 25px below
+        KO's beside it while both cards ended at the same edge. Five cards whose
+        internal rules do not line up read as five slightly different components.
+      */}
+      <Panel className="flex h-full flex-col transition-colors duration-200 group-hover:border-parchment-ghost">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-baseline gap-2.5">
@@ -95,7 +103,7 @@ function PublicationCard({ item }: { item: PublicationItem }) {
           <Badge tone={directionTone(item.direction)}>{item.direction}</Badge>
         </div>
 
-        <div className="mt-4 flex items-center gap-5">
+        <div className="mb-4 mt-4 flex items-center gap-5">
           <ConvictionDial score={item.conviction} size={132} caption={item.direction} />
           <dl className="min-w-0 flex-1 space-y-1.5">
             <DataRow label="Probability" value={fractionAsPercent(item.probability)} />
@@ -105,7 +113,7 @@ function PublicationCard({ item }: { item: PublicationItem }) {
           </dl>
         </div>
 
-        <div className="mt-4 border-t border-obsidian-edge pt-3">
+        <div className="mt-auto border-t border-obsidian-edge pt-3">
           <p className="eyebrow mb-1">Leading driver</p>
           <p className="text-[0.8125rem] leading-snug text-parchment-dim">{item.topDriver}</p>
         </div>

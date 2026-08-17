@@ -510,7 +510,17 @@ export default function SymbolPage() {
                         detail="Each sentence is produced by a fixed mapping from the feature's discretised state, so the same state always yields the same wording."
                       />
                     </div>
-                    <TableShell className="mt-4">
+                    {/*
+                      A lower floor than the shared default, because this table has
+                      five columns rather than twenty-four and the default was
+                      clipping it. At 1440 the panel is 838px wide and `minWidth:
+                      900` pushed the table 62px past it — 222px at 1280 — so every
+                      interpretation sentence ran off the right edge mid-word,
+                      behind a horizontal scrollbar, on the page whose entire
+                      purpose is reading those sentences. 560 keeps the sentence
+                      column legible on a phone and gets out of the way above it.
+                    */}
+                    <TableShell className="mt-4" minWidth={560}>
                       <thead>
                         <tr>
                           <Th>Feature</Th>

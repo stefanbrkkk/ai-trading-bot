@@ -186,7 +186,17 @@ export function composeGenericNarrative(
   if (supports) {
     return `${pct}% of this ${stance} conviction is driven by ${state.predicate} (${definition.label} at ${formatted}), ${state.implication}.`;
   }
-  return `${state.predicate.replace(/^an? /, (m) => m.charAt(0).toUpperCase() + m.slice(1))} (${definition.label} at ${formatted}) acts as a ${pct}% headwind, ${state.implication}.`;
+  /*
+   * Capitalise the sentence, not the article.
+   *
+   * The old rule uppercased `^an? ` — which handles "a dislocation above fair
+   * value" and does nothing at all for the 130-odd predicates that begin with an
+   * adjective. "bearish retail chatter (Social sentiment at -1.000) acts as a 3%
+   * headwind…" shipped to the attribution table with a lowercase first letter,
+   * beside eleven sentences that were capitalised correctly.
+   */
+  const opening = `${state.predicate} (${definition.label} at ${formatted})`;
+  return `${opening.charAt(0).toUpperCase()}${opening.slice(1)} acts as a ${pct}% headwind, ${state.implication}.`;
 }
 
 export interface TranslatedDriver extends SignalDriver {

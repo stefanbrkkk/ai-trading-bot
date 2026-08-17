@@ -31,6 +31,7 @@ import {
   NEUTRALITY_NOTICE,
   PROHIBITED_PHRASES,
   assertCompliantCopy,
+  composeGenericNarrative,
   composePublicationNotice,
   findProhibitedCopy,
   hydrateTemplate,
@@ -304,6 +305,32 @@ describe('feature registry integrity', () => {
   it('emits no prohibited language in any feature description', () => {
     for (const definition of FEATURE_DEFINITIONS) {
       expect(findProhibitedCopy(definition.description), definition.key).toHaveLength(0);
+    }
+  });
+
+  it('writes every generic sentence as a sentence', () => {
+    /**
+     * Both composed shapes, over every state of every feature, in both signal
+     * directions.
+     *
+     * The opposing shape used to capitalise `^an? ` — which handles "a dislocation
+     * above fair value" and nothing else, so the 130-odd predicates that open with
+     * an adjective produced "bearish retail chatter (Social sentiment at -1.000)
+     * acts as a 3% headwind…" in the attribution table, lowercase, beside eleven
+     * correctly capitalised sentences.
+     */
+    for (const definition of FEATURE_DEFINITIONS) {
+      for (const band of definition.states) {
+        for (const direction of ['positive', 'negative'] as const) {
+          for (const signal of ['long', 'short'] as const) {
+            const sentence = composeGenericNarrative(definition, band, 1.25, 12, direction, signal);
+            const first = sentence.charAt(0);
+            expect(/[A-Z0-9]/.test(first), `${definition.key}/${band.state}/${direction}: ${sentence}`).toBe(true);
+            expect(sentence.endsWith('.'), sentence).toBe(true);
+            expect(findProhibitedCopy(sentence), sentence).toHaveLength(0);
+          }
+        }
+      }
     }
   });
 });
