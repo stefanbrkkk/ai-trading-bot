@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Aurelius">
+  <rect width="64" height="64" fill="#0A0A0A"/>
+  <rect x="2" y="2" width="60" height="60" fill="none" stroke="#D4AF37" stroke-opacity="0.55" stroke-width="1.5"/>
+  <!-- An 'A' as two strokes and a crossbar, matching the Playfair display face. -->
+  <path d="M18 46 L32 16 L46 46" fill="none" stroke="#D4AF37" stroke-width="4.5" stroke-linecap="square"/>
+  <path d="M24 36 L40 36" fill="none" stroke="#D4AF37" stroke-width="4.5" stroke-linecap="square"/>
+</svg>
