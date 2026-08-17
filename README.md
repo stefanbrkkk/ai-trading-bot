@@ -17,7 +17,8 @@ npm run dev         # http://localhost:3000
 
 ## What it is
 
-Aurelius computes a conviction score for each symbol in a 64-name universe and opens
+Aurelius computes a conviction score for each symbol in a 67-name tradable universe
+(68 including the benchmark it measures relative strength against) and opens
 that score into the exact contribution of every input behind it. It is a **publisher**
 of analysis, not an adviser: one ranking per session, identical for every subscriber,
 with no personalisation and no discretion over any account.
@@ -41,10 +42,13 @@ an error. Tailwind for styling. Framer Motion for transitions.
 
 Three deliberate absences:
 
-- **No charting library.** Every chart is hand-written SVG. Seventeen of them.
+- **No charting library.** Every chart is hand-written SVG. Seventeen of them, of
+  which fourteen are rendered; `CalibrationPlot`, `DepthLadder` and `Sparkline`
+  are built and not yet placed, and this sentence exists so that stays visible.
 - **No ML framework.** The gradient-boosted trees, the LSTM/BiLSTM/TFT agents and the
   reverse-mode autodiff that trains them are implemented from scratch in TypeScript.
-- **No vendor SDKs.** The three language-model adapters are built on `fetch`, so
+- **No vendor SDKs.** Three providers — Anthropic, OpenAI and DeepSeek — are served
+  by two `fetch` adapters (the last two share the chat-completions shape), so
   `npm install` yields a working platform with no vendor packages present at all.
 
 Persistence is Node 22's built-in `node:sqlite` behind a driver seam, so the same
@@ -58,7 +62,7 @@ append-only DDL runs on Postgres by registering one adapter.
 npm run dev          # dev server on :3000
 npm run seed         # full seed (~3 min) — trains and persists everything
 npm run seed:fast    # reduced budget (~20s) — for CI and E2E
-npm run verify       # typecheck → lint → 174 unit tests → build → 38 E2E tests
+npm run verify       # typecheck → lint → 188 unit tests → build → 38 E2E tests
 ```
 
 Everything is deterministic in `AURELIUS_SEED`. Two machines running the same seed
@@ -72,7 +76,7 @@ Every variable in `.env.example` is optional and blank by default.
 ```bash
 AURELIUS_LLM_PROVIDER=deterministic   # anthropic | openai | deepseek
 ANTHROPIC_API_KEY=                    # supply one to switch to live inference
-AURELIUS_MARKET_PROVIDER=simulator    # alpaca | polygon | finnhub
+AURELIUS_MARKET_PROVIDER=simulator    # alpaca | polygon
 AURELIUS_BROKER=paper                 # alpaca
 DATABASE_URL=                         # blank → embedded SQLite
 ```
@@ -129,6 +133,24 @@ the top of the model card, above the metrics.
 This is the intended behaviour. A back-test surface that only ever shows a passing
 result is marketing with a chart attached, and the number that matters to someone
 deciding whether to trust a strategy is the one it did *not* clear.
+
+The same principle applies to the three temporal agents, and it caught something
+worth reporting. Each one's **discrimination** — the standard deviation of its
+predicted probability across the held-out split — is measured at training time
+and published on the model card. The 60m Temporal Fusion Transformer scores about
+6e-6: it returns the same number for every symbol in the universe. So the router
+gives it no weight, and the transparency page shows why in the same table as its
+loss, because a collapsed agent reports a perfectly ordinary loss — a constant
+prediction on a balanced set is unremarkable by that measure and only the spread
+gives it away.
+
+All three agents also came out of training with a mean predicted probability near
+0.75 against a 49.5% base rate, which made every one of the 67 names publish as
+long. Each now carries a logit offset fitted on the validation split, which moves
+the distribution onto the base rate without disturbing the relative ordering the
+network learned. The published list is a mixture of long, short and flat, and
+conviction scores are correspondingly lower — which is the honest number, not a
+worse one.
 
 ---
 
@@ -223,7 +245,7 @@ using only what you knew then" an answerable question.
 ## Testing
 
 ```
-174 unit tests   (vitest)
+188 unit tests   (vitest)
  38 E2E tests    (Playwright, real Chromium)
 ```
 

@@ -95,16 +95,51 @@ export function AsyncSlot<T>({
   emptyDetail?: ReactNode;
 }) {
   if (state.loading && state.data === null) return <LoadingPanel label={label} lines={lines} />;
-  if (state.error !== null && state.data === null) return <ErrorPanel error={state.error} onRetry={state.reload} />;
+  if (state.error !== null && state.data === null) {
+    return (
+      <>
+        <Announce>{`${label ?? 'Content'} failed to load: ${state.error.message}`}</Announce>
+        <ErrorPanel error={state.error} onRetry={state.reload} />
+      </>
+    );
+  }
   if (state.data === null) return <LoadingPanel label={label} lines={lines} />;
   if (isEmpty?.(state.data) === true) {
     return (
-      <Panel>
-        <EmptyState title={emptyTitle ?? 'Nothing to show'} detail={emptyDetail} />
-      </Panel>
+      <>
+        <Announce>{`${label ?? 'Content'}: nothing to show.`}</Announce>
+        <Panel>
+          <EmptyState title={emptyTitle ?? 'Nothing to show'} detail={emptyDetail} />
+        </Panel>
+      </>
     );
   }
-  return <>{children(state.data)}</>;
+  return (
+    <>
+      <Announce>{`${label ?? 'Content'} loaded.`}</Announce>
+      {children(state.data)}
+    </>
+  );
+}
+
+/**
+ * A polite live region.
+ *
+ * Every async surface in the product replaced a skeleton with a result silently:
+ * a screen-reader user who ran the pre-trade checks, asked InvestGPT a question
+ * or loaded a symbol got no announcement that anything had happened, because
+ * there was no live region anywhere in the app. `AsyncSlot` wraps almost all of
+ * them, so announcing here covers the product in one place.
+ *
+ * `polite` rather than `assertive`: these are results the user asked for, not
+ * interruptions.
+ */
+export function Announce({ children }: { children: ReactNode }) {
+  return (
+    <span className="sr-only" role="status" aria-live="polite">
+      {children}
+    </span>
+  );
 }
 
 /** A page-level heading block. */

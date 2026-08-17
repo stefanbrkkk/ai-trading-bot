@@ -407,10 +407,23 @@ export async function getPublication(options: EngineOptions = {}): Promise<Publi
   if (cached) return cached;
 
   const snapshot = await getUniverseSnapshot(options);
-  const ranked = snapshot.signals
-    .filter((s) => s.direction !== 'flat')
-    .sort((a, b) => b.conviction - a.conviction || a.symbol.localeCompare(b.symbol))
-    .slice(0, 5);
+  /*
+   * Directional names first, then the highest-scoring remainder to make five.
+   *
+   * The filter used to be absolute, which was fine while every symbol in the
+   * universe published as long and became a hole in the product the moment the
+   * agents were calibrated: on a day when the model declines to take a side on
+   * most names, `filter(direction !== 'flat')` can leave fewer than five — or
+   * none, and the terminal is the front page. Ranking by conviction and letting
+   * flat names fill the tail keeps the list at its published fixed size, and each
+   * card already states its own direction, so nothing is implied that the data
+   * does not say.
+   */
+  const byConviction = (a: Signal, b: Signal): number =>
+    b.conviction - a.conviction || a.symbol.localeCompare(b.symbol);
+  const directional = snapshot.signals.filter((s) => s.direction !== 'flat').sort(byConviction);
+  const undecided = snapshot.signals.filter((s) => s.direction === 'flat').sort(byConviction);
+  const ranked = [...directional, ...undecided].slice(0, 5);
 
   const items: PublicationItem[] = ranked.map((s, i) => ({
     rank: i + 1,
