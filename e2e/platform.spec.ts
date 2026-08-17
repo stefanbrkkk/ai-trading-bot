@@ -618,3 +618,26 @@ test('a symbol reads the same on the terminal card and its own page', async ({ p
   expect(live.direction, `${symbol} direction`).toBe(published.direction);
   expect(Math.abs(live.convictionScore - published.conviction), `${symbol} conviction gap`).toBeLessThan(0.1);
 });
+
+/**
+ * Every starter chip has to return rows.
+ *
+ * Four of the original eight compiled correctly and matched nothing — "conviction
+ * above 55" against a calibrated model whose highest score is 37, "OU z-score
+ * below -2" against a universe whose z-scores cluster at zero — so half the
+ * worked examples demonstrated the empty state. A user's own question can
+ * legitimately match nothing and the result panel says so; an example we chose
+ * cannot.
+ */
+test('every InvestGPT example returns rows', async ({ request }) => {
+  const meta = await (await request.get('/api/investgpt/query')).json();
+  const examples: string[] = meta.examples ?? [];
+  expect(examples.length, 'examples published').toBeGreaterThan(0);
+
+  for (const question of examples) {
+    const response = await request.post('/api/investgpt/query', { data: { question } });
+    const body = await response.json();
+    expect(body.error, `${question}: ${JSON.stringify(body.error ?? {})}`).toBeUndefined();
+    expect(body.rowCount, `"${question}" matched nothing`).toBeGreaterThan(0);
+  }
+});

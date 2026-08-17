@@ -26,15 +26,27 @@ export async function register(): Promise<void> {
   if (process.env.AURELIUS_SKIP_WARMUP === '1') return;
 
   const started = Date.now();
-  void import('@/lib/engine/service')
-    .then(({ getPublication }) => getPublication())
-    .then((publication) => {
-      process.stdout.write(
-        `Aurelius: warmed the ${publication.publicationDate} publication in ${Date.now() - started}ms\n`,
-      );
-    })
-    .catch(() => {
-      // Almost always "no trained ensemble" on a deployment that has not been
-      // seeded. The terminal says so, with the command to fix it.
-    });
+  void (async () => {
+    const { getPublication, getUniverseSnapshot } = await import('@/lib/engine/service');
+    /*
+     * The sweep first, because it is what the publication is derived from and
+     * what the store needs — `getUniverseSnapshot` returns the feature vectors
+     * only on a cache miss, and this is the miss.
+     */
+    const snapshot = await getUniverseSnapshot();
+    const publication = await getPublication();
+
+    const { persistUniverseSnapshot } = await import('@/lib/engine/persist');
+    const persisted = await persistUniverseSnapshot(snapshot);
+
+    process.stdout.write(
+      `Aurelius: warmed the ${publication.publicationDate} publication in ${Date.now() - started}ms` +
+        (persisted.written
+          ? `, published ${persisted.signals} signals to the store\n`
+          : ', store already holds this vintage\n'),
+    );
+  })().catch(() => {
+    // Almost always "no trained ensemble" on a deployment that has not been
+    // seeded. The terminal says so, with the command to fix it.
+  });
 }

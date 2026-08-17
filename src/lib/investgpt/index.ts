@@ -298,17 +298,27 @@ export function catalogSummary(): {
 /**
  * Example questions offered in the UI.
  *
- * Chosen to exercise different compiler paths — a state band, a numeric threshold,
- * a categorical filter, an aggregate, an explicit ordering — so the examples double
- * as a demonstration of what the surface actually understands.
+ * Chosen to exercise different compiler paths — a categorical filter, a numeric
+ * threshold, a regime band, an aggregate, a compound predicate, an explicit
+ * ordering — so the examples double as a demonstration of what the surface
+ * actually understands.
+ *
+ * They are also chosen to *return rows*. Four of the previous eight compiled
+ * correctly and matched nothing — "conviction above 55" against a calibrated
+ * model whose highest score is 37, "OU z-score below -2" against a universe whose
+ * z-scores cluster at zero — so half the starter chips demonstrated the empty
+ * state. A worked example that returns nothing reads as a broken feature however
+ * carefully the empty panel is written, and the thresholds here are loose enough
+ * to survive a different seed. A question a user writes themselves can still
+ * match nothing, and the result panel says so plainly.
  */
 export const EXAMPLE_QUESTIONS: readonly string[] = [
-  'Show me the most oversold technology stocks with conviction above 55',
+  'Top 10 by conviction',
+  'Technology stocks sorted by conviction descending',
   'Which optionable large cap names have a 25 delta risk reversal below -2?',
   'How many mid cap healthcare stocks are bullish?',
-  'Stocks in a mean reverting regime where the OU z-score is below -2',
-  'Top 10 by conviction',
-  'Bearish energy names with market cap over 50',
+  'Stocks in a trending bull regime sorted by conviction descending',
+  'Bearish names with market cap over 50',
   'Names where RSI (14) is under 30 sorted by ATR percent ascending',
-  'Which symbols have relative volume above 2 and a positive MLOFI intent?',
+  'Which symbols have relative volume above 1.5 and a positive MLOFI intent?',
 ];
