@@ -9,9 +9,15 @@ else about the platform changes.
 
 ```bash
 npm install
-npm run seed        # ~3 minutes: trains the ensemble and populates the store
-npm run dev         # http://localhost:3000
+npm run build       # trains the ensemble on first build (~3 min), then compiles
+npm start           # http://localhost:3000
 ```
+
+For development, `npm run dev` after a `npm run seed`. `.data/` is git-ignored, so a
+fresh clone has no trained ensemble; `npm run build` trains one if the deployment has
+none and skips it otherwise. Set `AURELIUS_SKIP_SEED=1` to opt out — the platform
+still runs, and the five routes that need the engine say what to run instead of
+failing.
 
 ---
 
@@ -62,8 +68,14 @@ append-only DDL runs on Postgres by registering one adapter.
 npm run dev          # dev server on :3000
 npm run seed         # full seed (~3 min) — trains and persists everything
 npm run seed:fast    # reduced budget (~20s) — for CI and E2E
-npm run verify       # typecheck → lint → 188 unit tests → build → 38 E2E tests
+npm run verify       # typecheck → lint → 201 unit tests → build → 41 E2E tests
 ```
+
+The E2E suite seeds its own data directory on first run, so `npm run e2e` works on a
+clone with nothing set up. Hosting is a long-running Node process (`npm start`): the
+store is an embedded SQLite file and the trained ensemble is a file on disk, so a
+per-request serverless runtime is the wrong shape for it. Point `DATABASE_URL` at
+Postgres to change that.
 
 Everything is deterministic in `AURELIUS_SEED`. Two machines running the same seed
 produce byte-identical signals, which is what makes a published attribution auditable
@@ -245,8 +257,8 @@ using only what you knew then" an answerable question.
 ## Testing
 
 ```
-188 unit tests   (vitest)
- 38 E2E tests    (Playwright, real Chromium)
+201 unit tests   (vitest)
+ 41 E2E tests    (Playwright, real Chromium)
 ```
 
 The unit tests check against independent references wherever one exists, because
@@ -263,6 +275,15 @@ and "our output contains none".
 The E2E suite asserts a **clean console on every page** — a React error, a hydration
 mismatch, a failed request or a NaN reaching the DOM all fail the test. Three real
 defects were invisible to server-side rendering and surfaced only this way.
+
+It also asserts that the platform agrees with itself: the published list, the screener
+and each symbol page have to carry the same conviction and the same direction for the
+same name. They did not, for a while. The publication is persisted — it is immutable
+for its date, one ranking identical for every subscriber — while the other two
+recompute per request, and the engine was evaluating at the wall clock, so the cached
+list drifted away from the pages it linked to as the session went on. Everything now
+evaluates at the last completed session close, which is a function of the calendar
+rather than of when the process started.
 
 ---
 
