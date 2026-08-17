@@ -18,7 +18,24 @@ export default defineConfig({
     viewport: { width: 1600, height: 1000 },
     colorScheme: 'dark',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  /**
+   * The image ships a Chromium build that does not match what this
+   * `@playwright/test` version would download, and downloading is neither possible
+   * nor desirable in a sealed environment. Naming the binary explicitly is the
+   * documented escape hatch. `CHROMIUM_PATH` overrides it so the suite still runs
+   * on a machine where Playwright manages its own browsers.
+   */
+  projects: [
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: {
+          executablePath: process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+        },
+      },
+    },
+  ],
   webServer: {
     command: `npm run start -- --port ${PORT}`,
     url: BASE_URL,

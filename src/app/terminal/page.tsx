@@ -171,7 +171,7 @@ export default function TerminalPage() {
               {data.notice}
             </Notice>
 
-            <div className="grid gap-5 lg:grid-cols-2 xl:grid-cols-3">
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 xl:grid-cols-3">
               {data.items.map((item) => (
                 <PublicationCard key={item.signalId} item={item} />
               ))}

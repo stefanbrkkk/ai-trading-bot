@@ -281,7 +281,7 @@ export default function SymbolPage() {
                 }
               />
 
-              <div className="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
+              <div className="grid grid-cols-1 gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
                 {/* ── Conviction and levels ─────────────────────────────── */}
                 <div className="space-y-5">
                   <Panel>
@@ -596,7 +596,11 @@ export default function SymbolPage() {
                       />
                       <DataRow label="σ (diffusion)" value={ratio(data.artefacts.ou.sigma)} />
                       <DataRow label="Equilibrium σ" value={sigma(data.artefacts.ou.equilibriumSigma)} />
-                      <DataRow label="R²" value={ratio(data.artefacts.ou.rSquared)} />
+                      <DataRow
+                        label="R²"
+                        value={ratio(data.artefacts.ou.rSquared)}
+                        hint="Fit of the AR(1) in levels. This is NOT a measure of how reliable the reversion is — a pure random walk scores above 0.99 here, because regressing a level on its own lag explains almost all of its variance. The half-life above carries the information."
+                      />
                     </dl>
                     {!data.artefacts.ou.meanReverting ? (
                       <Notice tone="warning" className="mt-3">

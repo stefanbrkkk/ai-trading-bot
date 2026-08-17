@@ -130,13 +130,41 @@ export function rsi(values: readonly number[], period = 14): Series {
   }
   let avgGain = mean(gains.slice(1, period + 1));
   let avgLoss = mean(losses.slice(1, period + 1));
-  out[period] = avgLoss < EPS ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  out[period] = rsiFromAverages(avgGain, avgLoss);
   for (let i = period + 1; i < values.length; i += 1) {
     avgGain = (avgGain * (period - 1) + (gains[i] as number)) / period;
     avgLoss = (avgLoss * (period - 1) + (losses[i] as number)) / period;
-    out[i] = avgLoss < EPS ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    out[i] = rsiFromAverages(avgGain, avgLoss);
   }
   return out;
+}
+
+/**
+ * RSI from its two smoothed averages, handling the degenerate cases separately.
+ *
+ * The usual formulation is `avgLoss === 0 ? 100 : 100 − 100/(1 + avgGain/avgLoss)`,
+ * and it is wrong in one specific and reachable case: a series that has not moved
+ * at all. A flat series has zero gains *and* zero losses, so RS is 0/0 — but the
+ * `avgLoss === 0` branch fires first and returns 100.
+ *
+ * That is not a rounding quibble. This platform discretises RSI into published
+ * state bands, and 100 lands in STATE_DEEPLY_OVERBOUGHT, whose narrative is "a
+ * blow-off in buy-side pressure … vulnerable to a sharp unwind" with bearish
+ * polarity. A halted name, a thinly-traded name with no ticks in fourteen
+ * sessions, or any synthetic constant series would therefore be published with a
+ * confident bearish thesis derived from no price movement whatsoever.
+ *
+ * Both branches are now explicit: no movement in either direction is 50, the
+ * neutral value, because that is what "no information" means on this scale. All
+ * gains and no losses remains 100, and all losses and no gains remains 0.
+ */
+function rsiFromAverages(avgGain: number, avgLoss: number): number {
+  const noGains = avgGain < EPS;
+  const noLosses = avgLoss < EPS;
+  if (noGains && noLosses) return 50;
+  if (noLosses) return 100;
+  if (noGains) return 0;
+  return 100 - 100 / (1 + avgGain / avgLoss);
 }
 
 export interface MacdResult {

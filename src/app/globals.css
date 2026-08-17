@@ -295,6 +295,17 @@ svg text {
 .scroll-x {
   overflow-x: auto;
   overscroll-behavior-x: contain;
+  /*
+   * `min-width: 0` is what makes the clipping actually happen.
+   *
+   * A grid or flex item defaults to `min-width: auto`, which means it refuses to
+   * shrink below its content's intrinsic width — so a wide table inside a
+   * `.scroll-x` inside a grid cell pushes the *cell* wide, the cell pushes the
+   * page wide, and the container never scrolls because it was never narrower than
+   * its content. The symptom is a page that scrolls sideways as a whole on a phone
+   * while every individual overflow container looks correctly configured.
+   */
+  min-width: 0;
 }
 
 /* ── Motion ─────────────────────────────────────────────────────────────── */

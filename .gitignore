@@ -16,3 +16,4 @@ npm-debug.log*
 yarn-error.log*
 .vscode/
 .idea/
+.data/e2e/

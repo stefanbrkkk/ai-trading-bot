@@ -259,7 +259,7 @@ export default function InvestGptPage() {
                   {result.sql}
                 </pre>
                 <Divider className="my-4" />
-                <div className="grid gap-5 lg:grid-cols-2">
+                <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
                   <div>
                     <p className="eyebrow mb-2">Structured reading</p>
                     {result.plan.filters.length === 0 ? (

@@ -59,7 +59,11 @@ import {
   STOP_PRICE_SANITY_DEVIATION,
   limitPriceTolerance,
 } from '@/lib/risk/limits';
-import { intentTokenFailureMessage, type IntentTokenVerification } from '@/lib/risk/intentToken';
+import {
+  intentTokenFailureMessage,
+  type IntentTokenPayload,
+  type IntentTokenVerification,
+} from '@/lib/risk/intentToken';
 import type { DailyNotionalPort, IdempotencyPort, RiskAuditPort } from '@/lib/risk/ports';
 import {
   INSUFFICIENT_FUNDS_MESSAGE,
@@ -450,6 +454,25 @@ export function evaluateOrder(
       'click_provenance',
       'Click coordinates or timestamp missing. Order not transmitted.',
     );
+  } else if (tokenVerification === null && context.commit === true) {
+    /**
+     * A missing verification denies on the routing path.
+     *
+     * `intentToken: null` means "the caller verified elsewhere", which is true and
+     * appropriate on the pre-flight preview — no token exists yet, and the preview
+     * transmits nothing. On the *commit* path it means no authorisation was
+     * presented at all, and treating that as a pass was a fail-open on the single
+     * control the whole Weiss Research posture rests on: a caller that simply
+     * omitted the field would have received an approved decision.
+     *
+     * The `commit` flag is exactly the distinction needed, so the preview keeps
+     * working and routing cannot proceed unauthorised.
+     */
+    intentResult = deny(
+      'UNTRUSTED_CLICK',
+      'intent_token',
+      'No order authorisation token was presented. Order not transmitted.',
+    );
   } else if (tokenVerification !== null && !tokenVerification.valid) {
     intentResult = deny(
       'UNTRUSTED_CLICK',
@@ -457,6 +480,24 @@ export function evaluateOrder(
       tokenVerification.failure === null
         ? 'Order authorisation token rejected. Order not transmitted.'
         : intentTokenFailureMessage(tokenVerification.failure),
+    );
+  } else if (tokenVerification?.payload != null && tokenBindingMismatch(tokenVerification.payload, intent) !== null) {
+    /**
+     * The engine re-checks the binding itself rather than trusting `valid`.
+     *
+     * `verifyIntentToken` already compares the token's payload against the
+     * submitted parameters, and `buildOrderContext` feeds it the real intent — so
+     * today this is redundant. It is here as defence in depth because this
+     * function is the *last* gate before a broker, it holds both the payload and
+     * the intent, and a future caller could construct a context pairing a
+     * genuinely-valid token with a different order. Verifying what it can verify
+     * costs one comparison.
+     */
+    const field = tokenBindingMismatch(tokenVerification.payload, intent);
+    intentResult = deny(
+      'UNTRUSTED_CLICK',
+      'intent_token',
+      `Order parameters do not match the authorised token (${field}). Order not transmitted.`,
     );
   } else {
     intentResult = pass('click_provenance', 'Trusted Execute click with single-use intent token.');
@@ -748,6 +789,28 @@ export function evaluateOrder(
  * refused rather than rounded — rounding would mean the platform altered a
  * user-supplied parameter, and the ledger's whole purpose is proving it never does.
  */
+/**
+ * The first order parameter that diverges from the token's payload, or null.
+ *
+ * Compared field by field rather than by deep equality so the rejection can name
+ * which parameter changed — "the quantity does not match" is actionable, "the
+ * token does not match" is not. The symbol comparison is case-insensitive because
+ * the token is minted from the normalised symbol while an intent may arrive in any
+ * case.
+ */
+function tokenBindingMismatch(
+  payload: IntentTokenPayload,
+  intent: OrderIntent,
+): 'symbol' | 'side' | 'quantity' | 'orderType' | null {
+  if (payload.symbol.toUpperCase() !== intent.symbol.toUpperCase()) return 'symbol';
+  if (payload.side !== intent.side) return 'side';
+  // A null quantity is caught by the ticket-structure check, so it is not a
+  // binding failure here.
+  if (intent.quantity !== null && payload.quantity !== intent.quantity) return 'quantity';
+  if (payload.orderType !== intent.type) return 'orderType';
+  return null;
+}
+
 function validateQuantity(quantity: number | null): { result: RiskCheckResult; shares: number } {
   if (quantity === null || quantity === undefined || !Number.isFinite(quantity)) {
     return {

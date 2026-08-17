@@ -277,7 +277,7 @@ export default function ResearchPage() {
             </Notice>
           ) : null}
 
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
             <div className="space-y-5">
               <Panel>
                 <PanelHeader eyebrow="Answer" title={answer.question} />

@@ -17,7 +17,7 @@
     "e2e": "playwright test",
     "e2e:install": "playwright install --with-deps chromium",
     "seed": "tsx scripts/seed.ts",
-    "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run build && npm run e2e",
     "seed:fast": "tsx scripts/seed.ts --fast"
   },
   "dependencies": {

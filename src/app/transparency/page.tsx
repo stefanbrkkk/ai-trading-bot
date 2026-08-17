@@ -211,7 +211,7 @@ export default function TransparencyPage() {
                 </Notice>
               ) : null}
 
-              <div className="grid gap-5 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
                 <Panel>
                   <PanelHeader eyebrow="Ensemble" title="Gradient-boosted decision trees" detail={data.card.objective} />
                   <dl className="mt-3 space-y-0.5">
