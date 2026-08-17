@@ -447,7 +447,14 @@ export default function TransparencyPage() {
                           In model only
                         </Button>
                       ) : null}
-                      <Button size="sm" variant={group === '' ? 'primary' : 'ghost'} onClick={() => setGroup('')}>
+                      <Button
+                        size="sm"
+                        variant={group === '' ? 'primary' : 'ghost'}
+                        onClick={() => setGroup('')}
+                        // Styled as pressed when no group filter is set; the
+                        // group chips below it all say so, this one did not.
+                        aria-pressed={group === ''}
+                      >
                         All groups
                       </Button>
                     </div>

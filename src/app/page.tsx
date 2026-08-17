@@ -14,10 +14,15 @@
  * number decomposes.
  */
 
-import Link from 'next/link';
 import { PageShell } from '@/components/PageState';
-import { Badge, Button, Divider, Notice, Panel, PanelHeader } from '@/components/ui/primitives';
+import { Badge, ButtonLink, Divider, Notice, Panel, PanelHeader } from '@/components/ui/primitives';
 import { DISCLOSURE_BLOCKS } from '@/lib/compliance/disclosures';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Aurelius — Quantitative Signal Terminal',
+  description: 'A publisher of impersonal quantitative market analysis.',
+};
 
 const CAPABILITIES: { eyebrow: string; title: string; body: string }[] = [
   {
@@ -81,19 +86,15 @@ export default function LandingPage() {
           parameters and the decision to transact rest entirely with you.
         </p>
         <div className="mt-8 flex flex-wrap gap-3">
-          <Link href="/terminal">
-            <Button variant="primary" size="lg">
-              Open the terminal
-            </Button>
-          </Link>
-          <Link href="/transparency">
-            <Button size="lg">Read the model card</Button>
-          </Link>
-          <Link href="/signup">
-            <Button variant="ghost" size="lg">
-              Create an account
-            </Button>
-          </Link>
+          <ButtonLink href="/terminal" variant="primary" size="lg">
+            Open the terminal
+          </ButtonLink>
+          <ButtonLink href="/transparency" size="lg">
+            Read the model card
+          </ButtonLink>
+          <ButtonLink href="/signup" variant="ghost" size="lg">
+            Create an account
+          </ButtonLink>
         </div>
 
         <Notice tone="legal" className="mt-10 max-w-3xl">
@@ -153,12 +154,10 @@ export default function LandingPage() {
           ))}
         </div>
         <div className="mt-7 flex flex-wrap gap-3">
-          <Link href="/compliance">
-            <Button>Full terms and disclosures</Button>
-          </Link>
-          <Link href="/onboarding">
-            <Button variant="ghost">Review and accept</Button>
-          </Link>
+          <ButtonLink href="/compliance">Full terms and disclosures</ButtonLink>
+          <ButtonLink href="/onboarding" variant="ghost">
+            Review and accept
+          </ButtonLink>
         </div>
       </section>
     </PageShell>

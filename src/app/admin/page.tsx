@@ -299,7 +299,8 @@ export default function AdminPage() {
             <Button
               variant={engaged ? 'default' : 'danger'}
               size="lg"
-              disabled={busy || (!engaged && reason.trim().length < 8)}
+              disabled={!engaged && reason.trim().length < 8}
+              busy={busy}
               onClick={() => setConfirming(true)}
             >
               {engaged ? 'Release the kill switch' : 'Engage the kill switch'}
@@ -310,12 +311,12 @@ export default function AdminPage() {
                 id="kill-switch-toggle"
                 variant={engaged ? 'default' : 'danger'}
                 size="lg"
-                disabled={busy}
+                busy={busy}
                 onClick={toggle}
               >
                 {busy ? 'Applying…' : engaged ? 'Confirm release' : 'Confirm halt'}
               </Button>
-              <Button variant="ghost" size="lg" onClick={() => setConfirming(false)} disabled={busy}>
+              <Button variant="ghost" size="lg" onClick={() => setConfirming(false)} busy={busy}>
                 Cancel
               </Button>
               <p className="text-[0.75rem] text-parchment-faint">
@@ -571,7 +572,7 @@ export default function AdminPage() {
                                 <Button
                                   size="sm"
                                   variant="ghost"
-                                  disabled={entitlementBusy !== null}
+                                  busy={entitlementBusy !== null}
                                   onClick={() => void entitle(user.email, 'cancel_subscription')}
                                 >
                                   Cancel
@@ -580,7 +581,7 @@ export default function AdminPage() {
                                 <Button
                                   size="sm"
                                   variant="ghost"
-                                  disabled={entitlementBusy !== null}
+                                  busy={entitlementBusy !== null}
                                   onClick={() => void entitle(user.email, 'activate_subscription', { months: 1 })}
                                 >
                                   Activate {money(data.priceUsdPerMonth)}/mo
@@ -589,7 +590,8 @@ export default function AdminPage() {
                               <Button
                                 size="sm"
                                 variant={user.liveTradingUnlocked ? 'primary' : 'ghost'}
-                                disabled={entitlementBusy !== null || user.subscriptionStatus !== 'active'}
+                                busy={entitlementBusy !== null}
+                                disabled={user.subscriptionStatus !== 'active'}
                                 title={
                                   user.subscriptionStatus === 'active'
                                     ? undefined
@@ -604,7 +606,7 @@ export default function AdminPage() {
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                disabled={entitlementBusy !== null}
+                                busy={entitlementBusy !== null}
                                 onClick={() =>
                                   void entitle(user.email, 'set_role', {
                                     role: user.role === 'admin' ? 'trader' : 'admin',

@@ -208,7 +208,7 @@ export default function ResearchPage() {
               placeholder="What did management say about gross margin guidance?"
               onChange={(e) => setQuestion(e.target.value)}
             />
-            <Button type="submit" variant="primary" size="lg" disabled={pending || question.trim().length < 3}>
+            <Button type="submit" variant="primary" size="lg" busy={pending} disabled={question.trim().length < 3}>
               {pending ? 'Retrieving…' : 'Ask'}
             </Button>
           </div>

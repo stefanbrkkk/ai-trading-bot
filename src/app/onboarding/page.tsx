@@ -28,7 +28,6 @@ import { useRouter } from 'next/navigation';
 import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
 import { Badge, Button, Divider, Notice, Panel, PanelHeader } from '@/components/ui/primitives';
 import { ApiRequestError, clickProvenance, request, useApi, type MeResponse } from '@/lib/ui/api';
-
 interface DisclosureBlock {
   id: string;
   title: string;
@@ -256,7 +255,8 @@ export default function OnboardingPage() {
                     variant="primary"
                     size="lg"
                     id="accept-terms"
-                    disabled={!scrolledToBottom || !checked || pending}
+                    disabled={!scrolledToBottom || !checked}
+                    busy={pending}
                     onClick={accept}
                   >
                     {pending ? 'Recording…' : 'Accept and continue'}

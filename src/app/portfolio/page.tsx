@@ -23,7 +23,7 @@ import Link from 'next/link';
 import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
 import {
   Badge,
-  Button,
+  ButtonLink,
   DataRow,
   Divider,
   Notice,
@@ -244,7 +244,11 @@ export default function PortfolioPage() {
                 <div className="p-5 pb-0">
                   <PanelHeader
                     eyebrow="Positions"
-                    title={`${integer(data.account.positions.length)} open`}
+                    /* "0 open" was the whole heading, which says nothing when
+                       read out of context in a heading list. */
+                    title={`${integer(data.account.positions.length)} open ${
+                      data.account.positions.length === 1 ? 'position' : 'positions'
+                    }`}
                     detail={
                       data.account.positions.length === 0
                         ? 'No open position. Orders routed from the ticket appear here once filled.'
@@ -426,11 +430,9 @@ export default function PortfolioPage() {
               </tbody>
             </TableShell>
             <div className="p-5 pt-4">
-              <Link href="/control">
-                <Button variant="ghost" size="sm">
-                  Risk limits and decision history
-                </Button>
-              </Link>
+              <ButtonLink href="/control" variant="ghost" size="sm">
+                Risk limits and decision history
+              </ButtonLink>
             </div>
           </Panel>
         )}

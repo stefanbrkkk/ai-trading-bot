@@ -155,7 +155,7 @@ export default function InvestGptPage() {
               placeholder="Which optionable large cap names have conviction above 55?"
               onChange={(e) => setQuestion(e.target.value)}
             />
-            <Button type="submit" variant="primary" size="lg" disabled={pending || question.trim().length < 3}>
+            <Button type="submit" variant="primary" size="lg" busy={pending} disabled={question.trim().length < 3}>
               {pending ? 'Compiling…' : 'Run'}
             </Button>
           </div>

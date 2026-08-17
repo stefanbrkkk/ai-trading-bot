@@ -481,11 +481,24 @@ test('the terminal does not scroll horizontally at a narrow viewport', async ({ 
 
 test('every SVG chart carries an accessible label', async ({ page }) => {
   await page.goto('/terminal/AAPL', { waitUntil: 'networkidle' });
-  const svgs = page.locator('svg[role="img"]');
+  // `group` for the charts whose drivers are individually focusable — `img`
+  // would prune those children out of the accessibility tree — and `img` for
+  // the static ones. Either way the container must be named.
+  const svgs = page.locator('svg[role="img"], svg[role="group"]');
   const count = await svgs.count();
   expect(count).toBeGreaterThan(0);
   for (let i = 0; i < count; i += 1) {
     const label = await svgs.nth(i).getAttribute('aria-label');
     expect(label, `svg ${i} aria-label`).toBeTruthy();
   }
+});
+
+test('a chart with focusable drivers is not marked as an image', async ({ page }) => {
+  await page.goto('/terminal/AAPL', { waitUntil: 'networkidle' });
+  const offenders = await page.evaluate(() =>
+    [...document.querySelectorAll('svg[role="img"]')]
+      .filter((svg) => svg.querySelector('[tabindex]') !== null)
+      .map((svg) => svg.getAttribute('aria-label') ?? '(unlabelled)'),
+  );
+  expect(offenders, 'role="img" hides focusable descendants').toEqual([]);
 });

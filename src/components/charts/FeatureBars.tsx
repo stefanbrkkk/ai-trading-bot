@@ -143,7 +143,16 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height, width: wi
       viewBox={`0 0 ${width} ${viewHeight}`}
       preserveAspectRatio="xMidYMid meet"
       className="h-auto w-full"
-      role="img"
+      /*
+       * `group`, not `img`.
+       *
+       * `role="img"` prunes the whole subtree from the accessibility tree, so
+       * the focusable, individually-labelled drivers inside this chart were
+       * built and then hidden: a screen-reader user could tab onto them and
+       * hear nothing. `role="group"` keeps the container's own name and lets
+       * its interactive children be announced.
+       */
+      role="group"
       aria-label={`${rows.length} driver shares`}
       onMouseLeave={() => {
         setLocalKey(null);

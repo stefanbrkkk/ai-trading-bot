@@ -67,6 +67,8 @@ export function AuthForm({ mode }: { mode: 'signin' | 'signup' }) {
   return (
     <Panel className="mx-auto w-full max-w-md">
       <PanelHeader
+        // These two pages carry no `PageHeader`, so this is the page's `h1`.
+        as="h1"
         eyebrow={signup ? 'Create an account' : 'Sign in'}
         title={signup ? 'Open a paper sandbox' : 'Return to the terminal'}
         detail={
@@ -125,7 +127,7 @@ export function AuthForm({ mode }: { mode: 'signin' | 'signup' }) {
         {/* The server's message, unmodified. */}
         {error !== null ? <Notice tone="error">{error}</Notice> : null}
 
-        <Button type="submit" variant="primary" size="lg" className="w-full" disabled={pending}>
+        <Button type="submit" variant="primary" size="lg" className="w-full" busy={pending}>
           {pending ? 'Working…' : signup ? 'Create account' : 'Sign in'}
         </Button>
       </form>

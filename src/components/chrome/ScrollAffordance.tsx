@@ -38,6 +38,39 @@ const SELECTOR = '.scroll-x, [data-scroll-x]';
 /** Scroll offsets are fractional under browser zoom; 2px of slack avoids a fade that flickers at rest. */
 const EDGE_SLACK_PX = 2;
 
+/**
+ * The accessible name for a region we just made focusable.
+ *
+ * A tab stop with no name announces as "group" and nothing else, which tells the
+ * user they have landed somewhere without saying where. The name is read off the
+ * DOM rather than passed in for the same reason the fade is measured rather than
+ * declared: the caller does not know, at any given width, whether this element is
+ * a tab stop at all.
+ *
+ * Preference order is most-specific-first — a chart states its own subject, a
+ * table's caption states the table's, and otherwise the enclosing panel heading
+ * is the nearest thing to a title.
+ */
+function describe(el: HTMLElement): string {
+  const svg = el.querySelector('svg[aria-label]');
+  const svgLabel = svg?.getAttribute('aria-label')?.trim();
+  if (svgLabel) return `${svgLabel}, scrollable`;
+
+  const caption = el.querySelector('caption')?.textContent?.trim();
+  if (caption) return `${caption}, scrollable`;
+
+  // The nav's scroller is an inner div, so the landmark's own label is the only
+  // thing on the page that names it.
+  const nav = el.closest('nav[aria-label]')?.getAttribute('aria-label')?.trim();
+  if (nav) return `${nav} navigation, scrollable`;
+
+  const panel = el.closest('section, article, div[data-panel]');
+  const heading = panel?.querySelector('h1, h2, h3, h4')?.textContent?.trim();
+  if (heading) return `${heading}, scrollable`;
+
+  return 'Scrollable content';
+}
+
 export function ScrollAffordance() {
   useEffect(() => {
     /** Element → its listener/observer teardown. */
@@ -49,6 +82,17 @@ export function ScrollAffordance() {
       if (el.dataset.scrollXFocusable === 'true') {
         el.removeAttribute('tabindex');
         delete el.dataset.scrollXFocusable;
+      }
+      // Each attribute is withdrawn only if this component was the one that
+      // added it — the nav's own role and label must survive a resize that makes
+      // it a static column again.
+      if (el.dataset.scrollXRole === 'true') {
+        el.removeAttribute('role');
+        delete el.dataset.scrollXRole;
+      }
+      if (el.dataset.scrollXLabelled === 'true') {
+        el.removeAttribute('aria-label');
+        delete el.dataset.scrollXLabelled;
       }
     };
 
@@ -80,6 +124,19 @@ export function ScrollAffordance() {
       if (!el.hasAttribute('tabindex')) {
         el.tabIndex = 0;
         el.dataset.scrollXFocusable = 'true';
+        /*
+         * Role and name are set only alongside the tabindex we added, and only
+         * on an element that declares neither. The nav is a `<nav>` with its own
+         * label; overwriting that would replace a landmark with a generic group.
+         */
+        if (!el.hasAttribute('role')) {
+          el.setAttribute('role', 'group');
+          el.dataset.scrollXRole = 'true';
+        }
+        if (!el.hasAttribute('aria-label') && !el.hasAttribute('aria-labelledby')) {
+          el.setAttribute('aria-label', describe(el));
+          el.dataset.scrollXLabelled = 'true';
+        }
       }
     };
 

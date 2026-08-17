@@ -2,6 +2,12 @@
 
 import { PageShell } from '@/components/PageState';
 import { AuthForm } from '@/components/AuthForm';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Sign in · Aurelius',
+  description: 'Return to the terminal.',
+};
 
 export default function LoginPage() {
   return (

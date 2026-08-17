@@ -30,7 +30,6 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
 import {
@@ -50,6 +49,7 @@ import type { AggregatedStream } from '@/lib/quant/decay';
 import {
   Badge,
   Button,
+  ButtonLink,
   DataRow,
   Divider,
   Meter,
@@ -328,11 +328,9 @@ export default function SymbolPage() {
                     <Badge tone={data.direction === 'long' ? 'sage' : data.direction === 'short' ? 'burgundy' : 'neutral'}>
                       {data.direction}
                     </Badge>
-                    <Link href={`/order/${data.assetIdentifier}`}>
-                      <Button variant="primary" size="sm">
-                        Open order ticket
-                      </Button>
-                    </Link>
+                    <ButtonLink href={`/order/${data.assetIdentifier}`} variant="primary" size="sm">
+                      Open order ticket
+                    </ButtonLink>
                   </div>
                 }
               />

@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 /**
@@ -50,12 +51,19 @@ export function PanelHeader({
   detail,
   action,
   className,
+  as: Heading = 'h2',
 }: {
   eyebrow?: string;
   title?: ReactNode;
   detail?: ReactNode;
   action?: ReactNode;
   className?: string;
+  /**
+   * Heading level. `h2` everywhere except the two pages that have no
+   * `PageHeader` — /login and /signup opened at `h2` with no `h1` above it, which
+   * is a broken outline on the first two pages anyone sees.
+   */
+  as?: 'h1' | 'h2';
 }) {
   return (
     /*
@@ -71,7 +79,7 @@ export function PanelHeader({
     <header className={cx('flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6', className)}>
       <div className="min-w-0">
         {eyebrow ? <p className="eyebrow mb-2">{eyebrow}</p> : null}
-        {title ? <h2 className="display text-lg text-parchment leading-tight">{title}</h2> : null}
+        {title ? <Heading className="display text-lg text-parchment leading-tight">{title}</Heading> : null}
         {detail ? <p className="mt-1.5 text-[0.8125rem] leading-relaxed text-parchment-dim">{detail}</p> : null}
       </div>
       {action ? <div className="min-w-0 sm:shrink-0">{action}</div> : null}
@@ -127,7 +135,14 @@ export function StatTile({
 
   return (
     <div className={cx('min-w-0', className)} title={title}>
-      <p className="eyebrow mb-1.5 truncate">{label}</p>
+      {/*
+        `title` on the label too, not only on the tile. The label truncates, and
+        at 200% zoom it truncates on most tiles — "Sharpe (annualised)" became
+        "Sharpe (ann…" with no way to read the rest.
+      */}
+      <p className="eyebrow mb-1.5 truncate" title={label}>
+        {label}
+      </p>
       <p className={cx('tabular leading-none', sizeClass, toneClass)}>
         {value}
         {unit ? <span className="ml-1 text-[0.6875rem] text-parchment-faint">{unit}</span> : null}
@@ -231,14 +246,21 @@ export function DataRow({
       className={cx('hairline flex flex-wrap items-baseline justify-between gap-x-4 py-2', className)}
       title={hint}
     >
-      <span className="text-[0.8125rem] text-parchment-dim">{label}</span>
       {/*
-        `flex-wrap` is the escape valve. Neither span shrinks past min-content, so
-        on a 320px phone a long label beside a long value could still add up to
+        `<dt>`/`<dd>`, because every caller renders these inside a `<dl>`.
+        As two `<span>`s the twenty description lists in the product contained no
+        `dt` and no `dd` at all, so a screen reader read "Probability61.0%" as one
+        undifferentiated run instead of a term and its definition. A `<div>`
+        wrapper is valid inside `<dl>` precisely so a row can be styled as a unit.
+      */}
+      <dt className="text-[0.8125rem] text-parchment-dim">{label}</dt>
+      {/*
+        `flex-wrap` is the escape valve. Neither element shrinks past min-content,
+        so on a 320px phone a long label beside a long value could still add up to
         more than the card — 13px of page-level horizontal scroll on /terminal.
         Wrapping drops the value to its own line instead, still right-aligned.
       */}
-      <span className="tabular ml-auto text-right text-[0.8125rem] text-parchment">{value}</span>
+      <dd className="tabular ml-auto text-right text-[0.8125rem] text-parchment">{value}</dd>
     </div>
   );
 }
@@ -493,17 +515,12 @@ export function Td({
 //  Controls
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function Button({
-  children,
-  variant = 'default',
-  size = 'md',
-  className,
-  ...rest
-}: {
-  children: ReactNode;
-  variant?: 'default' | 'primary' | 'danger' | 'ghost';
-  size?: 'sm' | 'md' | 'lg';
-} & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'className'> & { className?: string }) {
+/** Shared visual treatment, so a link styled as a button is identical to one. */
+export function buttonClass(
+  variant: 'default' | 'primary' | 'danger' | 'ghost' = 'default',
+  size: 'sm' | 'md' | 'lg' = 'md',
+  className?: string,
+): string {
   const variantClass = {
     default: 'border-obsidian-edge bg-obsidian text-parchment hover:border-parchment-ghost hover:bg-obsidian-light',
     primary: 'border-gold/60 bg-gold/[0.09] text-gold hover:bg-gold/[0.16] hover:border-gold',
@@ -511,20 +528,99 @@ export function Button({
     ghost: 'border-transparent text-parchment-dim hover:text-parchment hover:border-obsidian-edge',
   }[variant];
   const sizeClass = { sm: 'px-2.5 py-1 text-2xs', md: 'px-3.5 py-1.5 text-xs', lg: 'px-5 py-2.5 text-[0.8125rem]' }[size];
+  return cx(
+    'inline-flex items-center justify-center gap-2 border font-mono uppercase tracking-institutional transition-colors duration-150',
+    'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-obsidian-edge disabled:hover:bg-transparent',
+    variantClass,
+    sizeClass,
+    className,
+  );
+}
+
+export function Button({
+  children,
+  variant = 'default',
+  size = 'md',
+  className,
+  busy,
+  onClick,
+  ...rest
+}: {
+  children: ReactNode;
+  variant?: 'default' | 'primary' | 'danger' | 'ghost';
+  size?: 'sm' | 'md' | 'lg';
+  /**
+   * In flight, as distinct from `disabled`.
+   *
+   * Setting `disabled` on the focused button is what a submit handler naturally
+   * does, and it throws focus to `<body>`: the keyboard user loses their place
+   * mid-form and a screen reader stops narrating the thing it was just on. This
+   * keeps the element focusable and inert instead — `aria-disabled` for the
+   * announcement, the same dimmed treatment, and activation swallowed — so
+   * focus survives the round trip and lands back on a live button when the
+   * request returns.
+   *
+   * `disabled` stays the right prop for a control that is unavailable because
+   * the form is incomplete: nobody is focused on it at the moment it flips.
+   */
+  busy?: boolean;
+} & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'className'> & { className?: string }) {
+  const inert = busy === true;
   return (
     <button
       type="button"
       {...rest}
-      className={cx(
-        'inline-flex items-center justify-center gap-2 border font-mono uppercase tracking-institutional transition-colors duration-150',
-        'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-obsidian-edge disabled:hover:bg-transparent',
-        variantClass,
-        sizeClass,
-        className,
-      )}
+      aria-disabled={inert || rest.disabled === true ? true : undefined}
+      aria-busy={inert ? true : undefined}
+      onClick={
+        inert
+          ? (event) => {
+              // Also cancels an implicit submit raised by Enter in a text field,
+              // which is the double-submit this guard exists to stop.
+              event.preventDefault();
+            }
+          : onClick
+      }
+      /*
+       * `pointer-events-none` so the hover treatment does not fire on a control
+       * that will not act. It does not remove the element from the tab order and
+       * does not stop a keyboard activation, which is why the click guard above
+       * is still needed.
+       */
+      className={buttonClass(variant, size, cx(inert && 'pointer-events-none opacity-40', className))}
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * A link that looks like a button.
+ *
+ * Ten call sites wrote `<Link><Button>…</Button></Link>`, which is two nested
+ * interactive elements for one destination: two tab stops, the accessible name
+ * announced twice, and invalid HTML — `<button>` is not permitted inside `<a>`.
+ * Safari and VoiceOver disagree about which of the two is activated. Sharing
+ * `buttonClass` keeps the two visually identical, so the fix costs nothing on
+ * screen.
+ */
+export function ButtonLink({
+  href,
+  children,
+  variant = 'default',
+  size = 'md',
+  className,
+  ...rest
+}: {
+  href: string;
+  children: ReactNode;
+  variant?: 'default' | 'primary' | 'danger' | 'ghost';
+  size?: 'sm' | 'md' | 'lg';
+} & Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, 'className' | 'href'> & { className?: string }) {
+  return (
+    <Link href={href} {...rest} className={buttonClass(variant, size, className)}>
+      {children}
+    </Link>
   );
 }
 
@@ -544,15 +640,38 @@ export function Field({
   className?: string;
 }) {
   return (
-    <label className={cx('block', className)}>
-      <span className="eyebrow mb-1.5 flex items-center gap-1.5">
-        {label}
-        {required ? <span className="text-gold">•</span> : null}
-      </span>
-      {children}
-      {error ? <span className="mt-1.5 block text-[0.6875rem] text-burgundy-bright">{error}</span> : null}
+    /*
+     * The `<label>` wraps the control and nothing else that carries text.
+     *
+     * A control inside a `<label>` takes its accessible name from the label's
+     * whole subtree, so with the hint inside it the quantity input announced as
+     * "Quantity (shares) • Whole shares. There is no suggested value." — the
+     * marker read aloud as "bullet", and a paragraph of guidance became part of
+     * the field's name rather than its description. Hint and error are siblings
+     * of the label now, and the marker is a visually-hidden "(required)".
+     */
+    <div className={cx('block', className)}>
+      <label className="block">
+        <span className="eyebrow mb-1.5 flex items-center gap-1.5">
+          {label}
+          {required ? (
+            <>
+              <span className="text-gold" aria-hidden="true">
+                •
+              </span>
+              <span className="sr-only">(required)</span>
+            </>
+          ) : null}
+        </span>
+        {children}
+      </label>
+      {error ? (
+        <span role="alert" className="mt-1.5 block text-[0.6875rem] text-burgundy-bright">
+          {error}
+        </span>
+      ) : null}
       {hint && !error ? <span className="mt-1.5 block text-[0.6875rem] leading-snug text-parchment-faint">{hint}</span> : null}
-    </label>
+    </div>
   );
 }
 

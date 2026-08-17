@@ -34,6 +34,7 @@ import { PageHeader, PageShell } from '@/components/PageState';
 import {
   Badge,
   Button,
+  ButtonLink,
   DataRow,
   Divider,
   Field,
@@ -277,11 +278,9 @@ export default function OrderTicketPage() {
         <Notice tone="warning" title="Unknown symbol">
           Aurelius publishes analysis for a fixed universe. Open the screener for the names it covers.
           <span className="mt-3 block">
-            <Link href="/screener">
-              <Button variant="ghost" size="sm">
-                Browse the universe
-              </Button>
-            </Link>
+            <ButtonLink href="/screener" variant="ghost" size="sm">
+              Browse the universe
+            </ButtonLink>
           </span>
         </Notice>
       </PageShell>
@@ -295,11 +294,9 @@ export default function OrderTicketPage() {
         title="Route an order"
         lede="Every field starts blank and stays blank until you type in it. This platform does not compute a position size, suggest a quantity or pre-select an order type."
         action={
-          <Link href={`/terminal/${symbol}`}>
-            <Button variant="ghost" size="sm">
-              Back to attribution
-            </Button>
-          </Link>
+          <ButtonLink href={`/terminal/${symbol}`} variant="ghost" size="sm">
+            Back to attribution
+          </ButtonLink>
         }
       />
 
@@ -558,11 +555,9 @@ export default function OrderTicketPage() {
                   ) : null}
 
                   <div className="mt-5">
-                    <Link href="/portfolio">
-                      <Button variant="ghost" size="sm">
-                        View in the blotter
-                      </Button>
-                    </Link>
+                    <ButtonLink href="/portfolio" variant="ghost" size="sm">
+                      View in the blotter
+                    </ButtonLink>
                   </div>
                 </>
               )}
