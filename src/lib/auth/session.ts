@@ -32,7 +32,29 @@ export const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 /** The trial window Phase 5 §4 specifies for the paper sandbox. */
 export const TRIAL_DAYS = 14;
 /** Subscription price, in cents. MASTER §4.5: $200/month. */
-export const PRICE_CENTS = Number(process.env.AURELIUS_PRICE_USD_MONTH ?? 200) * 100;
+/**
+ * Published monthly price, in cents.
+ *
+ * Validated rather than coerced: `Number('abc')` is `NaN`, and this is a
+ * module-level constant, so a typo in `AURELIUS_PRICE_USD_MONTH` baked `NaN` into
+ * the persisted subscription record, the liability-cap arithmetic and the price
+ * shown on the portfolio page — with nothing anywhere reporting a bad value.
+ */
+export const PRICE_CENTS = resolvePriceCents(process.env.AURELIUS_PRICE_USD_MONTH);
+
+function resolvePriceCents(raw: string | undefined): number {
+  const DEFAULT_USD = 200;
+  const trimmed = raw?.trim();
+  if (trimmed === undefined || trimmed.length === 0) return DEFAULT_USD * 100;
+  const usd = Number(trimmed);
+  if (!Number.isFinite(usd) || usd < 0) {
+    console.warn(
+      `[aurelius] AURELIUS_PRICE_USD_MONTH="${trimmed}" is not a non-negative number; using $${DEFAULT_USD}.`,
+    );
+    return DEFAULT_USD * 100;
+  }
+  return Math.round(usd * 100);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Secrets

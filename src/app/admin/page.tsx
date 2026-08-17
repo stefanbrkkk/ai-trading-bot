@@ -39,7 +39,7 @@ import {
   Th,
 } from '@/components/ui/primitives';
 import { ApiRequestError, clickProvenance, request, useApi, type MeResponse } from '@/lib/ui/api';
-import { duration, integer, nyDateTime } from '@/lib/ui/format';
+import { duration, integer, money, nyDateTime } from '@/lib/ui/format';
 
 interface KillSwitchState {
   engaged: boolean;
@@ -110,12 +110,50 @@ interface TelemetryResponse {
   readBy: { userId: string; email: string };
 }
 
+interface EntitlementUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role: 'trader' | 'admin';
+  createdAt: number;
+  subscriptionStatus: 'trialing' | 'active' | 'past_due' | 'canceled' | 'none';
+  currentPeriodEnd: number | null;
+  liveTradingUnlocked: boolean;
+  liabilityCapUsd: number;
+}
+
+interface EntitlementResponse {
+  priceUsdPerMonth: number;
+  users: EntitlementUser[];
+}
+
 export default function AdminPage() {
   const me = useApi<MeResponse>('/auth/me');
   const isAdmin = me.data?.user?.role === 'admin';
 
   const kill = useApi<KillSwitchState>(isAdmin ? '/admin/kill-switch' : null, { pollMs: 20_000 });
   const telemetry = useApi<TelemetryResponse>(isAdmin ? '/audit/telemetry?limit=100' : null, { pollMs: 30_000 });
+  const entitlements = useApi<EntitlementResponse>(isAdmin ? '/admin/entitlement' : null);
+
+  const [entitlementBusy, setEntitlementBusy] = useState<string | null>(null);
+  const [entitlementError, setEntitlementError] = useState<string | null>(null);
+
+  async function entitle(
+    email: string,
+    action: 'activate_subscription' | 'cancel_subscription' | 'set_live_unlock' | 'set_role',
+    extra: { unlocked?: boolean; role?: 'trader' | 'admin'; months?: number } = {},
+  ): Promise<void> {
+    setEntitlementBusy(`${email}:${action}`);
+    setEntitlementError(null);
+    try {
+      await request('/admin/entitlement', { method: 'POST', body: { email, action, ...extra } });
+      entitlements.reload();
+    } catch (error) {
+      setEntitlementError(error instanceof ApiRequestError ? error.message : 'The change could not be applied.');
+    } finally {
+      setEntitlementBusy(null);
+    }
+  }
 
   const [reason, setReason] = useState('');
   const [confirming, setConfirming] = useState(false);
@@ -475,6 +513,114 @@ export default function AdminPage() {
                   ))}
                 </tbody>
               </TableShell>
+            </Panel>
+
+            {/* ── Entitlements ─────────────────────────────────────── */}
+            <Panel className="mt-5" padded={false}>
+              <div className="p-5 pb-0">
+                <PanelHeader
+                  eyebrow="Entitlements"
+                  title="Subscription, role and live routing"
+                  detail="Live routing needs two keys: an active subscription and an explicit unlock. Activating a subscription never unlocks routing on its own, and cancelling revokes it immediately. Every change here is written to the audit trail with your account against it."
+                />
+              </div>
+              {entitlementError !== null ? (
+                <div className="px-5 pt-4">
+                  <Notice tone="error">{entitlementError}</Notice>
+                </div>
+              ) : null}
+              <AsyncSlot state={entitlements} label="Loading accounts" lines={4}>
+                {(data) => (
+                  <TableShell className="mt-4" minWidth={980}>
+                    <thead>
+                      <tr>
+                        <Th>Account</Th>
+                        <Th>Role</Th>
+                        <Th>Subscription</Th>
+                        <Th align="right">Liability cap</Th>
+                        <Th>Live routing</Th>
+                        <Th align="right">Actions</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.users.map((user) => (
+                        <tr key={user.id}>
+                          <Td>
+                            <span className="text-parchment">{user.email}</span>
+                            <span className="ml-2 text-parchment-faint">{user.displayName}</span>
+                          </Td>
+                          <Td>
+                            <Badge tone={user.role === 'admin' ? 'gold' : 'neutral'}>{user.role}</Badge>
+                          </Td>
+                          <Td>
+                            <Badge tone={user.subscriptionStatus === 'active' ? 'sage' : 'neutral'}>
+                              {user.subscriptionStatus}
+                            </Badge>
+                          </Td>
+                          <Td align="right" numeric>
+                            {money(user.liabilityCapUsd)}
+                          </Td>
+                          <Td>
+                            <Badge tone={user.liveTradingUnlocked ? 'burgundy' : 'neutral'}>
+                              {user.liveTradingUnlocked ? 'unlocked' : 'locked'}
+                            </Badge>
+                          </Td>
+                          <Td align="right">
+                            <span className="flex flex-wrap justify-end gap-1.5">
+                              {user.subscriptionStatus === 'active' ? (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={entitlementBusy !== null}
+                                  onClick={() => void entitle(user.email, 'cancel_subscription')}
+                                >
+                                  Cancel
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={entitlementBusy !== null}
+                                  onClick={() => void entitle(user.email, 'activate_subscription', { months: 1 })}
+                                >
+                                  Activate {money(data.priceUsdPerMonth)}/mo
+                                </Button>
+                              )}
+                              <Button
+                                size="sm"
+                                variant={user.liveTradingUnlocked ? 'primary' : 'ghost'}
+                                disabled={entitlementBusy !== null || user.subscriptionStatus !== 'active'}
+                                title={
+                                  user.subscriptionStatus === 'active'
+                                    ? undefined
+                                    : 'An active subscription is required before live routing can be unlocked.'
+                                }
+                                onClick={() =>
+                                  void entitle(user.email, 'set_live_unlock', { unlocked: !user.liveTradingUnlocked })
+                                }
+                              >
+                                {user.liveTradingUnlocked ? 'Lock live' : 'Unlock live'}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={entitlementBusy !== null}
+                                onClick={() =>
+                                  void entitle(user.email, 'set_role', {
+                                    role: user.role === 'admin' ? 'trader' : 'admin',
+                                  })
+                                }
+                              >
+                                {user.role === 'admin' ? 'Demote' : 'Promote'}
+                              </Button>
+                            </span>
+                          </Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </TableShell>
+                )}
+              </AsyncSlot>
             </Panel>
 
             <Notice tone="legal" className="mt-5">
