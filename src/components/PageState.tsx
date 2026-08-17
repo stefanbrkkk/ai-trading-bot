@@ -22,9 +22,12 @@ import type { ApiRequestError } from '@/lib/ui/api';
 
 /** Codes whose remedy is a command rather than a retry. */
 const OPERATIONAL_CODES: Record<string, string> = {
-  ENGINE_NOT_READY: 'The ensemble has not been trained in this deployment. Run `npm run seed` and reload.',
-  MODEL_MISSING: 'No trained model file was found. Run `npm run seed` and reload.',
-  STORE_NOT_READY: 'The feature store is empty. Run `npm run seed` and reload.',
+  ENGINE_NOT_READY: 'The ensemble has not been trained in this deployment. Run npm run seed, then check again.',
+  MODEL_MISSING: 'No trained model file was found. Run npm run seed, then check again.',
+  MODEL_NOT_TRAINED: 'No trained ensemble is present in this deployment. Run npm run seed, then check again.',
+  STORE_NOT_READY: 'The feature store is empty. Run npm run seed, then check again.',
+  NO_BACKTEST_FIXTURE: 'No seeded backtest is present. Run npm run seed, then check again.',
+  ENGINE_NOT_SEEDED: 'Feature history has not been seeded in this deployment. Run npm run seed, then check again.',
 };
 
 export function LoadingPanel({ label, lines = 4 }: { label?: string; lines?: number }) {
@@ -54,15 +57,22 @@ export function ErrorPanel({
   return (
     <Panel>
       <Notice tone={operational ? 'warning' : 'error'} title={operational ? 'Not ready' : `Error · ${error.code}`}>
-        {/* The server's message, verbatim. */}
-        <p>{error.message}</p>
-        {operational ? <p className="mt-2 text-parchment-dim">{operational}</p> : null}
+        {/*
+          One sentence for a state we recognise, the server's own for anything
+          else. Printing both put the same instruction on screen twice, under a
+          page banner that had already said it once — four times in total on the
+          first screen a fresh deployment shows.
+        */}
+        <p>{operational ?? error.message}</p>
         {context ? <p className="mt-2 text-parchment-faint">{context}</p> : null}
       </Notice>
       {onRetry ? (
         <div className="mt-4">
+          {/* "Try again" is wrong for a setup state — nothing changes until the
+              operator runs the command — but re-fetching is exactly what they
+              want once they have. */}
           <Button variant="ghost" onClick={onRetry}>
-            Try again
+            {operational ? 'Check again' : 'Try again'}
           </Button>
         </div>
       ) : null}

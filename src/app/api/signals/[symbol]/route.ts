@@ -9,7 +9,7 @@
  */
 
 import { z } from 'zod';
-import { ApiError, handler, ok, parseQuery } from '@/lib/api/respond';
+import { ApiError, handler, ok, parseQuery, pendingSetup } from '@/lib/api/respond';
 import { getSignal } from '@/lib/engine/service';
 import { requireSpec } from '@/lib/market/universe';
 import { shapWaterfall } from '@/lib/quant/shap';
@@ -35,7 +35,7 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
   try {
     result = await getSignal(symbol, horizon === undefined ? {} : { horizonDays: horizon });
   } catch (error) {
-    throw new ApiError('ENGINE_NOT_READY', error instanceof Error ? error.message : 'Engine unavailable.', 503);
+    return pendingSetup('ENGINE_NOT_READY', error instanceof Error ? error.message : 'Engine unavailable.');
   }
 
   const { signal, features, router, strategies } = result;

@@ -14,7 +14,7 @@
  */
 
 import { z } from 'zod';
-import { ApiError, handler, ok, parseQuery } from '@/lib/api/respond';
+import { ApiError, handler, ok, parseQuery, pendingSetup } from '@/lib/api/respond';
 import { getChartSeries } from '@/lib/engine/service';
 import { getSpec } from '@/lib/market/universe';
 
@@ -39,12 +39,8 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
     series = await getChartSeries(symbol, q.horizonDays === undefined ? {} : { horizonDays: q.horizonDays });
   } catch (error) {
     // An untrained engine is an operational state with a specific remedy, not an
-    // internal error: 503 with the instruction rather than 500 with a stack.
-    throw new ApiError(
-      'ENGINE_NOT_READY',
-      error instanceof Error ? error.message : 'The engine is unavailable.',
-      503,
-    );
+    // internal error, and not an outage either: 200 carrying the instruction.
+    return pendingSetup('ENGINE_NOT_READY', error instanceof Error ? error.message : 'The engine is unavailable.');
   }
 
   return ok({

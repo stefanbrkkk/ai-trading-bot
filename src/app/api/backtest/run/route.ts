@@ -9,7 +9,7 @@
  */
 
 import { z } from 'zod';
-import { ApiError, handler, ok, parseBody } from '@/lib/api/respond';
+import { ApiError, handler, ok, parseBody, pendingSetup } from '@/lib/api/respond';
 import { currentUser } from '@/lib/auth/session';
 import {
   COMBINE_THRESHOLDS,
@@ -45,10 +45,9 @@ const bodySchema = z.object({
 export const GET = handler(async () => {
   const fixture = loadArtefact<BacktestResult>('backtest-default');
   if (!fixture) {
-    throw new ApiError(
+    return pendingSetup(
       'NO_BACKTEST_FIXTURE',
-      'No seeded backtest is present. Run `npm run seed`, or POST to this endpoint to compute one.',
-      503,
+      'No seeded backtest is present. Seed the deployment, or POST to this endpoint to compute one.',
     );
   }
   return ok({ result: fixture, scorecard: combineScorecard(fixture), thresholds: COMBINE_THRESHOLDS, cached: true });
@@ -62,10 +61,9 @@ export const POST = handler(async (request: Request) => {
   const history = loadArtefact<Record<string, { time: number; raw: Record<string, number> }[]>>('agent-history');
   const featureSnapshots = loadArtefact<Record<string, ComputedFeatures[]>>('agent-history');
   if (!featureSnapshots) {
-    throw new ApiError(
+    return pendingSetup(
       'ENGINE_NOT_SEEDED',
-      'Feature history is unavailable. Run `npm run seed` before running a backtest.',
-      503,
+      'Feature history is unavailable. Seed the deployment before running a backtest.',
     );
   }
   void history;

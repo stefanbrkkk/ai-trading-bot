@@ -50,7 +50,7 @@ export function modelStatus(): ModelStatus {
       version: null,
       createdAt: null,
       sizeBytes: null,
-      reason: 'No trained ensemble found. Run `npm run seed` to train and persist one.',
+      reason: 'No trained ensemble found in this deployment.',
     };
   }
   try {
@@ -71,7 +71,7 @@ export function modelStatus(): ModelStatus {
       version: null,
       createdAt: null,
       sizeBytes: null,
-      reason: `The persisted ensemble could not be loaded: ${error instanceof Error ? error.message : 'unknown error'}. Re-run \`npm run seed\`.`,
+      reason: `The persisted ensemble could not be loaded: ${error instanceof Error ? error.message : 'unknown error'}.`,
     };
   }
 }

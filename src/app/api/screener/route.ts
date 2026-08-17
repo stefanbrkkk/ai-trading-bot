@@ -8,7 +8,7 @@
  */
 
 import { z } from 'zod';
-import { ApiError, csvList, handler, ok, parseQuery } from '@/lib/api/respond';
+import { ApiError, csvList, handler, ok, parseQuery, pendingSetup } from '@/lib/api/respond';
 import { applyScreenerFilter, getUniverseSnapshot } from '@/lib/engine/service';
 import { SECTORS } from '@/lib/market/universe';
 import type { RegimeLabel, ScreenerFilter, Sector, SignalDirection } from '@/lib/domain/types';
@@ -46,7 +46,7 @@ export const GET = handler(async (request: Request) => {
   try {
     snapshot = await getUniverseSnapshot();
   } catch (error) {
-    throw new ApiError('ENGINE_NOT_READY', error instanceof Error ? error.message : 'Engine unavailable.', 503);
+    return pendingSetup('ENGINE_NOT_READY', error instanceof Error ? error.message : 'Engine unavailable.');
   }
 
   const validSectors = new Set<string>(SECTORS);

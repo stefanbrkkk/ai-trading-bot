@@ -98,6 +98,27 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     throw new ApiRequestError('REQUEST_FAILED', `The request failed with status ${response.status}.`, response.status);
   }
 
+  /*
+   * A 200 that says a setup step is outstanding.
+   *
+   * `pendingSetup` on the server answers "no ensemble has been trained" with a 200
+   * because it is a documented state rather than a fault, and a 503 made the
+   * browser log a console error on five pages that were rendering their notice
+   * correctly. The state still has to reach the caller as an error — the page has
+   * no data to draw — so it is raised here. The `setupRequired` marker is what
+   * makes that safe to do on a success response: an `error`-shaped field alone
+   * appears in perfectly healthy payloads (`/api/account` carries a broker
+   * message, `/api/positions` carries null).
+   */
+  if (
+    typeof payload === 'object' &&
+    payload !== null &&
+    (payload as { setupRequired?: unknown }).setupRequired === true &&
+    isErrorBody(payload)
+  ) {
+    throw new ApiRequestError(payload.error.code, payload.error.message, response.status, payload.error.detail);
+  }
+
   return payload as T;
 }
 

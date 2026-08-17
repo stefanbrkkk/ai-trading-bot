@@ -7,7 +7,7 @@
  * limitations, so marketing can be checked against it.
  */
 
-import { ApiError, handler, ok } from '@/lib/api/respond';
+import { handler, ok, pendingSetup } from '@/lib/api/respond';
 import { tryLoadModelBundle } from '@/lib/engine/store';
 import { MODEL_FEATURE_KEYS, FEATURE_DEFINITIONS } from '@/lib/engine/features';
 import { AGENT_FEATURE_KEYS } from '@/lib/engine/model';
@@ -18,10 +18,9 @@ export const dynamic = 'force-dynamic';
 export const GET = handler(async () => {
   const model = tryLoadModelBundle();
   if (!model) {
-    throw new ApiError(
+    return pendingSetup(
       'MODEL_NOT_TRAINED',
-      'No trained ensemble is present. Run `npm run seed` to train and persist one.',
-      503,
+      'No trained ensemble is present in this deployment.',
     );
   }
   return ok({

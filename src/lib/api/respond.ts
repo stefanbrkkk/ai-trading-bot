@@ -56,6 +56,31 @@ export function fail(
   return withHeaders(NextResponse.json(body, { status: init.status ?? 400 }), correlation);
 }
 
+/**
+ * A capability that needs a setup step run before it can answer.
+ *
+ * There is exactly one of these on the platform: no ensemble has been trained, so
+ * the signal endpoints have nothing to serve. It is answered `200` rather than
+ * `503` because it is neither a fault nor a transient outage — it is a documented
+ * state a fresh deployment is in until `npm run seed` completes, and the pages
+ * already render a notice saying precisely that. The browser logs a console error
+ * for every response over 400, so a 503 made five pages that were working exactly
+ * as designed look broken to anyone with devtools open. The same reasoning already
+ * governs the portfolio page's deferred requests, which exist so that a signed-out
+ * visit does not log two 401s.
+ *
+ * `setupRequired` marks the body unambiguously so the client can raise it as an
+ * error despite the 200; `isErrorBody` alone would be too loose a test to apply to
+ * a success response.
+ */
+export function pendingSetup(code: string, message: string): NextResponse {
+  const body: ApiErrorBody & { setupRequired: true } = {
+    error: { code, message },
+    setupRequired: true,
+  };
+  return withHeaders(NextResponse.json(body, { status: 200 }), correlationId());
+}
+
 /** Thrown by handlers to short-circuit with a specific status. */
 export class ApiError extends Error {
   constructor(

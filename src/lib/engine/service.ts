@@ -114,7 +114,10 @@ export function engineReadiness(): EngineReadiness {
     ready: model !== null,
     reason: model
       ? null
-      : 'The trading engine has no trained ensemble yet. Run `npm run seed` to train one; every other part of the platform works without it.',
+      // The remedy belongs to whatever renders this, not to the sentence — the
+      // terminal's banner appends it, and printing it here too put "run npm run
+      // seed" twice in one paragraph on the first screen a deployment shows.
+      : 'The trading engine has no trained ensemble yet. Every other part of the platform works without one.',
     provider: provider.name,
     modelVersion: model?.version ?? null,
   };
@@ -214,7 +217,7 @@ export async function getSignal(symbol: string, options: EngineOptions = {}): Pr
   const model = tryLoadModelBundle();
   if (!model) {
     throw new Error(
-      'No trained ensemble is available. Run `npm run seed` to train one before requesting signals.',
+      'No trained ensemble is available. Train one before requesting signals.',
     );
   }
 
@@ -262,7 +265,7 @@ export async function getUniverseSnapshot(options: EngineOptions = {}): Promise<
   }
 
   const model = tryLoadModelBundle();
-  if (!model) throw new Error('No trained ensemble is available. Run `npm run seed` first.');
+  if (!model) throw new Error('No trained ensemble is available.');
 
   const symbols = TRADABLE_SYMBOLS.slice(0, UNIVERSE_SWEEP_LIMIT);
   const results: PipelineResult[] = [];

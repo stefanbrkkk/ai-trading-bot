@@ -119,7 +119,7 @@ export function storeReady(): { ready: boolean; reason: string | null; symbols: 
       return {
         ready: false,
         reason:
-          'The feature store holds no rows yet, so a query would return nothing. Run `npm run seed` to populate the snapshot.',
+          'The feature store holds no rows yet, so a query would return nothing. Seed the deployment to populate the snapshot.',
         symbols: 0,
       };
     }

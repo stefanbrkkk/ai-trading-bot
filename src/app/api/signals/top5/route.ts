@@ -9,7 +9,7 @@
  */
 
 import { z } from 'zod';
-import { handler, ok, parseQuery, ApiError } from '@/lib/api/respond';
+import { handler, ok, parseQuery, pendingSetup } from '@/lib/api/respond';
 import { getPublication } from '@/lib/engine/service';
 import { disclosureBundle } from '@/lib/compliance/disclosures';
 
@@ -32,10 +32,8 @@ export const GET = handler(async (request: Request) => {
       disclosures: bundle.blocks.map((b) => ({ id: b.id, title: b.title })),
     });
   } catch (error) {
-    throw new ApiError(
-      'ENGINE_NOT_READY',
-      error instanceof Error ? error.message : 'The engine is not ready.',
-      503,
-    );
+    // A documented setup state, answered 200 so the terminal's own notice is not
+    // accompanied by a console error on a fresh deployment.
+    return pendingSetup('ENGINE_NOT_READY', error instanceof Error ? error.message : 'The engine is not ready.');
   }
 });

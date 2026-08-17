@@ -150,7 +150,14 @@ export default function TerminalPage() {
         </Notice>
       ) : null}
 
-      {health.data?.engineReady === false ? (
+      {/*
+        Only when the publication itself resolved. The banner is here to warn that
+        the engine is down while a list is still on screen; once the slot below is
+        rendering its own "not ready" panel the two say the same thing twice, one
+        above the other, which is what the first screen of a fresh deployment
+        showed.
+      */}
+      {health.data?.engineReady === false && publication.error === null ? (
         <Notice tone="warning" title="Engine not ready" className="mb-6">
           {health.data.engineReason ?? 'The ensemble is unavailable.'} Run <code>npm run seed</code> to train and
           persist it.
