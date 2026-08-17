@@ -20,7 +20,14 @@
 
 import { useMemo } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { MIN_ANIMATED_BAR_WIDTH, frame, linearScale, mixColour, type ChartFrame } from '@/lib/ui/svg';
+import {
+  BAR_GROW_LEFT,
+  MIN_ANIMATED_BAR_WIDTH,
+  frame,
+  linearScale,
+  mixColour,
+  type ChartFrame,
+} from '@/lib/ui/svg';
 import {
   BURGUNDY,
   BURGUNDY_BRIGHT,
@@ -242,8 +249,9 @@ export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width: wid
                 y={barY}
                 height={BAR_H}
                 fill={segment.colour}
-                initial={reduceMotion || segment.w < MIN_ANIMATED_BAR_WIDTH ? false : { width: 0 }}
-                animate={{ width: Math.max(0, segment.w) }}
+                style={BAR_GROW_LEFT}
+                initial={reduceMotion || segment.w < MIN_ANIMATED_BAR_WIDTH ? false : { scaleX: 0 }}
+                animate={{ scaleX: 1 }}
                 transition={
                   reduceMotion || segment.w < MIN_ANIMATED_BAR_WIDTH
                     ? { duration: 0 }
@@ -258,10 +266,11 @@ export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width: wid
                 y={barY}
                 height={BAR_H}
                 fill={BURGUNDY}
+                style={BAR_GROW_LEFT}
                 initial={
-                  reduceMotion || segment.overflow.w < MIN_ANIMATED_BAR_WIDTH ? false : { width: 0 }
+                  reduceMotion || segment.overflow.w < MIN_ANIMATED_BAR_WIDTH ? false : { scaleX: 0 }
                 }
-                animate={{ width: Math.max(0, segment.overflow.w) }}
+                animate={{ scaleX: 1 }}
                 transition={
                   reduceMotion || segment.overflow.w < MIN_ANIMATED_BAR_WIDTH
                     ? { duration: 0 }

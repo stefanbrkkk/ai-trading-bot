@@ -28,6 +28,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import {
+  BAR_GROW_LEFT,
+  BAR_GROW_RIGHT,
   MIN_ANIMATED_BAR_WIDTH,
   WATERFALL_BAR_HEIGHT,
   WATERFALL_BAR_RADIUS,
@@ -400,14 +402,15 @@ export function ShapWaterfall({
               {/* The translated plot group: everything inside is in raw
                   log-odds × 400 space, exactly as the mandate specifies. */}
               <g transform={`translate(${offset} ${rowY})`}>
-                {/* No static `x` attribute: Framer Motion treats `x` as a CSS
-                    transform, so an attribute here would be added to the
-                    translation and offset every bar twice. The mandated
-                    `x = min(start, end) × 400` is therefore the transform target,
-                    which is exactly how the research's snippet positions it. */}
+                {/* No `x` attribute on the rect: Framer Motion treats `x` as a
+                    CSS transform even as a static prop, so an attribute here
+                    would be added to the translation and offset every bar twice.
+                    The mandated `x = min(start, end) × 400` is applied by this
+                    plain group instead, and the growth is `scaleX` on top of it. */}
+                <g transform={`translate(${barX} 0)`}>
                 <motion.rect
                   y={0}
-                  width={barWidth}
+                  width={Math.max(0, barWidth)}
                   height={WATERFALL_BAR_HEIGHT}
                   rx={WATERFALL_BAR_RADIUS}
                   fill={fill}
@@ -418,18 +421,19 @@ export function ShapWaterfall({
                     on the settle it emitted -1.8e-15 — a negative `width`, which
                     SVG rejects with a console error. See MIN_ANIMATED_BAR_WIDTH.
                   */
-                  initial={
-                    reduceMotion || barWidth < MIN_ANIMATED_BAR_WIDTH
-                      ? false
-                      : { width: 0, x: row.start * scale }
-                  }
-                  animate={{ width: Math.max(0, barWidth), x: barX }}
+                  /* Grows from the end the bar starts at: a positive contribution
+                     unrolls to the right of the running total, a negative one to
+                     the left. See BAR_GROW_LEFT for why this is a transform. */
+                  style={row.end >= row.start ? BAR_GROW_LEFT : BAR_GROW_RIGHT}
+                  initial={reduceMotion || barWidth < MIN_ANIMATED_BAR_WIDTH ? false : { scaleX: 0 }}
+                  animate={{ scaleX: 1 }}
                   transition={
                     reduceMotion || barWidth < MIN_ANIMATED_BAR_WIDTH
                       ? { duration: 0 }
                       : { ...WATERFALL_SPRING, delay: index * WATERFALL_STAGGER }
                   }
                 />
+                </g>
               </g>
 
               <text

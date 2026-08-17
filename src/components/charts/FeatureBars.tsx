@@ -18,7 +18,7 @@
 
 import { useMemo, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { MIN_ANIMATED_BAR_WIDTH, WATERFALL_STAGGER, linearScale } from '@/lib/ui/svg';
+import { BAR_GROW_LEFT, BAR_GROW_RIGHT, MIN_ANIMATED_BAR_WIDTH, WATERFALL_STAGGER, linearScale } from '@/lib/ui/svg';
 import { useChartWidth } from './useChartWidth';
 import {
   BURGUNDY,
@@ -185,7 +185,6 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height, width: wi
           : layout.full(Math.max(0, row.value));
         const clamped = Math.max(0, Math.min(signed ? trackWidth / 2 : trackWidth, barWidth));
         const barX = signed ? (positive ? centreX : centreX - clamped) : trackX0;
-        const restX = signed ? centreX : trackX0;
         const fill = signed ? (positive ? SAGE : BURGUNDY) : GOLD;
 
         return (
@@ -254,23 +253,29 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height, width: wi
               aria-hidden
             />
 
-            {/* `x` is a Framer Motion transform, not the SVG attribute — see the
-                note in ShapWaterfall. A signed bar's left edge moves as it grows,
-                so both are animated together. */}
+            {/* Positioned by a plain `<g>` rather than by an `x` attribute:
+                Framer Motion claims `x` on a motion component as a CSS transform
+                even when it is passed as a static prop, so an `x` here would be
+                added to the group's translation and offset every bar twice. The
+                growth is `scaleX` on top of this translation. */}
+            <g transform={`translate(${barX} 0)`}>
             <motion.rect
               y={y + (ROW_PITCH - BAR_HEIGHT) / 2}
               width={clamped}
               height={BAR_HEIGHT}
               fill={fill}
-              // Same sub-pixel guard as ShapWaterfall — see MIN_ANIMATED_BAR_WIDTH.
-              initial={reduceMotion || clamped < MIN_ANIMATED_BAR_WIDTH ? false : { width: 0, x: restX }}
-              animate={{ width: Math.max(0, clamped), x: barX }}
+              /* A signed bar grows outwards from the centre line, an unsigned one
+                 from the track's left edge. See BAR_GROW_LEFT. */
+              style={signed && !positive ? BAR_GROW_RIGHT : BAR_GROW_LEFT}
+              initial={reduceMotion || clamped < MIN_ANIMATED_BAR_WIDTH ? false : { scaleX: 0 }}
+              animate={{ scaleX: 1 }}
               transition={
-                reduceMotion
+                reduceMotion || clamped < MIN_ANIMATED_BAR_WIDTH
                   ? { duration: 0 }
                   : { duration: 0.45, ease: [0.16, 1, 0.3, 1], delay: index * WATERFALL_STAGGER }
               }
             />
+            </g>
 
             <text
               x={width - 4}
