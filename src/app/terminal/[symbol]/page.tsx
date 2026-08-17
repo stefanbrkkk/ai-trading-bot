@@ -1,0 +1,693 @@
+/**
+ * The attribution view for one symbol.
+ *
+ * This page is the platform's answer to the question that makes a quantitative
+ * signal usable or useless: *why*. A conviction score with no derivation is an
+ * opinion delivered by a machine, and an opinion delivered by a machine to a
+ * specific person about a specific security is advice. A conviction score that
+ * decomposes, exactly and reproducibly, into the contribution of each input is a
+ * published computation. The difference is the entire regulatory position, and it is
+ * also just better information.
+ *
+ * So every number here is traceable:
+ *
+ *   • The **waterfall** shows E[f(x)] → f(x), one bar per driver, in log-odds. The
+ *     sum of the bars equals the model output exactly — TreeSHAP's local-accuracy
+ *     property — and the residual is displayed rather than hidden, because a
+ *     non-zero residual would mean the explanation does not account for the
+ *     prediction and the reader deserves to know that.
+ *   • The **force plot** is the same decomposition as a single displacement, which
+ *     is the better read for relative magnitude. The two share a hover key so
+ *     moving over a driver in one highlights it in the other and in the table.
+ *   • Each driver carries the sentence the deterministic mapping matrix produced
+ *     from its discretised state — not a generated paraphrase, so the same state
+ *     always yields the same words.
+ *
+ * The raw SHAP float is never rendered. It signs and sizes the geometry; what the
+ * user reads is the share and the narrative.
+ */
+
+'use client';
+
+import { useState } from 'react';
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
+import {
+  AttentionStrip,
+  ConvictionDial,
+  FeatureBars,
+  LatencyBar,
+  ShapForcePlot,
+  ShapWaterfall,
+} from '@/components/charts';
+import {
+  Badge,
+  Button,
+  DataRow,
+  Divider,
+  Meter,
+  Notice,
+  Panel,
+  PanelHeader,
+  StatGrid,
+  StatTile,
+  TableShell,
+  Td,
+  Th,
+} from '@/components/ui/primitives';
+import { useApi } from '@/lib/ui/api';
+import {
+  duration,
+  fractionAsPercent,
+  halfLife,
+  integer,
+  nyDateTime,
+  percent,
+  price,
+  ratio,
+  sigma,
+  signedFractionAsPercent,
+} from '@/lib/ui/format';
+import type { FeatureGroup, RegimeLabel, SignalDirection } from '@/lib/domain/types';
+
+type Domain = 'technical' | 'fundamental' | 'sentiment';
+
+interface Contribution {
+  featureId: string;
+  featureDisplayName: string;
+  featureValueRaw: number;
+  contributionPercentage: number;
+  impactDirection: 'positive' | 'negative';
+  semanticTranslation: string;
+  state: string;
+  group: FeatureGroup;
+  domain: Domain;
+  unit: string;
+}
+
+interface WaterfallStep {
+  label: string;
+  shap: number;
+  cumulative: number;
+  cumulativeProbability: number;
+  direction: 'positive' | 'negative';
+}
+
+interface AgentInference {
+  name: string;
+  architecture: 'tft' | 'bilstm' | 'lstm';
+  timeframeMinutes: number;
+  probability: number;
+  expectedReturn: number;
+  lower: number | null;
+  upper: number | null;
+  /**
+   * Null for the LSTM and BiLSTM agents, present only for the TFT.
+   *
+   * Interpretable multi-head attention is a property of the Temporal Fusion
+   * Transformer's architecture, not of recurrent networks — so the field is
+   * genuinely absent rather than empty, and typing it as optional-undefined was
+   * wrong: `undefined` is never what the API sends, so an `!== undefined` guard
+   * passed on null and the render threw reading `.length`.
+   */
+  attention: number[] | null;
+}
+
+interface SignalResponse {
+  assetIdentifier: string;
+  timestamp: number;
+  convictionScore: number;
+  predictionProbability: number;
+  direction: SignalDirection;
+  horizonDays: number;
+  referencePrice: number;
+  expectedReturn: number;
+  expectedReturnLow: number;
+  expectedReturnHigh: number;
+  levels: { entryLow: number; entryHigh: number; invalidation: number; target1: number; target2: number };
+  regime: RegimeLabel;
+  strategy: string | null;
+  strategiesFired: string[];
+  thesis: string;
+  counterThesis: string;
+  modelVersion: string;
+  attributionResidual: number;
+  latency: { stages: { stage: string; ms: number }[]; totalMs: number; budgetMs: number; withinBudget: boolean };
+  xaiBreakdown: Record<Domain, unknown[]>;
+  contributions: Contribution[];
+  waterfall: {
+    baseValue: number;
+    baseProbability: number;
+    steps: WaterfallStep[];
+    finalValue: number;
+    finalProbability: number;
+  };
+  agents: AgentInference[];
+  router: {
+    action: string;
+    /** Signed aggregate in [-1, 1]. Negative is short-side. */
+    aggregateDirection: number;
+    compositeProbability: number;
+    /** Keyed by timeframe, not an array — the three agents are fixed. */
+    weights: { w5m: number; w15m: number; w60m: number };
+    regimeOverrideApplied: boolean;
+    rationale: string;
+    modelExposureFraction: number;
+  };
+  strategies: {
+    id: string;
+    name: string;
+    fired: boolean;
+    direction: SignalDirection;
+    conviction: number;
+    gates: { name: string; passed: boolean; detail: string }[];
+    rationale: string;
+  }[];
+  artefacts: {
+    price: number;
+    previousClose: number;
+    changePercent: number;
+    atr: number;
+    vwap: number;
+    ou: {
+      theta: number;
+      mu: number;
+      sigma: number;
+      halfLife: number | null;
+      equilibriumSigma: number;
+      rSquared: number;
+      meanReverting: boolean;
+    };
+  };
+}
+
+const DOMAIN_LABELS: Record<Domain, string> = {
+  technical: 'Technical',
+  fundamental: 'Fundamental',
+  sentiment: 'Sentiment & flow',
+};
+
+const REGIME_LABELS: Record<RegimeLabel, string> = {
+  trending_bull: 'Trending bull',
+  trending_bear: 'Trending bear',
+  mean_reverting: 'Mean reverting',
+  high_volatility: 'High volatility',
+  low_volatility_drift: 'Low-volatility drift',
+  illiquid: 'Illiquid',
+};
+
+/**
+ * The three fusion weights, in timeframe order.
+ *
+ * Declared as a fixed list because the ensemble is a fixed ensemble: the router's
+ * weights arrive as a keyed record rather than an array precisely because there
+ * are exactly three agents and their identity is part of the model, not data.
+ */
+const AGENT_WEIGHT_ROWS: readonly { key: 'w5m' | 'w15m' | 'w60m'; label: string }[] = [
+  { key: 'w5m', label: '5m tactical (LSTM)' },
+  { key: 'w15m', label: '15m contextual (BiLSTM)' },
+  { key: 'w60m', label: '60m macro (TFT)' },
+];
+
+const ARCHITECTURE_LABELS: Record<AgentInference['architecture'], string> = {
+  lstm: 'LSTM',
+  bilstm: 'BiLSTM',
+  tft: 'Temporal Fusion Transformer',
+};
+
+export default function SymbolPage() {
+  const params = useParams<{ symbol: string }>();
+  const symbol = (params.symbol ?? '').toUpperCase();
+
+  const signal = useApi<SignalResponse>(symbol.length > 0 ? `/signals/${symbol}` : null);
+
+  /**
+   * One hover key shared by the waterfall, the force plot and the driver table.
+   * Lifted to the page rather than held per-chart because the point of the
+   * highlight is cross-referencing: a driver is only meaningful once you can see
+   * its bar, its segment and its sentence at the same time.
+   */
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [view, setView] = useState<'waterfall' | 'force'>('waterfall');
+
+  return (
+    <PageShell wide>
+      <AsyncSlot state={signal} label={`Loading ${symbol}`} lines={8}>
+        {(data) => {
+          const contributions = [...data.contributions].sort(
+            (a, b) => b.contributionPercentage - a.contributionPercentage,
+          );
+          const steps = data.waterfall.steps.map((step) => {
+            const match = contributions.find((c) => c.featureDisplayName === step.label);
+            return {
+              ...step,
+              ...(match === undefined
+                ? {}
+                : {
+                    featureKey: match.featureId,
+                    narrative: match.semanticTranslation,
+                    state: match.state,
+                  }),
+            };
+          });
+          const forceContributions = contributions.slice(0, 10).map((c) => ({
+            featureKey: c.featureId,
+            label: c.featureDisplayName,
+            shap: c.impactDirection === 'positive' ? c.contributionPercentage : -c.contributionPercentage,
+            share: c.contributionPercentage / 100,
+            direction: c.impactDirection,
+            narrative: c.semanticTranslation,
+            state: c.state,
+          }));
+
+          return (
+            <>
+              <PageHeader
+                eyebrow={`${data.assetIdentifier} · ${REGIME_LABELS[data.regime]}`}
+                title={`${data.assetIdentifier} attribution`}
+                lede={data.thesis}
+                action={
+                  <div className="flex flex-col items-end gap-2">
+                    <Badge tone={data.direction === 'long' ? 'sage' : data.direction === 'short' ? 'burgundy' : 'neutral'}>
+                      {data.direction}
+                    </Badge>
+                    <Link href={`/order/${data.assetIdentifier}`}>
+                      <Button variant="primary" size="sm">
+                        Open order ticket
+                      </Button>
+                    </Link>
+                  </div>
+                }
+              />
+
+              <div className="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
+                {/* ── Conviction and levels ─────────────────────────────── */}
+                <div className="space-y-5">
+                  <Panel>
+                    <PanelHeader eyebrow="Conviction" title="Composite score" />
+                    <div className="mt-4 flex justify-center">
+                      <ConvictionDial score={data.convictionScore} size={220} caption={`${data.horizonDays}-day horizon`} />
+                    </div>
+                    <dl className="mt-5 space-y-0.5">
+                      <DataRow label="Probability" value={fractionAsPercent(data.predictionProbability)} />
+                      <DataRow label="Expected return" value={signedFractionAsPercent(data.expectedReturn)} />
+                      <DataRow
+                        label="Return interval"
+                        value={`${signedFractionAsPercent(data.expectedReturnLow)} — ${signedFractionAsPercent(data.expectedReturnHigh)}`}
+                        hint="Quantile head, not a confidence interval"
+                      />
+                      <DataRow label="Reference price" value={price(data.referencePrice)} />
+                      <DataRow label="Generated" value={nyDateTime(data.timestamp)} />
+                    </dl>
+                  </Panel>
+
+                  <Panel>
+                    <PanelHeader
+                      eyebrow="Published levels"
+                      title="Impersonal reference levels"
+                      detail="Computed from volatility and structure alone. No level accounts for your account, holdings or risk tolerance."
+                    />
+                    <dl className="mt-3 space-y-0.5">
+                      <DataRow
+                        label="Entry zone"
+                        value={`${price(data.levels.entryLow)} — ${price(data.levels.entryHigh)}`}
+                      />
+                      <DataRow label="Invalidation" value={price(data.levels.invalidation)} />
+                      <DataRow label="Target 1" value={price(data.levels.target1)} />
+                      <DataRow label="Target 2" value={price(data.levels.target2)} />
+                    </dl>
+                    <Notice tone="legal" className="mt-4">
+                      These are published statistics, not instructions. Position size is yours alone to determine; this
+                      platform never computes one from your account.
+                    </Notice>
+                  </Panel>
+                </div>
+
+                {/* ── Attribution ──────────────────────────────────────── */}
+                <div className="space-y-5">
+                  <Panel>
+                    <PanelHeader
+                      eyebrow="Attribution"
+                      title={view === 'waterfall' ? 'Additive decomposition' : 'Net displacement'}
+                      detail={
+                        view === 'waterfall'
+                          ? 'Exact TreeSHAP. The bars sum to the model output; the residual below reports the arithmetic.'
+                          : 'The same decomposition as one displacement from the base rate. Segment length is share of total attribution.'
+                      }
+                      action={
+                        <div className="flex gap-1.5">
+                          <Button
+                            size="sm"
+                            variant={view === 'waterfall' ? 'primary' : 'ghost'}
+                            onClick={() => setView('waterfall')}
+                            aria-pressed={view === 'waterfall'}
+                          >
+                            Waterfall
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={view === 'force' ? 'primary' : 'ghost'}
+                            onClick={() => setView('force')}
+                            aria-pressed={view === 'force'}
+                          >
+                            Force
+                          </Button>
+                        </div>
+                      }
+                    />
+                    <div className="scroll-x mt-4">
+                      {view === 'waterfall' ? (
+                        <ShapWaterfall
+                          baseValue={data.waterfall.baseValue}
+                          finalValue={data.waterfall.finalValue}
+                          baseProbability={data.waterfall.baseProbability}
+                          finalProbability={data.waterfall.finalProbability}
+                          steps={steps}
+                          hoveredKey={hovered}
+                          onHover={setHovered}
+                        />
+                      ) : (
+                        <ShapForcePlot
+                          baseValue={data.waterfall.baseValue}
+                          baseProbability={data.waterfall.baseProbability}
+                          finalProbability={data.waterfall.finalProbability}
+                          contributions={forceContributions}
+                          hoveredKey={hovered}
+                          onHover={setHovered}
+                        />
+                      )}
+                    </div>
+                    <Divider className="my-4" />
+                    <StatGrid columns={3}>
+                      <StatTile
+                        label="Base rate"
+                        value={fractionAsPercent(data.waterfall.baseProbability)}
+                        footnote="E[f(x)] over the K-Means background"
+                      />
+                      <StatTile
+                        label="Model output"
+                        value={fractionAsPercent(data.waterfall.finalProbability)}
+                        tone="gold"
+                        footnote="f(x) after every contribution"
+                      />
+                      <StatTile
+                        label="Local-accuracy residual"
+                        value={data.attributionResidual.toExponential(2)}
+                        tone={Math.abs(data.attributionResidual) < 1e-9 ? 'sage' : 'burgundy'}
+                        footnote={
+                          Math.abs(data.attributionResidual) < 1e-9
+                            ? 'Exact to floating-point precision'
+                            : 'Non-zero: the explanation does not fully account for the prediction'
+                        }
+                      />
+                    </StatGrid>
+                  </Panel>
+
+                  {/* ── Driver table ───────────────────────────────────── */}
+                  <Panel padded={false}>
+                    <div className="p-5 pb-0">
+                      <PanelHeader
+                        eyebrow="Drivers"
+                        title="Every contribution, in plain English"
+                        detail="Each sentence is produced by a fixed mapping from the feature's discretised state, so the same state always yields the same wording."
+                      />
+                    </div>
+                    <div className="scroll-x mt-4">
+                      <TableShell>
+                        <thead>
+                          <tr>
+                            <Th>Feature</Th>
+                            <Th align="right">Value</Th>
+                            <Th align="right">Share</Th>
+                            <Th>Impact</Th>
+                            <Th>Interpretation</Th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {contributions.map((c) => (
+                            <tr
+                              key={c.featureId}
+                              onMouseEnter={() => setHovered(c.featureId)}
+                              onMouseLeave={() => setHovered(null)}
+                              className={hovered === c.featureId ? 'bg-obsidian-light/60' : undefined}
+                            >
+                              <Td>
+                                <span className="text-parchment">{c.featureDisplayName}</span>
+                                <span className="ml-2 font-mono text-2xs text-parchment-faint">
+                                  {DOMAIN_LABELS[c.domain]}
+                                </span>
+                              </Td>
+                              <Td align="right" numeric>
+                                {formatFeatureValue(c.featureValueRaw, c.unit)}
+                              </Td>
+                              <Td align="right" numeric>
+                                {percent(c.contributionPercentage, 1)}
+                              </Td>
+                              <Td>
+                                <Meter
+                                  value={c.contributionPercentage / 100}
+                                  tone={c.impactDirection === 'positive' ? 'sage' : 'burgundy'}
+                                />
+                              </Td>
+                              <Td>
+                                <span className="text-parchment-dim">{c.semanticTranslation}</span>
+                              </Td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </TableShell>
+                    </div>
+                  </Panel>
+
+                  {/* ── Counter-thesis ─────────────────────────────────── */}
+                  <Panel>
+                    <PanelHeader
+                      eyebrow="Counter-thesis"
+                      title="What would invalidate this"
+                      detail="Published alongside every signal, not on request. A thesis presented without its refutation is advocacy."
+                    />
+                    <p className="mt-3 text-sm leading-relaxed text-parchment-dim">{data.counterThesis}</p>
+                  </Panel>
+                </div>
+              </div>
+
+              {/* ── Agents and router ──────────────────────────────────── */}
+              <div className="mt-5 grid gap-5 lg:grid-cols-2">
+                <Panel>
+                  <PanelHeader
+                    eyebrow="Multi-timeframe agents"
+                    title="Independent inferences"
+                    detail="Three architectures on three timeframes. Each is trained and evaluated separately; the router below resolves their disagreement."
+                  />
+                  <div className="mt-4 space-y-4">
+                    {data.agents.map((agent) => (
+                      <div key={agent.name} className="border-t border-obsidian-edge pt-3 first:border-t-0 first:pt-0">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-[0.8125rem] text-parchment">{agent.name}</p>
+                            <p className="font-mono text-2xs uppercase tracking-institutional text-parchment-faint">
+                              {ARCHITECTURE_LABELS[agent.architecture]} · {agent.timeframeMinutes}m
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="tabular text-base text-parchment">{fractionAsPercent(agent.probability)}</p>
+                            <p className="tabular text-2xs text-parchment-faint">
+                              {signedFractionAsPercent(agent.expectedReturn)}
+                              {agent.lower !== null && agent.upper !== null
+                                ? ` (${signedFractionAsPercent(agent.lower)} — ${signedFractionAsPercent(agent.upper)})`
+                                : ''}
+                            </p>
+                          </div>
+                        </div>
+                        {agent.attention !== null && agent.attention.length > 0 ? (
+                          <div className="mt-2.5">
+                            <AttentionStrip attention={agent.attention} />
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </Panel>
+
+                <Panel>
+                  <PanelHeader
+                    eyebrow="Conflict resolution"
+                    title="How the disagreement was resolved"
+                    detail={data.router.rationale}
+                  />
+                  <dl className="mt-3 space-y-0.5">
+                    <DataRow label="Action" value={data.router.action} />
+                    <DataRow
+                      label="Aggregate direction"
+                      value={sigma(data.router.aggregateDirection)}
+                      hint="Signed weighted agreement across the three agents, in [-1, 1]. Negative is short-side."
+                    />
+                    <DataRow label="Composite probability" value={fractionAsPercent(data.router.compositeProbability)} />
+                    <DataRow
+                      label="Regime override"
+                      value={data.router.regimeOverrideApplied ? 'Applied' : 'Not applied'}
+                    />
+                    <DataRow
+                      label="Model exposure fraction"
+                      value={ratio(data.router.modelExposureFraction)}
+                      hint="Half-Kelly on the aggregate signal. An impersonal statistic — it is not read by the order ticket and is not a position size."
+                    />
+                  </dl>
+                  <Divider className="my-4" />
+                  <p className="eyebrow mb-2.5">Agent weights</p>
+                  <div className="space-y-2.5">
+                    {AGENT_WEIGHT_ROWS.map((row) => (
+                      <div key={row.key}>
+                        <div className="mb-1 flex items-baseline justify-between text-2xs">
+                          <span className="text-parchment-dim">{row.label}</span>
+                          <span className="tabular text-parchment-faint">
+                            {percent(data.router.weights[row.key] * 100, 1)}
+                          </span>
+                        </div>
+                        <Meter value={data.router.weights[row.key]} tone="gold" />
+                      </div>
+                    ))}
+                  </div>
+                  <Notice tone="legal" className="mt-4">
+                    The exposure fraction above is published as a model statistic for every reader of this page. It is
+                    not a recommendation and is never applied to your account.
+                  </Notice>
+                </Panel>
+              </div>
+
+              {/* ── Strategies, statistics and latency ─────────────────── */}
+              <div className="mt-5 grid gap-5 lg:grid-cols-3">
+                <Panel className="lg:col-span-2">
+                  <PanelHeader
+                    eyebrow="Strategy gates"
+                    title="Which strategies fired, and which did not"
+                    detail="A strategy that did not fire is shown with the gate that stopped it. Suppressing the misses would make the hit rate look like a property of the model rather than of the filter."
+                  />
+                  <div className="mt-4 space-y-3">
+                    {data.strategies.map((s) => (
+                      <div key={s.id} className="border-t border-obsidian-edge pt-3 first:border-t-0 first:pt-0">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <p className="text-[0.8125rem] text-parchment">{s.name}</p>
+                          <Badge tone={s.fired ? 'gold' : 'ghost'}>{s.fired ? 'fired' : 'no signal'}</Badge>
+                        </div>
+                        <p className="mt-1 text-[0.75rem] leading-snug text-parchment-faint">{s.rationale}</p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {s.gates.map((g) => (
+                            <Badge key={g.name} tone={g.passed ? 'sage' : 'neutral'} title={g.detail}>
+                              {g.name}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Panel>
+
+                <div className="space-y-5">
+                  <Panel>
+                    <PanelHeader eyebrow="Mean reversion" title="Ornstein–Uhlenbeck fit" />
+                    <dl className="mt-3 space-y-0.5">
+                      <DataRow label="θ (reversion rate)" value={ratio(data.artefacts.ou.theta)} />
+                      <DataRow label="μ (equilibrium)" value={price(Math.exp(data.artefacts.ou.mu))} />
+                      <DataRow
+                        label="Half-life"
+                        value={data.artefacts.ou.halfLife === null ? 'not reverting' : halfLife(data.artefacts.ou.halfLife)}
+                      />
+                      <DataRow label="σ (diffusion)" value={ratio(data.artefacts.ou.sigma)} />
+                      <DataRow label="Equilibrium σ" value={sigma(data.artefacts.ou.equilibriumSigma)} />
+                      <DataRow label="R²" value={ratio(data.artefacts.ou.rSquared)} />
+                    </dl>
+                    {!data.artefacts.ou.meanReverting ? (
+                      <Notice tone="warning" className="mt-3">
+                        The fitted process is not mean-reverting over this sample, so the half-life and equilibrium band
+                        carry no information. They are shown because suppressing them would hide the diagnosis.
+                      </Notice>
+                    ) : null}
+                  </Panel>
+
+                  <Panel>
+                    <PanelHeader
+                      eyebrow="Latency"
+                      title="Pipeline budget"
+                      detail={`${duration(data.latency.totalMs)} of a ${duration(data.latency.budgetMs)} budget.`}
+                    />
+                    <div className="mt-3">
+                      <LatencyBar
+                        stages={data.latency.stages}
+                        totalMs={data.latency.totalMs}
+                        budgetMs={data.latency.budgetMs}
+                        withinBudget={data.latency.withinBudget}
+                      />
+                    </div>
+                    {!data.latency.withinBudget ? (
+                      <Notice tone="warning" className="mt-3">
+                        The pipeline exceeded its latency budget for this symbol.
+                      </Notice>
+                    ) : null}
+                  </Panel>
+                </div>
+              </div>
+
+              {/* ── Full feature vector ────────────────────────────────── */}
+              <Panel className="mt-5">
+                <PanelHeader
+                  eyebrow="Feature vector"
+                  title={`All ${integer(contributions.length)} attributed inputs`}
+                  detail="Normalised to the cross-sectional ECDF, so a bar's length is the symbol's percentile against the universe rather than a raw magnitude."
+                />
+                <div className="scroll-x mt-4">
+                  <FeatureBars
+                    items={contributions.map((c) => ({
+                      key: c.featureId,
+                      label: c.featureDisplayName,
+                      // Signed so the centre line separates the drivers pushing the
+                      // prediction up from those pushing it down; the magnitude is
+                      // the share either way.
+                      value:
+                        (c.impactDirection === 'positive' ? 1 : -1) * (c.contributionPercentage / 100),
+                      signed: true,
+                      hint: c.semanticTranslation,
+                    }))}
+                    hoveredKey={hovered}
+                    onHover={setHovered}
+                  />
+                </div>
+              </Panel>
+
+              <p className="mt-6 font-mono text-2xs uppercase tracking-institutional text-parchment-faint">
+                Model {data.modelVersion} · attribution exact to {Math.abs(data.attributionResidual).toExponential(1)} ·
+                impersonal computation, not investment advice
+              </p>
+            </>
+          );
+        }}
+      </AsyncSlot>
+    </PageShell>
+  );
+}
+
+/**
+ * Formats a feature value in its own unit.
+ *
+ * The unit comes from the registry rather than being inferred from the magnitude:
+ * an RSI of 0.42 and a ratio of 0.42 are different claims, and guessing from the
+ * number would render one of them wrong.
+ */
+function formatFeatureValue(value: number, unit: string): string {
+  if (!Number.isFinite(value)) return '—';
+  switch (unit) {
+    case 'percent':
+      return percent(value, 2);
+    case 'zscore':
+      return sigma(value);
+    case 'currency':
+      return price(value);
+    case 'ratio':
+      return ratio(value);
+    case 'days':
+      return `${ratio(value)}d`;
+    default:
+      return ratio(value);
+  }
+}
