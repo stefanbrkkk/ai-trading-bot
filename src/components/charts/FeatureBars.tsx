@@ -18,7 +18,7 @@
 
 import { useMemo, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { WATERFALL_STAGGER, linearScale } from '@/lib/ui/svg';
+import { MIN_ANIMATED_BAR_WIDTH, WATERFALL_STAGGER, linearScale } from '@/lib/ui/svg';
 import { useChartWidth } from './useChartWidth';
 import {
   BURGUNDY,
@@ -262,8 +262,8 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height, width: wi
               width={clamped}
               height={BAR_HEIGHT}
               fill={fill}
-              // Same zero-target guard as ShapWaterfall — see the note there.
-              initial={reduceMotion || clamped <= 0 ? false : { width: 0, x: restX }}
+              // Same sub-pixel guard as ShapWaterfall — see MIN_ANIMATED_BAR_WIDTH.
+              initial={reduceMotion || clamped < MIN_ANIMATED_BAR_WIDTH ? false : { width: 0, x: restX }}
               animate={{ width: Math.max(0, clamped), x: barX }}
               transition={
                 reduceMotion

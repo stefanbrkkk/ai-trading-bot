@@ -20,7 +20,7 @@
  */
 
 import { motion, useReducedMotion } from 'framer-motion';
-import { LADDER_OPACITY_DECAY, LADDER_ROW_PITCH } from '@/lib/ui/svg';
+import { LADDER_OPACITY_DECAY, LADDER_ROW_PITCH, MIN_ANIMATED_BAR_WIDTH } from '@/lib/ui/svg';
 import {
   BURGUNDY,
   GOLD,
@@ -100,12 +100,14 @@ function DepthBar({
         height={height}
         fill={fill}
         fillOpacity={fillOpacity}
-        initial={animated ? { width: 0 } : false}
-        animate={{ width: length }}
+        initial={animated && length >= MIN_ANIMATED_BAR_WIDTH ? { width: 0 } : false}
+        animate={{ width: Math.max(0, length) }}
         // One uniform tween, no per-level stagger: the book updates continuously,
         // and a staggered delay would re-fire on every snapshot and leave the
         // ladder permanently shimmering instead of readable.
-        transition={animated ? { duration: 0.38, ease: [0.16, 1, 0.3, 1] } : { duration: 0 }}
+        transition={
+          animated && length >= MIN_ANIMATED_BAR_WIDTH ? { duration: 0.38, ease: [0.16, 1, 0.3, 1] } : { duration: 0 }
+        }
       />
     </g>
   );

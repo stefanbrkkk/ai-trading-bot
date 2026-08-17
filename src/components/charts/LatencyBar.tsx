@@ -20,7 +20,7 @@
 
 import { useMemo } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { frame, linearScale, mixColour, type ChartFrame } from '@/lib/ui/svg';
+import { MIN_ANIMATED_BAR_WIDTH, frame, linearScale, mixColour, type ChartFrame } from '@/lib/ui/svg';
 import {
   BURGUNDY,
   BURGUNDY_BRIGHT,
@@ -235,16 +235,21 @@ export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width: wid
         {segments.map((segment, i) => (
           <g key={segment.key}>
             <title>{`${segment.stage}: ${duration(segment.ms)} (${fractionAsPercent(segment.share, 1)} of total)`}</title>
+            {/* Sub-pixel stages are drawn, not animated — see MIN_ANIMATED_BAR_WIDTH. */}
             {segment.w > 0 ? (
               <motion.rect
                 x={segment.x}
                 y={barY}
                 height={BAR_H}
                 fill={segment.colour}
-                initial={reduceMotion ? false : { width: 0 }}
-                animate={{ width: segment.w }}
-                transition={{ duration: reduceMotion ? 0 : 0.5, delay: reduceMotion ? 0 : i * 0.05, ease: [0.16, 1, 0.3, 1] }}
-                width={segment.w}
+                initial={reduceMotion || segment.w < MIN_ANIMATED_BAR_WIDTH ? false : { width: 0 }}
+                animate={{ width: Math.max(0, segment.w) }}
+                transition={
+                  reduceMotion || segment.w < MIN_ANIMATED_BAR_WIDTH
+                    ? { duration: 0 }
+                    : { duration: 0.5, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }
+                }
+                width={Math.max(0, segment.w)}
               />
             ) : null}
             {segment.overflow && segment.overflow.w > 0 ? (
@@ -253,10 +258,16 @@ export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width: wid
                 y={barY}
                 height={BAR_H}
                 fill={BURGUNDY}
-                initial={reduceMotion ? false : { width: 0 }}
-                animate={{ width: segment.overflow.w }}
-                transition={{ duration: reduceMotion ? 0 : 0.5, delay: reduceMotion ? 0 : i * 0.05, ease: [0.16, 1, 0.3, 1] }}
-                width={segment.overflow.w}
+                initial={
+                  reduceMotion || segment.overflow.w < MIN_ANIMATED_BAR_WIDTH ? false : { width: 0 }
+                }
+                animate={{ width: Math.max(0, segment.overflow.w) }}
+                transition={
+                  reduceMotion || segment.overflow.w < MIN_ANIMATED_BAR_WIDTH
+                    ? { duration: 0 }
+                    : { duration: 0.5, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }
+                }
+                width={Math.max(0, segment.overflow.w)}
               />
             ) : null}
           </g>

@@ -641,3 +641,26 @@ test('every InvestGPT example returns rows', async ({ request }) => {
     expect(body.rowCount, `"${question}" matched nothing`).toBeGreaterThan(0);
   }
 });
+
+/**
+ * The attribution page at every width the layout has a breakpoint for.
+ *
+ * The clean-console assertions above run at one viewport, 1600px, and that is
+ * where a whole class of defect hides: a chart's geometry depends on its measured
+ * width, so a bar that rounds to zero at 1024px is a full pixel at 1600px and the
+ * suite never sees it. `<rect> attribute width: A negative value is not valid.
+ * ("-1.7763568394002505e-15px")` shipped exactly that way — a spring integrating
+ * towards a driver whose contribution rounded to zero, on a freshly seeded
+ * deployment, at two of six widths.
+ */
+test('the attribution page is clean at every layout width', async ({ page }) => {
+  const problems = watch(page);
+  for (const width of [390, 768, 1024, 1280, 1600]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/terminal/AAPL', { waitUntil: 'networkidle' });
+    // Long enough for every entrance transition to settle; the offending value is
+    // emitted mid-flight, not at rest.
+    await page.waitForTimeout(3_000);
+    expectClean(problems, `/terminal/AAPL at ${width}px`);
+  }
+});

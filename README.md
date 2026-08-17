@@ -68,7 +68,7 @@ append-only DDL runs on Postgres by registering one adapter.
 npm run dev          # dev server on :3000
 npm run seed         # full seed (~3 min) — trains and persists everything
 npm run seed:fast    # reduced budget (~20s) — for CI and E2E
-npm run verify       # typecheck → lint → 201 unit tests → build → 41 E2E tests
+npm run verify       # typecheck → lint → 202 unit tests → build → 43 E2E tests
 ```
 
 The E2E suite seeds its own data directory on first run, so `npm run e2e` works on a
@@ -257,8 +257,8 @@ using only what you knew then" an answerable question.
 ## Testing
 
 ```
-201 unit tests   (vitest)
- 41 E2E tests    (Playwright, real Chromium)
+202 unit tests   (vitest)
+ 43 E2E tests    (Playwright, real Chromium)
 ```
 
 The unit tests check against independent references wherever one exists, because

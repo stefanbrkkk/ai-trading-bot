@@ -28,6 +28,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import {
+  MIN_ANIMATED_BAR_WIDTH,
   WATERFALL_BAR_HEIGHT,
   WATERFALL_BAR_RADIUS,
   WATERFALL_ROW_PITCH,
@@ -412,16 +413,19 @@ export function ShapWaterfall({
                   fill={fill}
                   /*
                     A driver whose contribution rounds to zero is not animated.
-                    The spring solver, integrating from 0 towards a target of 0,
-                    emits values like -1.78e-15, and SVG rejects a negative `width`
-                    with a console error — which the E2E suite treats as a failure,
-                    correctly: it fires only for particular data, so it is exactly
-                    the kind of defect that reaches a user and not a developer.
+                    The guard used to be `<= 0`, which is the wrong threshold: a
+                    target of 1.8e-15 is greater than zero, so the spring ran, and
+                    on the settle it emitted -1.8e-15 — a negative `width`, which
+                    SVG rejects with a console error. See MIN_ANIMATED_BAR_WIDTH.
                   */
-                  initial={reduceMotion || barWidth <= 0 ? false : { width: 0, x: row.start * scale }}
+                  initial={
+                    reduceMotion || barWidth < MIN_ANIMATED_BAR_WIDTH
+                      ? false
+                      : { width: 0, x: row.start * scale }
+                  }
                   animate={{ width: Math.max(0, barWidth), x: barX }}
                   transition={
-                    reduceMotion
+                    reduceMotion || barWidth < MIN_ANIMATED_BAR_WIDTH
                       ? { duration: 0 }
                       : { ...WATERFALL_SPRING, delay: index * WATERFALL_STAGGER }
                   }

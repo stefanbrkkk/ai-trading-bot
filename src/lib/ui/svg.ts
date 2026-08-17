@@ -107,6 +107,23 @@ export const CONVICTION_CIRCUMFERENCE = 2 * Math.PI * CONVICTION_RADIUS; // 527.
  */
 export const MORPH_MAX_SEGMENT_LENGTH = 4;
 
+/**
+ * Below this, a bar is snapped rather than animated.
+ *
+ * A spring settling on a near-zero target passes through negative values on the
+ * way in — integrating towards 1.8e-15 it emits -1.8e-15 — and SVG rejects a
+ * negative `width` with a console error. Clamping the *target* does not help,
+ * because the offending value is produced mid-flight by the solver, so the fix is
+ * not to run a solver towards a target no one can see. Half a pixel is well below
+ * anything a reader could distinguish from zero at any of the sizes these charts
+ * are drawn.
+ *
+ * This reached a user rather than a developer: it fires only when a driver's
+ * contribution rounds to zero, which depends on the data, so it appeared on one
+ * symbol at one viewport width on a freshly seeded deployment and nowhere else.
+ */
+export const MIN_ANIMATED_BAR_WIDTH = 0.5;
+
 /** Z-oscillator reference lines: entry at ±2.0σ, exit band at ±0.5σ. */
 export const Z_ENTRY_THRESHOLD = 2.0;
 export const Z_EXIT_THRESHOLD = 0.5;
