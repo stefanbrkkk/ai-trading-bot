@@ -469,18 +469,37 @@ export function entitlement(user: User | null): Entitlement {
     };
   }
 
+  /**
+   * Live routing needs an active subscription *and* an explicit unlock.
+   *
+   * Both conditions, and this must agree exactly with `evaluateOrder`'s
+   * entitlement check — it previously did not. This function granted live routing
+   * for the duration of the `trialing` status while the risk engine required
+   * `liveTradingUnlocked && status === 'active'`, so the two authorities
+   * disagreed. The visible result was a user who had signed up seconds earlier
+   * being shown live routing as available, minting a live intent token, and only
+   * then being rejected at the risk gate — and the reason string cheerfully
+   * described a *paper* sandbox trial as unlocking live routing.
+   *
+   * The risk engine is the correct authority: it implements the Rule 15c3-5
+   * pre-trade controls, and a trial is a paper sandbox by definition. Linking a
+   * broker and turning live routing on is a deliberate act, not something a trial
+   * confers by default.
+   */
   const status = user.subscription.status;
+  const live = status === 'active' && user.liveTradingUnlocked;
   const trialActive = status === 'trialing' && (user.subscription.trialEndsAt ?? 0) > Date.now();
-  const live = status === 'active' || trialActive;
 
   return {
     paper: true,
     live,
     reason: live
-      ? status === 'active'
-        ? 'Live routing is unlocked by an active subscription.'
-        : 'Live routing is unlocked for the remainder of the paper-sandbox trial.'
-      : `Live routing requires an active subscription at $${priceUsdPerMonth}/month. Paper routing remains available.`,
+      ? 'Live routing is unlocked by an active subscription.'
+      : status === 'active'
+        ? 'Live routing is available on this subscription but is not yet enabled for this account. Link a broker and enable it explicitly.'
+        : trialActive
+          ? `The paper sandbox is available for the remainder of the trial. Live routing requires an active subscription at $${priceUsdPerMonth}/month and an explicit unlock.`
+          : `Live routing requires an active subscription at $${priceUsdPerMonth}/month. Paper routing remains available.`,
     trialEndsAt: user.subscription.trialEndsAt,
     trialDaysRemaining: daysRemaining(user.subscription.trialEndsAt),
     status,

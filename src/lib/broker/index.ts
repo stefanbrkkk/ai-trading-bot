@@ -21,10 +21,13 @@ import {
   alpacaCredentialsFromEnv,
 } from '@/lib/broker/alpaca';
 import { PaperBroker, type PaperBrokerOptions } from '@/lib/broker/paper';
+import { brokerState } from '@/lib/broker/state';
+import { simulatorQuote } from '@/lib/market/provider';
 import type { BrokerAdapter, BrokerDescriptor, BrokerName } from '@/lib/broker/types';
 
 export * from '@/lib/broker/types';
 export { PaperBroker, paperOrderId, outboundPayload } from '@/lib/broker/paper';
+export { LedgerBrokerState, brokerState, resetBrokerState } from '@/lib/broker/state';
 export {
   AlpacaBroker,
   alpacaCredentialsFromEnv,
@@ -130,11 +133,28 @@ export function resolveBroker(options: ResolveBrokerOptions = {}): BrokerAdapter
  * Cached so the paper broker's in-memory account survives across requests in a
  * single process — a fresh adapter per request would reset the sandbox balance on
  * every page load.
+ *
+ * The cache is also where the quote source is bound. `resolveBroker` deliberately
+ * does not supply one: it is a pure factory over its options, and the ports a
+ * `PaperBroker` needs belong to whoever composes the application. This function is
+ * that composition point, and it is the *only* one — which is why the omission was
+ * total rather than partial. Without a `QuoteSource` the paper broker has no book to
+ * fill against and answers every submission with HTTP 422 `no_market_data`, so the
+ * platform's only self-contained execution path was inert: risk approved the order,
+ * the ledger recorded it as authorised, and the fill never happened.
  */
 let processBroker: BrokerAdapter | null = null;
 
 export function getBroker(options: ResolveBrokerOptions = {}): BrokerAdapter {
-  if (processBroker === null) processBroker = resolveBroker(options);
+  if (processBroker === null) {
+    processBroker = resolveBroker({
+      ...options,
+      // A durable state port, not the in-memory default: the module cache above is
+      // discarded on every hot reload and every cold serverless invocation, and a
+      // paper account that forgets a fill is worse than one that fails loudly.
+      paper: { quotes: simulatorQuote, state: brokerState(), ...options.paper },
+    });
+  }
   return processBroker;
 }
 

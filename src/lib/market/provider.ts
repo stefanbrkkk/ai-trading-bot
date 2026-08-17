@@ -477,3 +477,37 @@ export function marketProviderStatus(): ProviderStatus {
 export function resetMarketProvider(): void {
   cached = null;
 }
+
+/**
+ * A synchronous NBBO, for callers that cannot await one.
+ *
+ * The paper broker fills against a `QuoteSource`, which is synchronous by design:
+ * a fill is a single instant, and threading a promise through the matching logic
+ * would let the book move between the price check and the fill. The provider
+ * interface is async because a live feed is a network call, so the two cannot be
+ * connected directly — which is why the paper broker shipped with no quote source
+ * at all and refused every order with `no_market_data`.
+ *
+ * The simulator's own quote is the right answer here rather than a compromise. It
+ * is deterministic, always available, needs no network, and models a full L10 book
+ * — so a paper fill is reproducible and its slippage is derived from modelled depth
+ * rather than invented. A deployment with a live feed does not use the paper broker
+ * to begin with, so nothing is lost by not reaching for one.
+ */
+export function simulatorQuote(symbol: string, atMs: number): Quote | null {
+  try {
+    const provider = resolveMarketProvider();
+    // Every composed provider keeps the simulator as its fallback, so the
+    // synchronous book is reachable whichever one is selected.
+    const simulator =
+      provider instanceof SimulatorProvider
+        ? provider.simulator
+        : (provider as { fallback?: SimulatorProvider }).fallback?.simulator;
+    return simulator?.quote(symbol, atMs) ?? null;
+  } catch {
+    // An unknown symbol or a timestamp outside the simulated range is a legitimate
+    // "no market data" answer, and the broker's own 422 is the correct rendering
+    // of it — better than a 500 from a route that was only trying to fill.
+    return null;
+  }
+}

@@ -9,7 +9,6 @@
  */
 
 import { mkdirSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 
@@ -96,15 +95,15 @@ function installWarningFilter(): void {
 installWarningFilter();
 
 /**
- * `node:sqlite` is imported for its types only and loaded through `require` at
- * first use, deliberately.
+ * `node:sqlite` is imported for its types only and fetched at first use.
  *
- * An ESM graph links builtin modules during instantiation — before any module
- * body evaluates — so a static `import … from 'node:sqlite'` emits the
- * experimental warning while the filter above is still unreachable, no matter
- * where the import sits. Deferring the load to the first `getDb()` call puts it
- * strictly after `installWarningFilter()` on every runtime, ESM and CommonJS
- * alike, which is what keeps the console clean for the E2E assertion.
+ * An ESM graph links builtin modules during instantiation — before any module body
+ * evaluates — so a static `import … from 'node:sqlite'` emits the experimental
+ * warning while the filter above is still unreachable, no matter where the import
+ * sits. Deferring the load to the first `getDb()` call puts it strictly after
+ * `installWarningFilter()` on every runtime, ESM and CommonJS alike, which is what
+ * keeps the console clean for the E2E assertion. See `loadSqlite` for how the load
+ * is performed and why.
  */
 type SqliteModule = { DatabaseSync: new (path: string, options?: SqliteOpenOptions) => DatabaseSync };
 
@@ -115,12 +114,41 @@ interface SqliteOpenOptions {
 
 let sqliteModule: SqliteModule | null = null;
 
+/**
+ * Loads `node:sqlite` lazily, without involving the bundler.
+ *
+ * Three approaches were tried, and the reasoning matters because each failure is
+ * instructive:
+ *
+ *   • A **static import** is the obvious choice and the wrong one. `node:sqlite`
+ *     landed in Node 22.5, so on an older runtime a static import fails at *module
+ *     evaluation* — taking down the whole application at boot, including every page
+ *     that never touches the database, with an error naming a module the operator
+ *     did not know they depended on.
+ *
+ *   • **`createRequire`** defers correctly but webpack cannot statically evaluate
+ *     the call and emits "module.createRequire failed parsing argument" on every
+ *     build. Passing a string literal instead of a computed path does not help —
+ *     webpack's handler wants `import.meta.url` specifically. A permanent harmless
+ *     warning is the worst kind, because it teaches readers to skim the build log.
+ *
+ *   • **`process.getBuiltinModule`** (Node 22.3+) exists for precisely this: fetch
+ *     a builtin synchronously, no module system involved, nothing for a bundler to
+ *     resolve or rewrite. Every runtime that has `node:sqlite` has it, so the
+ *     version floor is unchanged.
+ *
+ * The result is lazy, silent at build time, and fails at the point of use with a
+ * message about persistence rather than at boot with one about a module specifier.
+ */
 function loadSqlite(): SqliteModule {
   if (sqliteModule === null) {
-    // The base path is irrelevant for a `node:` builtin specifier; `createRequire`
-    // simply needs some resolvable anchor.
-    const nodeRequire = createRequire(join(process.cwd(), 'aurelius.db.js'));
-    sqliteModule = nodeRequire('node:sqlite') as SqliteModule;
+    const builtin = process.getBuiltinModule('node:sqlite') as SqliteModule | undefined;
+    if (builtin?.DatabaseSync === undefined) {
+      throw new Error(
+        `The embedded store requires Node's built-in "node:sqlite" module, which this runtime (${process.version}) does not provide. Upgrade to Node 22.5 or later, or set DATABASE_URL to use a registered external driver.`,
+      );
+    }
+    sqliteModule = builtin;
   }
   return sqliteModule;
 }

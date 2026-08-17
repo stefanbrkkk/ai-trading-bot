@@ -24,7 +24,12 @@ import { z } from 'zod';
 import { ApiError, clickProvenanceSchema, handler, ok, parseBody } from '@/lib/api/respond';
 import { currentUser, entitlement, requestContext } from '@/lib/auth/session';
 import { mintIntentToken } from '@/lib/risk';
-import { insertAuditEvent, killSwitchState, mintIntentToken as recordIntentToken } from '@/lib/db';
+import {
+  findIntentToken,
+  insertAuditEvent,
+  killSwitchState,
+  mintIntentToken as recordIntentToken,
+} from '@/lib/db';
 import { requireSpec } from '@/lib/market/universe';
 
 export const dynamic = 'force-dynamic';
@@ -65,10 +70,29 @@ export const POST = handler(async (request: Request) => {
   if (!gate.paper) throw new ApiError('TERMS_NOT_ACCEPTED', gate.reason, 403);
   if (body.account === 'live' && !gate.live) throw new ApiError('SUBSCRIPTION_REQUIRED', gate.reason, 402);
 
+  /**
+   * The symbol must be *tradable*, not merely known.
+   *
+   * `requireSpec` alone accepts the benchmark ETF, which is published for
+   * relative-strength reference and is deliberately not in the tradable set. The
+   * risk engine rejects it at submission, so minting a token for it produced a
+   * token that could never be spent — the user clicked Execute, received an
+   * authorisation, and was refused a moment later. Refusing to mint is the honest
+   * answer, and it keeps the mint endpoint's contract meaningful: a token exists
+   * only where an order could exist.
+   */
+  let spec;
   try {
-    requireSpec(symbol);
+    spec = requireSpec(symbol);
   } catch {
     throw new ApiError('UNKNOWN_SYMBOL', `${symbol} is not in the tradable universe.`, 404);
+  }
+  if (spec.isBenchmark) {
+    throw new ApiError(
+      'INSTRUMENT_NOT_TRADABLE',
+      `${symbol} is published as a reference benchmark and is not tradable on this platform.`,
+      422,
+    );
   }
 
   if (!body.click.trusted) {
@@ -88,17 +112,52 @@ export const POST = handler(async (request: Request) => {
     clickTsMs: body.clickTsMs,
   });
 
-  // The nonce is written to the append-only ledger so single-use is enforced by
-  // durable state rather than by process memory.
-  recordIntentToken({
-    token: minted.token,
-    userId: user.id,
-    symbol,
-    mintedAt: body.clickTsMs,
-    expiresAt: minted.expiresAtMs,
-    click: body.click,
-    correlationId: minted.payload.nonce,
-  });
+  /**
+   * A token that already exists is a duplicate click, not a server fault.
+   *
+   * The nonce is derived deterministically from the click parameters and the click
+   * millisecond, so two identical submissions in the same millisecond produce the
+   * same token — which is the double-submit-under-latency case the single-use rule
+   * exists to catch. It was being caught, but by the ledger's UNIQUE constraint,
+   * which threw and became a generic 500: "The request could not be completed."
+   * The control was working and reporting itself as a platform crash.
+   *
+   * Checked before the insert so the normal case is a clean 409, and caught around
+   * it as well because two concurrent requests can still interleave between the
+   * check and the write.
+   */
+  const duplicate = findIntentToken(minted.token) !== null;
+  if (duplicate) {
+    throw new ApiError(
+      'DUPLICATE_INTENT',
+      'This Execute click has already been authorised. Each click authorises exactly one order; click Execute again to route another.',
+      409,
+    );
+  }
+
+  try {
+    // The nonce is written to the append-only ledger so single-use is enforced by
+    // durable state rather than by process memory.
+    recordIntentToken({
+      token: minted.token,
+      userId: user.id,
+      symbol,
+      mintedAt: body.clickTsMs,
+      expiresAt: minted.expiresAtMs,
+      click: body.click,
+      correlationId: minted.payload.nonce,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('UNIQUE constraint')) {
+      throw new ApiError(
+        'DUPLICATE_INTENT',
+        'This Execute click has already been authorised. Each click authorises exactly one order; click Execute again to route another.',
+        409,
+      );
+    }
+    throw error;
+  }
 
   const ctx = await requestContext();
   insertAuditEvent({
