@@ -300,6 +300,8 @@ export const RISK_REJECTION_LABELS: Record<RiskRejectionCode, string> = {
   KILL_SWITCH_ENGAGED: 'Routing halted',
   SUBSCRIPTION_REQUIRED: 'Live routing locked',
   UNTRUSTED_CLICK: 'Order intent unverified',
+  INTENT_TOKEN_MISMATCH: 'Order does not match its authorisation',
+  INTENT_TOKEN_SPENT: 'Authorisation already used',
   MISSING_ORDER_TYPE: 'Order type not selected',
   INVALID_QUANTITY: 'Quantity invalid',
   MISSING_LIMIT_PRICE: 'Limit price required',
@@ -475,7 +477,11 @@ export function evaluateOrder(
     );
   } else if (tokenVerification !== null && !tokenVerification.valid) {
     intentResult = deny(
-      'UNTRUSTED_CLICK',
+      tokenVerification.failure === 'REPLAYED'
+        ? 'INTENT_TOKEN_SPENT'
+        : tokenVerification.failure === 'PARAMETER_MISMATCH'
+          ? 'INTENT_TOKEN_MISMATCH'
+          : 'UNTRUSTED_CLICK',
       'intent_token',
       tokenVerification.failure === null
         ? 'Order authorisation token rejected. Order not transmitted.'
@@ -495,7 +501,7 @@ export function evaluateOrder(
      */
     const field = tokenBindingMismatch(tokenVerification.payload, intent);
     intentResult = deny(
-      'UNTRUSTED_CLICK',
+      'INTENT_TOKEN_MISMATCH',
       'intent_token',
       `Order parameters do not match the authorised token (${field}). Order not transmitted.`,
     );
@@ -560,7 +566,7 @@ export function evaluateOrder(
   if (
     halted(
       instrument.tradable
-        ? pass('symbol', `${symbol} is on the tradable universe.`)
+        ? pass('symbol', `${symbol} is in the tradable universe.`)
         : deny(
             'SYMBOL_NOT_TRADABLE',
             'symbol',

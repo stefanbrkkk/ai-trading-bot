@@ -102,16 +102,35 @@ export interface RetrievalTrace {
 export const DENSE_RELEVANCE_FLOOR = 0.42;
 
 /**
+ * Minimum BM25 score that counts as lexical evidence.
+ *
+ * Calibrated against the 507-chunk corpus. "Any lexical match at all" was the
+ * original test and it let "What is the capital of France?" through — "capital"
+ * occurs in "capital allocation" and in the risk disclosure's "total loss of
+ * capital", which scored 2.92 and produced a fluent, fully-cited, 100%-grounded
+ * answer about analyst calls. Measured best scores:
+ *
+ *     capital of France   2.92     weather today       0.00
+ *     world cup           0.00     bake bread          0.00
+ *     Apple revenue       7.71     NVDA risks          7.29
+ *     platform advice     6.88     insider TSLA       14.04
+ *
+ * 5.0 sits in the gap. It is corpus-scale dependent — BM25 is unnormalised — so
+ * `tests/rag.test.ts` pins both sides of it against the real corpus.
+ */
+export const BM25_RELEVANCE_FLOOR = 5.0;
+
+/**
  * Whether the retrieval found anything that can support an answer.
  *
- * The test is deliberately asymmetric: any lexical match at all is enough,
- * because a shared content term means the corpus genuinely discusses the
- * subject. Absent that, only a strong dense match counts. A question about the
- * weather satisfies neither, and the caller refuses instead of synthesising from
- * the highest-authority chunk it happens to have.
+ * Two ways to qualify: a lexical match strong enough that the corpus is plainly
+ * discussing the subject, or a dense match strong enough to stand on its own. An
+ * incidental collision on one common word is neither, and the caller refuses
+ * rather than synthesising from the highest-authority chunk it happens to hold —
+ * a confidently wrong answer being the worst outcome a research tool can produce.
  */
 export function hasRelevantEvidence(trace: RetrievalTrace): boolean {
-  if (trace.termsInCorpus > 0 && trace.bestBm25 > 0) return true;
+  if (trace.termsInCorpus > 0 && trace.bestBm25 >= BM25_RELEVANCE_FLOOR) return true;
   return trace.bestDense >= DENSE_RELEVANCE_FLOOR;
 }
 

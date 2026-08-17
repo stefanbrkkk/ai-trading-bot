@@ -58,13 +58,23 @@ export function PanelHeader({
   className?: string;
 }) {
   return (
-    <header className={cx('flex items-start justify-between gap-6', className)}>
+    /*
+     * Stacked below `sm`, side by side above it.
+     *
+     * As a row at every width the action had to be `shrink-0` — a badge row or a
+     * timestamp block is unreadable squeezed — and `shrink-0` means it keeps its
+     * max-content width even when the panel is 350px wide. Three version badges
+     * then measured 433px and pushed the whole page into horizontal scroll.
+     * Stacking hands the action the full panel width on a phone, which is both
+     * where it fits and where it reads better.
+     */
+    <header className={cx('flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6', className)}>
       <div className="min-w-0">
         {eyebrow ? <p className="eyebrow mb-2">{eyebrow}</p> : null}
         {title ? <h2 className="display text-lg text-parchment leading-tight">{title}</h2> : null}
         {detail ? <p className="mt-1.5 text-[0.8125rem] leading-relaxed text-parchment-dim">{detail}</p> : null}
       </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
+      {action ? <div className="min-w-0 sm:shrink-0">{action}</div> : null}
     </header>
   );
 }
@@ -179,6 +189,19 @@ export function Badge({
   );
 }
 
+/**
+ * Tone for a signed figure. Zero is neutral.
+ *
+ * `value >= 0 ? 'sage' : 'burgundy'` painted a flat P&L, a zero rejection count
+ * and an empty position book in the same green as a genuine gain, so a page with
+ * nothing in it read as a page where everything had gone well. Absence is not a
+ * positive result, and the palette should not claim it is.
+ */
+export function signTone(value: number): 'sage' | 'burgundy' | 'neutral' {
+  if (!Number.isFinite(value) || value === 0) return 'neutral';
+  return value > 0 ? 'sage' : 'burgundy';
+}
+
 /** A labelled key/value row, for dense specification lists. */
 export function DataRow({
   label,
@@ -192,9 +215,21 @@ export function DataRow({
   className?: string;
 }) {
   return (
+    /*
+     * Neither span may be allowed to shrink below its own min-content width.
+     *
+     * `min-w-0` on the label and `shrink-0` on the value is the combination that
+     * looks reasonable and is wrong: a long value refuses to give up any width, so
+     * flexbox takes it all from the label, squeezes it past its intrinsic minimum,
+     * and the label's text spills out of its box and lands on top of the value.
+     * Leaving both at the flex default (`min-width: auto`) floors each at
+     * min-content, so a long value wraps within its own column instead — hence
+     * `text-right`, which keeps a wrapped value aligned to the same edge as a
+     * single-line one.
+     */
     <div className={cx('hairline flex items-baseline justify-between gap-4 py-2', className)} title={hint}>
-      <span className="min-w-0 text-[0.8125rem] text-parchment-dim">{label}</span>
-      <span className="tabular shrink-0 text-[0.8125rem] text-parchment">{value}</span>
+      <span className="text-[0.8125rem] text-parchment-dim">{label}</span>
+      <span className="tabular text-right text-[0.8125rem] text-parchment">{value}</span>
     </div>
   );
 }
@@ -360,6 +395,19 @@ export function TableShell({
   minWidth?: number;
 }) {
   return (
+    /*
+     * The table is as tall as its content and the page is the only vertical
+     * scroller.
+     *
+     * A `max-height` was tried here, to give `Th`'s `sticky top-0` a scrollport to
+     * pin against — `overflow-x: auto` computes `overflow-y` to `auto`, so this box
+     * is a scrollport in both axes and a sticky header inside it pins to the box
+     * rather than to the viewport. It worked, and it was worse: the screener became
+     * a 888px pane holding 3,801px of rows, so 52 of 67 names were behind an inner
+     * scrollbar that nothing on the page announced. Losing a header on a long scroll
+     * is a smaller cost than losing three quarters of the rows, so the cap is gone
+     * and `Th` no longer claims to stick.
+     */
     <div className={cx('scroll-x', className)}>
       <table className="w-full border-collapse text-[0.8125rem]" style={{ minWidth }}>
         {children}
@@ -389,7 +437,7 @@ export function Th({
       scope="col"
       title={title}
       className={cx(
-        'sticky top-0 z-10 border-b border-obsidian-edge bg-charcoal px-3 py-2.5 font-mono text-2xs font-normal uppercase tracking-institutional text-parchment-faint',
+        'border-b border-obsidian-edge bg-charcoal px-3 py-2.5 font-mono text-2xs font-normal uppercase tracking-institutional text-parchment-faint',
         alignClass,
         onClick && 'cursor-pointer select-none hover:text-parchment-dim',
         className,
@@ -502,4 +550,9 @@ export function Field({
 export const INPUT_CLASS =
   'w-full border border-obsidian-edge bg-vanta-deep px-3 py-2 font-mono text-[0.8125rem] text-parchment placeholder:text-parchment-ghost';
 
-export const SELECT_CLASS = `${INPUT_CLASS} appearance-none bg-[length:10px] bg-[right_0.75rem_center] bg-no-repeat pr-8`;
+/**
+ * `appearance: none` removes the native dropdown indicator, so `globals.css`
+ * draws the chevron for every `select` — see the rule there. This class reserves
+ * the gutter it sits in.
+ */
+export const SELECT_CLASS = `${INPUT_CLASS} appearance-none pr-8`;

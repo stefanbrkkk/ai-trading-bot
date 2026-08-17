@@ -51,7 +51,12 @@ interface KillSwitchState {
     engaged: boolean;
     reason: string | null;
     actorId: string | null;
-    occurredAt: number;
+    /*
+     * `recordedAt`, which is what the ledger and the API call it. This declared
+     * `occurredAt`, so `nyDateTime(undefined)` returned an em-dash and every row
+     * of the change history showed a state and a reason with no time against it.
+     */
+    recordedAt: number;
   }[];
   cancelAttempts?: { orderId: string; brokerOrderId: string | null; status: number | null; ok: boolean }[];
 }
@@ -177,6 +182,8 @@ export default function AdminPage() {
   }
 
   const engaged = kill.data?.engaged === true;
+  /** Time of the most recent change, in whichever direction it went. */
+  const lastChangeAt = kill.data?.history?.[0]?.recordedAt ?? kill.data?.engagedAt ?? null;
 
   return (
     <PageShell wide>
@@ -211,9 +218,16 @@ export default function AdminPage() {
           <dl className="mt-4 space-y-0.5">
             <DataRow label="State" value={engaged ? 'engaged' : 'released'} />
             <DataRow label="Reason" value={kill.data.reason ?? '—'} />
+            {/*
+              `engagedAt` is null whenever the switch is released, so this row read
+              "—" in exactly the state the platform spends most of its time in —
+              next to a reason and an actor that were both populated. The latest
+              history entry carries the time of the change that produced the
+              current state, whichever direction it went.
+            */}
             <DataRow
               label="Changed at"
-              value={kill.data.engagedAt === null ? '—' : nyDateTime(kill.data.engagedAt)}
+              value={lastChangeAt === null ? '—' : nyDateTime(lastChangeAt)}
             />
             <DataRow label="Changed by" value={kill.data.engagedBy ?? '—'} />
           </dl>
@@ -298,7 +312,7 @@ export default function AdminPage() {
               {kill.data.history.map((entry) => (
                 <li key={entry.id} className="flex flex-wrap items-baseline gap-2 text-[0.75rem]">
                   <Badge tone={entry.engaged ? 'burgundy' : 'sage'}>{entry.engaged ? 'engaged' : 'released'}</Badge>
-                  <span className="font-mono text-2xs text-parchment-faint">{nyDateTime(entry.occurredAt)}</span>
+                  <span className="font-mono text-2xs text-parchment-faint">{nyDateTime(entry.recordedAt)}</span>
                   <span className="text-parchment-dim">{entry.reason ?? '—'}</span>
                 </li>
               ))}
@@ -320,7 +334,7 @@ export default function AdminPage() {
               <StatTile
                 label="Rejections (24h)"
                 value={integer(data.rejectionsLastDay.reduce((a, r) => a + r.count, 0))}
-                tone={data.rejectionsLastDay.length > 0 ? 'burgundy' : 'sage'}
+                tone={data.rejectionsLastDay.length > 0 ? 'burgundy' : 'neutral'}
                 footnote={data.rejectionsLastDay[0]?.code ?? 'None'}
               />
               <StatTile label="Routed orders" value={integer(data.telemetry.length)} footnote="With full telemetry" />
@@ -335,60 +349,58 @@ export default function AdminPage() {
                     detail="The six mandatory audit fields plus the full timestamp chain. An interval is null rather than zero where a stage never completed — a broker that never acknowledged has no acknowledgement latency."
                   />
                 </div>
-                <div className="scroll-x mt-4">
-                  <TableShell>
-                    <thead>
-                      <tr>
-                        <Th>Order</Th>
-                        <Th>Clicked</Th>
-                        <Th align="right">Click→server</Th>
-                        <Th align="right">Risk</Th>
-                        <Th align="right">Broker ACK</Th>
-                        <Th align="right">Total</Th>
-                        <Th align="right">Click x,y</Th>
-                        <Th>Target</Th>
-                        <Th align="right">HTTP</Th>
+                <TableShell className="mt-4">
+                  <thead>
+                    <tr>
+                      <Th>Order</Th>
+                      <Th>Clicked</Th>
+                      <Th align="right">Click→server</Th>
+                      <Th align="right">Risk</Th>
+                      <Th align="right">Broker ACK</Th>
+                      <Th align="right">Total</Th>
+                      <Th align="right">Click x,y</Th>
+                      <Th>Target</Th>
+                      <Th align="right">HTTP</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.telemetry.map((record) => (
+                      <tr key={record.orderId}>
+                        <Td>
+                          <span className="font-mono text-2xs text-parchment-dim">
+                            {record.orderId.slice(0, 12)}…
+                          </span>
+                        </Td>
+                        <Td>
+                          <span className="font-mono text-2xs text-parchment-faint">
+                            {nyDateTime(record.timestamps.clientClick)}
+                          </span>
+                        </Td>
+                        <Td align="right" numeric>
+                          {duration(record.intervals.clickToServerMs)}
+                        </Td>
+                        <Td align="right" numeric>
+                          {duration(record.intervals.riskMs)}
+                        </Td>
+                        <Td align="right" numeric>
+                          {record.intervals.brokerAckMs === null ? '—' : duration(record.intervals.brokerAckMs)}
+                        </Td>
+                        <Td align="right" numeric>
+                          {record.intervals.totalMs === null ? '—' : duration(record.intervals.totalMs)}
+                        </Td>
+                        <Td align="right" numeric>
+                          {record.click.clickX}, {record.click.clickY}
+                        </Td>
+                        <Td>
+                          <span className="font-mono text-2xs text-parchment-ghost">{record.click.targetId}</span>
+                        </Td>
+                        <Td align="right" numeric>
+                          {record.brokerStatus ?? '—'}
+                        </Td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {data.telemetry.map((record) => (
-                        <tr key={record.orderId}>
-                          <Td>
-                            <span className="font-mono text-2xs text-parchment-dim">
-                              {record.orderId.slice(0, 12)}…
-                            </span>
-                          </Td>
-                          <Td>
-                            <span className="font-mono text-2xs text-parchment-faint">
-                              {nyDateTime(record.timestamps.clientClick)}
-                            </span>
-                          </Td>
-                          <Td align="right" numeric>
-                            {duration(record.intervals.clickToServerMs)}
-                          </Td>
-                          <Td align="right" numeric>
-                            {duration(record.intervals.riskMs)}
-                          </Td>
-                          <Td align="right" numeric>
-                            {record.intervals.brokerAckMs === null ? '—' : duration(record.intervals.brokerAckMs)}
-                          </Td>
-                          <Td align="right" numeric>
-                            {record.intervals.totalMs === null ? '—' : duration(record.intervals.totalMs)}
-                          </Td>
-                          <Td align="right" numeric>
-                            {record.click.clickX}, {record.click.clickY}
-                          </Td>
-                          <Td>
-                            <span className="font-mono text-2xs text-parchment-ghost">{record.click.targetId}</span>
-                          </Td>
-                          <Td align="right" numeric>
-                            {record.brokerStatus ?? '—'}
-                          </Td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </TableShell>
-                </div>
+                    ))}
+                  </tbody>
+                </TableShell>
 
                 {data.telemetry[0] !== undefined ? (
                   <div className="border-t border-obsidian-edge p-5">
@@ -419,52 +431,50 @@ export default function AdminPage() {
                   detail="Every mutating action and every generated query, with the service identity that performed it."
                 />
               </div>
-              <div className="scroll-x mt-4">
-                <TableShell>
-                  <thead>
-                    <tr>
-                      <Th>Occurred</Th>
-                      <Th>Event</Th>
-                      <Th>Resource</Th>
-                      <Th>User</Th>
-                      <Th>IP</Th>
-                      <Th align="right">Click</Th>
-                      <Th>Service identity</Th>
+              <TableShell className="mt-4">
+                <thead>
+                  <tr>
+                    <Th>Occurred</Th>
+                    <Th>Event</Th>
+                    <Th>Resource</Th>
+                    <Th>User</Th>
+                    <Th>IP</Th>
+                    <Th align="right">Click</Th>
+                    <Th>Service identity</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.events.map((event) => (
+                    <tr key={event.id}>
+                      <Td>
+                        <span className="font-mono text-2xs text-parchment-faint">{nyDateTime(event.occurredAt)}</span>
+                      </Td>
+                      <Td>
+                        <span className="text-2xs text-parchment-dim">{event.eventType.replace(/_/g, ' ')}</span>
+                      </Td>
+                      <Td>
+                        <span className="font-mono text-2xs text-parchment-dim">{event.resource ?? '—'}</span>
+                      </Td>
+                      <Td>
+                        <span className="font-mono text-2xs text-parchment-ghost">
+                          {event.userId === null ? 'anonymous' : `${event.userId.slice(0, 8)}…`}
+                        </span>
+                      </Td>
+                      <Td>
+                        <span className="font-mono text-2xs text-parchment-ghost">{event.ipAddress}</span>
+                      </Td>
+                      <Td align="right" numeric>
+                        {event.clickX === null ? '—' : `${event.clickX}, ${event.clickY}`}
+                      </Td>
+                      <Td>
+                        <span className="font-mono text-2xs text-parchment-ghost">
+                          {event.spiffeId.replace('spiffe://aurelius.local/ns/', '')}
+                        </span>
+                      </Td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {data.events.map((event) => (
-                      <tr key={event.id}>
-                        <Td>
-                          <span className="font-mono text-2xs text-parchment-faint">{nyDateTime(event.occurredAt)}</span>
-                        </Td>
-                        <Td>
-                          <span className="text-2xs text-parchment-dim">{event.eventType.replace(/_/g, ' ')}</span>
-                        </Td>
-                        <Td>
-                          <span className="font-mono text-2xs text-parchment-dim">{event.resource ?? '—'}</span>
-                        </Td>
-                        <Td>
-                          <span className="font-mono text-2xs text-parchment-ghost">
-                            {event.userId === null ? 'anonymous' : `${event.userId.slice(0, 8)}…`}
-                          </span>
-                        </Td>
-                        <Td>
-                          <span className="font-mono text-2xs text-parchment-ghost">{event.ipAddress}</span>
-                        </Td>
-                        <Td align="right" numeric>
-                          {event.clickX === null ? '—' : `${event.clickX}, ${event.clickY}`}
-                        </Td>
-                        <Td>
-                          <span className="font-mono text-2xs text-parchment-ghost">
-                            {event.spiffeId.replace('spiffe://aurelius.local/ns/', '')}
-                          </span>
-                        </Td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </TableShell>
-              </div>
+                  ))}
+                </tbody>
+              </TableShell>
             </Panel>
 
             <Notice tone="legal" className="mt-5">

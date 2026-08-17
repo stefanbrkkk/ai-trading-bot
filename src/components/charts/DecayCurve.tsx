@@ -32,6 +32,7 @@
 
 import { useMemo } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
+import { useChartWidth } from './useChartWidth';
 import {
   frame,
   linePath,
@@ -42,6 +43,8 @@ import {
   type ChartFrame,
   type Point,
   type Scale,
+  thinLabels,
+  spreadLabels,
 } from '@/lib/ui/svg';
 import {
   GOLD,
@@ -68,7 +71,9 @@ const DAY_MS = 86_400_000;
 const RIGHT_MARGIN = 150;
 const LABEL_CHARS = 16;
 /** Minimum vertical gap between two curve-end labels. */
-const LABEL_PITCH = 11;
+/** Narrowest gap between two time-axis labels before one is dropped. */
+const TICK_LABEL_MIN_GAP = 42;
+const LABEL_PITCH = 13;
 
 /** Candidate log ticks. Filtered to the domain, so a 6-hour chart is not labelled in days. */
 const TICK_CANDIDATES = [
@@ -116,7 +121,8 @@ interface CurveLayout {
   hint: string;
   /** Half-life tick at Δt = plateau + H, where w = authority/2. */
   tick: { x: number; y: number } | null;
-  endLabel: { x: number; y: number; text: string };
+  /** `anchorY` is where the curve ends; `y` is where the label was placed. */
+  endLabel: { x: number; y: number; anchorY: number; text: string };
   current: { x: number; y: number; weight: number } | null;
 }
 
@@ -237,7 +243,7 @@ function buildLayout(
         plateau + row.halfLifeMs <= upper
           ? { x: x(plateau + row.halfLifeMs), y: y(authority / 2) }
           : null,
-      endLabel: { x: f.x1 + 6, y: y(tailWeight), text },
+      endLabel: { x: f.x1 + 6, y: y(tailWeight), anchorY: y(tailWeight), text },
       current: hasAge
         ? {
             x: x(Math.max(lower, Math.min(upper, age as number))),
@@ -248,34 +254,78 @@ function buildLayout(
     };
   });
 
-  // De-overlap the curve-end labels. Curves that have both decayed to ~0 share the
-  // same y, and two labels stacked on one baseline are unreadable.
-  const ordered = curves.slice().sort((a, b) => a.endLabel.y - b.endLabel.y);
-  let cursor = f.y0;
-  for (const curve of ordered) {
-    const placed = Math.max(curve.endLabel.y, cursor);
-    curve.endLabel.y = Math.min(placed, f.y1);
-    cursor = curve.endLabel.y + LABEL_PITCH;
-  }
+  /*
+   * De-overlap the curve-end labels.
+   *
+   * Most of these streams have decayed to nearly nothing by the right edge, so a
+   * dozen labels arrive at the same y. The previous pass walked down from the top
+   * clamping to `f.y1`, which meant every label past the frame's capacity piled up
+   * on that one baseline — six of the twelve printed through each other. Spreading
+   * distributes them and pulls the overrun back inside the frame, so all twelve
+   * are legible and each keeps a leader to its curve.
+   */
+  const labelYs = spreadLabels(
+    curves.map((curve) => curve.endLabel.y),
+    LABEL_PITCH,
+    f.y0,
+    f.y1,
+  );
+  curves.forEach((curve, i) => {
+    curve.endLabel.anchorY = curve.endLabel.y;
+    curve.endLabel.y = labelYs[i] as number;
+  });
 
   return {
     f,
     x,
     y,
     curves,
-    xTicks: TICK_CANDIDATES.filter((t) => t >= lower && t <= upper),
-    yTicks: niceTicks([0, Math.max(peak, 0.001)], 4),
+    /*
+     * Thinned by pixel distance, not just by range. The axis is logarithmic over
+     * five orders of magnitude, so "5 min", "15 min" and "60 min" land within a
+     * dozen pixels of each other at the left end and print through one another.
+     * Keeping the first of each cluster loses a gridline and keeps the axis
+     * readable, which is the right trade for a chart about half-lives.
+     */
+    xTicks: (() => {
+      const inRange = TICK_CANDIDATES.filter((t) => t >= lower && t <= upper);
+      const keep = new Set(thinLabels(inRange.map((t) => x(t)), TICK_LABEL_MIN_GAP));
+      return inRange.filter((_, i) => keep.has(i));
+    })(),
+    /*
+     * Ticks are dropped when their label would repeat or their gridline would sit
+     * on top of the one before it. On a symbol whose alt-data has all decayed the
+     * peak weight is a fraction of a percent, so `niceTicks` returned four levels
+     * that every formatted to "0%" and printed on top of one another 11px apart.
+     */
+    yTicks: (() => {
+      const candidates = niceTicks([0, Math.max(peak, 0.001)], 4);
+      const kept: number[] = [];
+      let lastY = Number.POSITIVE_INFINITY;
+      let lastText = '';
+      for (const tick of candidates) {
+        const text = fractionAsPercent(tick, 0);
+        const ty = y(tick);
+        if (text === lastText || lastY - ty < AXIS_TEXT + 4) continue;
+        kept.push(tick);
+        lastY = ty;
+        lastText = text;
+      }
+      return kept;
+    })(),
     domain,
   };
 }
 
-export function DecayCurve({ profiles, horizonMs, height = 260, width = 680 }: DecayCurveProps) {
+export function DecayCurve({ profiles, horizonMs, height = 260, width: widthFallback = 680 }: DecayCurveProps) {
+  const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
   const layout = useMemo(() => buildLayout(profiles, horizonMs, width, height), [profiles, horizonMs, width, height]);
 
   if (!layout) {
     return (
       <svg
+        ref={chartRef}
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="xMidYMid meet"
         className="h-auto w-full"
@@ -291,10 +341,25 @@ export function DecayCurve({ profiles, horizonMs, height = 260, width = 680 }: D
 
   const { f, x, y, curves, xTicks, yTicks, domain } = layout;
   const live = curves.filter((curve) => curve.current !== null);
+  /*
+   * Residual-weight captions are printed only where they can be told apart.
+   *
+   * A symbol whose alt-data has all gone stale puts eight markers within a few
+   * pixels of the baseline, every one captioned "0%", stacked on top of each
+   * other. The marker still shows where each curve is and its `<title>` still
+   * carries the exact figure; what is dropped is the repetition.
+   */
+  const captioned = new Set(
+    thinLabels(
+      live.map((curve) => (curve.current as { y: number }).y),
+      AXIS_TEXT + 4,
+    ).map((i) => live[i]?.stream),
+  );
 
   return (
     <div className="relative">
       <svg
+        ref={chartRef}
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="xMidYMid meet"
         className="h-auto w-full"
@@ -352,7 +417,7 @@ export function DecayCurve({ profiles, horizonMs, height = 260, width = 680 }: D
               />
               <text
                 x={x(tick)}
-                y={f.y1 + 13}
+                y={f.y1 + 16}
                 textAnchor="middle"
                 fontSize={AXIS_TEXT}
                 fill={PARCHMENT_FAINT}
@@ -411,6 +476,18 @@ export function DecayCurve({ profiles, horizonMs, height = 260, width = 680 }: D
             >
               {curve.endLabel.text}
             </text>
+            {Math.abs(curve.endLabel.y - curve.endLabel.anchorY) > 1 ? (
+              <line
+                x1={f.x1}
+                x2={curve.endLabel.x - 2}
+                y1={curve.endLabel.anchorY}
+                y2={curve.endLabel.y}
+                stroke={curve.colour}
+                strokeOpacity={0.35}
+                strokeWidth={1}
+                aria-hidden
+              />
+            ) : null}
           </g>
         ))}
 
@@ -441,17 +518,19 @@ export function DecayCurve({ profiles, horizonMs, height = 260, width = 680 }: D
               >
                 <title>{`${curve.label} — residual weight ${fractionAsPercent(current.weight, 1)}`}</title>
               </motion.circle>
-              <text
-                x={current.x}
-                y={current.y - 7}
-                textAnchor="middle"
-                fontSize={AXIS_TEXT}
-                fill={PARCHMENT_FAINT}
-                className="tabular"
-                aria-hidden
-              >
-                {fractionAsPercent(current.weight, 0)}
-              </text>
+              {captioned.has(curve.stream) ? (
+                <text
+                  x={current.x}
+                  y={current.y - 7}
+                  textAnchor="middle"
+                  fontSize={AXIS_TEXT}
+                  fill={PARCHMENT_FAINT}
+                  className="tabular"
+                  aria-hidden
+                >
+                  {fractionAsPercent(current.weight, 0)}
+                </text>
+              ) : null}
             </g>
           );
         })}

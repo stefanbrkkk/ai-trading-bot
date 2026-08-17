@@ -120,11 +120,33 @@ export interface FeatureArtefacts {
   atr: number;
   ou: ReturnType<typeof fitOu>;
   ouBand: { upper: number; lower: number; mid: number };
+  /**
+   * The benchmark-relative log spread the OU fit was performed on, most recent
+   * last. Exposed so the terminal can draw the z-score oscillator from the same
+   * series the parameters came from — standardising a differently-built spread in
+   * the browser would put a chart and a signal on two different definitions.
+   */
+  ouSpreadWindow: number[];
   kalman: ReturnType<typeof kalmanInnovationBands>[number] | null;
   kalmanSeries: ReturnType<typeof kalmanInnovationBands>;
   mlofi: ReturnType<typeof computeMlofiSignal>;
   micro: ReturnType<typeof microstructureMetrics>;
-  sabr: (SabrParams & { rmse: number; converged: boolean }) | null;
+  /**
+   * The calibrated smile parameters, plus the tenor and forward they were fitted
+   * at and the market quotes they were fitted to. The tenor and forward travel
+   * with the parameters because a SABR vol is meaningless without them — drawing
+   * the curve at a different forward would produce a smile the published RR₂₅ does
+   * not sit on.
+   */
+  sabr:
+    | (SabrParams & {
+        rmse: number;
+        converged: boolean;
+        dte: number;
+        forward: number;
+        quotes: { strike: number; vol: number }[];
+      })
+    | null;
   skew: ReturnType<typeof riskReversal25> | null;
   /** Per-stream decayed alt-data aggregates. */
   altStreams: AggregatedStream[];
@@ -266,7 +288,7 @@ export function computeFeatures(input: ComputeInput): ComputedFeatures {
     : 0;
 
   // ── Options / SABR ───────────────────────────────────────────────────────
-  let sabr: (SabrParams & { rmse: number; converged: boolean }) | null = null;
+  let sabr: FeatureArtefacts['sabr'] = null;
   let skew: ReturnType<typeof riskReversal25> | null = null;
   let atmIv = 0;
   let termSlope = 0;
@@ -282,7 +304,17 @@ export function computeFeatures(input: ComputeInput): ComputedFeatures {
       calls.map((q) => ({ strike: q.strike, vol: q.impliedVolatility, weight: Math.max(q.vega, 1e-4) })),
       { beta: 0.5 },
     );
-    sabr = { alpha: fit.alpha, beta: fit.beta, rho: fit.rho, nu: fit.nu, rmse: fit.rmse, converged: fit.converged };
+    sabr = {
+      alpha: fit.alpha,
+      beta: fit.beta,
+      rho: fit.rho,
+      nu: fit.nu,
+      rmse: fit.rmse,
+      converged: fit.converged,
+      dte: Math.max(chain30.dte, 1),
+      forward: chain30.forward,
+      quotes: calls.map((q) => ({ strike: q.strike, vol: q.impliedVolatility })),
+    };
     skew = riskReversal25(price, Math.max(chain30.dte, 1) / 365, fit, { rate: 0.042, dividend: meta.dividendYield });
     atmIv = skew.volAtm;
 
@@ -510,6 +542,7 @@ export function computeFeatures(input: ComputeInput): ComputedFeatures {
       atr: (last(atrPct) || 0) * price,
       ou,
       ouBand,
+      ouSpreadWindow: ouWindow,
       kalman,
       kalmanSeries,
       mlofi,

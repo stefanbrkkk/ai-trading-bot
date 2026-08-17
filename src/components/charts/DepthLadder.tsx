@@ -37,6 +37,7 @@ import {
 // over mid, not over bid) must match the number the engine publishes elsewhere.
 import { MLOFI_LEVELS, spreadBps, type BookLevel, type OrderBookSnapshot } from '@/lib/quant/orderflow';
 import { EmptyState } from '@/components/ui/primitives';
+import { useChartWidth } from './useChartWidth';
 
 /** Width of the centre price column — two 8-character tabular prices at 10px. */
 const CENTRE_WIDTH = 132;
@@ -119,7 +120,8 @@ function drawableLevels(side: BookLevel[] | undefined, count: number): (BookLeve
   });
 }
 
-export function DepthLadder({ book, levels, height, mlofiLoadings, width = 560 }: DepthLadderProps) {
+export function DepthLadder({ book, levels, height, mlofiLoadings, width: widthFallback = 560 }: DepthLadderProps) {
+  const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
 
   const rawBids = Array.isArray(book?.bids) ? book.bids : [];
@@ -175,6 +177,7 @@ export function DepthLadder({ book, levels, height, mlofiLoadings, width = 560 }
 
   return (
     <svg
+      ref={chartRef}
       viewBox={`0 0 ${width} ${viewHeight}`}
       width={width}
       height={viewHeight}

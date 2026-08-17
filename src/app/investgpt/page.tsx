@@ -312,47 +312,45 @@ export default function InvestGptPage() {
               />
             </div>
             {result.rowCount > 0 ? (
-              <div className="scroll-x mt-4">
-                <TableShell>
-                  <thead>
-                    <tr>
-                      {result.columns.map((column) => (
-                        <Th key={column} align={SYMBOL_COLUMNS.has(column) ? 'left' : 'right'}>
-                          {column}
-                        </Th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.rows.map((row, rowIndex) => (
-                      <tr key={rowIndex} className="hover:bg-obsidian-light/50">
-                        {row.map((cell, cellIndex) => {
-                          const column = result.columns[cellIndex] ?? '';
-                          const symbolCell = SYMBOL_COLUMNS.has(column) && typeof cell === 'string';
-                          return (
-                            <Td
-                              key={cellIndex}
-                              align={symbolCell ? 'left' : 'right'}
-                              numeric={typeof cell === 'number'}
-                            >
-                              {symbolCell ? (
-                                <Link
-                                  href={`/terminal/${cell}`}
-                                  className="font-mono text-parchment underline decoration-obsidian-edge hover:decoration-gold"
-                                >
-                                  {cell}
-                                </Link>
-                              ) : (
-                                formatCell(cell)
-                              )}
-                            </Td>
-                          );
-                        })}
-                      </tr>
+              <TableShell className="mt-4">
+                <thead>
+                  <tr>
+                    {result.columns.map((column) => (
+                      <Th key={column} align={SYMBOL_COLUMNS.has(column) ? 'left' : 'right'}>
+                        {column}
+                      </Th>
                     ))}
-                  </tbody>
-                </TableShell>
-              </div>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.rows.map((row, rowIndex) => (
+                    <tr key={rowIndex} className="hover:bg-obsidian-light/50">
+                      {row.map((cell, cellIndex) => {
+                        const column = result.columns[cellIndex] ?? '';
+                        const symbolCell = SYMBOL_COLUMNS.has(column) && typeof cell === 'string';
+                        return (
+                          <Td
+                            key={cellIndex}
+                            align={symbolCell ? 'left' : 'right'}
+                            numeric={typeof cell === 'number'}
+                          >
+                            {symbolCell ? (
+                              <Link
+                                href={`/terminal/${cell}`}
+                                className="font-mono text-parchment underline decoration-obsidian-edge hover:decoration-gold"
+                              >
+                                {cell}
+                              </Link>
+                            ) : (
+                              formatCell(cell)
+                            )}
+                          </Td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </TableShell>
             ) : (
               <div className="p-5" />
             )}

@@ -266,59 +266,57 @@ export default function TransparencyPage() {
                   title="Three architectures, three timeframes"
                   detail="Each is fitted and validated independently; their validation losses are not comparable to the ensemble's."
                 />
-                <div className="scroll-x mt-4">
-                  <TableShell>
-                    <thead>
-                      <tr>
-                        <Th>Agent</Th>
-                        <Th>Architecture</Th>
-                        <Th align="right">Timeframe</Th>
-                        <Th align="right">Sequence</Th>
-                        <Th align="right">Inputs</Th>
-                        <Th align="right">Hidden</Th>
-                        <Th align="right">Valid loss</Th>
-                        <Th align="right">Edge</Th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.card.agents.map((agent) => {
-                        const loss =
-                          agent.architecture === 'lstm'
-                            ? t.lstmValidLoss
-                            : agent.architecture === 'bilstm'
-                              ? t.bilstmValidLoss
-                              : t.tftValidLoss;
-                        const edge = data.fusion.agentEdge[`${agent.timeframeMinutes}m`];
-                        return (
-                          <tr key={agent.name}>
-                            <Td>{agent.name}</Td>
-                            <Td>
-                              <Badge tone="ghost">{ARCHITECTURE_LABELS[agent.architecture]}</Badge>
-                            </Td>
-                            <Td align="right" numeric>
-                              {integer(agent.timeframeMinutes)}m
-                            </Td>
-                            <Td align="right" numeric>
-                              {integer(agent.sequenceLength)}
-                            </Td>
-                            <Td align="right" numeric>
-                              {integer(agent.inputSize)}
-                            </Td>
-                            <Td align="right" numeric>
-                              {integer(agent.hiddenSize)}
-                            </Td>
-                            <Td align="right" numeric>
-                              {ratio(loss, 4)}
-                            </Td>
-                            <Td align="right" numeric>
-                              {edge === undefined ? '—' : ratio(edge, 3)}
-                            </Td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </TableShell>
-                </div>
+                <TableShell className="mt-4">
+                  <thead>
+                    <tr>
+                      <Th>Agent</Th>
+                      <Th>Architecture</Th>
+                      <Th align="right">Timeframe</Th>
+                      <Th align="right">Sequence</Th>
+                      <Th align="right">Inputs</Th>
+                      <Th align="right">Hidden</Th>
+                      <Th align="right">Valid loss</Th>
+                      <Th align="right">Edge</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.card.agents.map((agent) => {
+                      const loss =
+                        agent.architecture === 'lstm'
+                          ? t.lstmValidLoss
+                          : agent.architecture === 'bilstm'
+                            ? t.bilstmValidLoss
+                            : t.tftValidLoss;
+                      const edge = data.fusion.agentEdge[`${agent.timeframeMinutes}m`];
+                      return (
+                        <tr key={agent.name}>
+                          <Td>{agent.name}</Td>
+                          <Td>
+                            <Badge tone="ghost">{ARCHITECTURE_LABELS[agent.architecture]}</Badge>
+                          </Td>
+                          <Td align="right" numeric>
+                            {integer(agent.timeframeMinutes)}m
+                          </Td>
+                          <Td align="right" numeric>
+                            {integer(agent.sequenceLength)}
+                          </Td>
+                          <Td align="right" numeric>
+                            {integer(agent.inputSize)}
+                          </Td>
+                          <Td align="right" numeric>
+                            {integer(agent.hiddenSize)}
+                          </Td>
+                          <Td align="right" numeric>
+                            {ratio(loss, 4)}
+                          </Td>
+                          <Td align="right" numeric>
+                            {edge === undefined ? '—' : ratio(edge, 3)}
+                          </Td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </TableShell>
               </Panel>
 
               <Panel className="mt-5">
@@ -413,14 +411,23 @@ export default function TransparencyPage() {
                   detail={`${integer(data.modelFeatureCount)} are consumed by the ensemble; the rest are published for inspection and are queryable.`}
                   action={
                     <div className="flex flex-wrap gap-1.5">
-                      <Button
-                        size="sm"
-                        variant={modelOnly ? 'primary' : 'ghost'}
-                        onClick={() => setModelOnly((v) => !v)}
-                        aria-pressed={modelOnly}
-                      >
-                        In model only
-                      </Button>
+                      {/*
+                        Offered only when it would change the list. Every feature
+                        in the registry is currently consumed by the ensemble, so
+                        the control was rendering a button that produced a
+                        byte-identical table — a filter that silently does nothing
+                        reads as a broken control, not as an informative one.
+                      */}
+                      {data.modelFeatureCount < data.count ? (
+                        <Button
+                          size="sm"
+                          variant={modelOnly ? 'primary' : 'ghost'}
+                          onClick={() => setModelOnly((v) => !v)}
+                          aria-pressed={modelOnly}
+                        >
+                          In model only
+                        </Button>
+                      ) : null}
                       <Button size="sm" variant={group === '' ? 'primary' : 'ghost'} onClick={() => setGroup('')}>
                         All groups
                       </Button>
@@ -446,49 +453,47 @@ export default function TransparencyPage() {
                 </div>
               </div>
 
-              <div className="scroll-x mt-4">
-                <TableShell>
-                  <thead>
-                    <tr>
-                      <Th>Feature</Th>
-                      <Th>Group</Th>
-                      <Th>Unit</Th>
-                      <Th>Formula</Th>
-                      <Th>Description</Th>
-                      <Th align="center">In model</Th>
-                      <Th align="right">States</Th>
+              <TableShell className="mt-4">
+                <thead>
+                  <tr>
+                    <Th>Feature</Th>
+                    <Th>Group</Th>
+                    <Th>Unit</Th>
+                    <Th>Formula</Th>
+                    <Th>Description</Th>
+                    <Th align="center">In model</Th>
+                    <Th align="right">States</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shown.map((feature) => (
+                    <tr key={feature.key}>
+                      <Td>
+                        <span className="text-parchment">{feature.label}</span>
+                        <span className="ml-2 font-mono text-2xs text-parchment-ghost">{feature.sqlColumn}</span>
+                      </Td>
+                      <Td>
+                        <span className="text-2xs text-parchment-dim">{feature.group.replace(/_/g, ' ')}</span>
+                      </Td>
+                      <Td>
+                        <span className="text-2xs text-parchment-faint">{feature.unit}</span>
+                      </Td>
+                      <Td>
+                        <code className="font-mono text-2xs text-parchment-dim">{feature.formula}</code>
+                      </Td>
+                      <Td>
+                        <span className="text-2xs leading-snug text-parchment-faint">{feature.description}</span>
+                      </Td>
+                      <Td align="center">
+                        {feature.inModel ? <Badge tone="sage">yes</Badge> : <Badge tone="ghost">no</Badge>}
+                      </Td>
+                      <Td align="right" numeric>
+                        {integer(feature.states.length)}
+                      </Td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {shown.map((feature) => (
-                      <tr key={feature.key}>
-                        <Td>
-                          <span className="text-parchment">{feature.label}</span>
-                          <span className="ml-2 font-mono text-2xs text-parchment-ghost">{feature.sqlColumn}</span>
-                        </Td>
-                        <Td>
-                          <span className="text-2xs text-parchment-dim">{feature.group.replace(/_/g, ' ')}</span>
-                        </Td>
-                        <Td>
-                          <span className="text-2xs text-parchment-faint">{feature.unit}</span>
-                        </Td>
-                        <Td>
-                          <code className="font-mono text-2xs text-parchment-dim">{feature.formula}</code>
-                        </Td>
-                        <Td>
-                          <span className="text-2xs leading-snug text-parchment-faint">{feature.description}</span>
-                        </Td>
-                        <Td align="center">
-                          {feature.inModel ? <Badge tone="sage">yes</Badge> : <Badge tone="ghost">no</Badge>}
-                        </Td>
-                        <Td align="right" numeric>
-                          {integer(feature.states.length)}
-                        </Td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </TableShell>
-              </div>
+                  ))}
+                </tbody>
+              </TableShell>
 
               <div className="border-t border-obsidian-edge p-5">
                 <PanelHeader
@@ -499,7 +504,14 @@ export default function TransparencyPage() {
                 <ul className="mt-4 space-y-2.5">
                   {data.mappingMatrix.map((entry) => (
                     <li key={entry.key}>
-                      <p className="font-mono text-2xs uppercase tracking-institutional text-parchment-faint">
+                      {/*
+                        The key is a pipe-delimited machine identifier
+                        (`insider_form4_score|positive|STATE_INSIDER_ACCUMULATION`)
+                        with no space to wrap at, so without `break-words` it runs
+                        past the panel and takes the page's horizontal scroll with
+                        it — 14px of body overflow on a 390px viewport.
+                      */}
+                      <p className="break-words font-mono text-2xs uppercase tracking-institutional text-parchment-faint">
                         {entry.key}
                       </p>
                       <p className="mt-1 text-[0.8125rem] leading-relaxed text-parchment-dim">{entry.template}</p>

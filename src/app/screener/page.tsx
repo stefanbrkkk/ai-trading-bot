@@ -233,90 +233,94 @@ export default function ScreenerPage() {
             </StatGrid>
 
             <Panel padded={false}>
-              <div className="scroll-x">
-                <TableShell>
-                  <thead>
-                    <tr>
-                      <Th>Symbol</Th>
-                      <Th>Sector</Th>
-                      <Th align="right">Price</Th>
-                      <Th align="right">Change</Th>
-                      <Th align="right">Conviction</Th>
-                      <Th align="right">Prob.</Th>
-                      <Th>Dir.</Th>
-                      <Th align="right">Rel. vol</Th>
-                      <Th align="right">RSI</Th>
-                      <Th align="right">OU z</Th>
-                      <Th align="right">MLOFI</Th>
-                      <Th align="right">25Δ RR</Th>
-                      <Th align="right">Alt</Th>
-                      <Th align="right">ATR %</Th>
-                      <Th align="right">Mkt cap</Th>
-                      <Th>Leading driver</Th>
+              {/*
+                `TableShell` is itself a `.scroll-x`; the wrapper that used to sit
+                here made a scroll container whose only child was another scroll
+                container, so the outer one could never scroll and served only to
+                double the measurement work.
+              */}
+              <TableShell>
+                <thead>
+                  <tr>
+                    <Th>Symbol</Th>
+                    <Th>Sector</Th>
+                    <Th align="right">Price</Th>
+                    <Th align="right">Change</Th>
+                    <Th align="right">Conviction</Th>
+                    <Th align="right">Prob.</Th>
+                    <Th>Dir.</Th>
+                    <Th align="right">Rel. vol</Th>
+                    <Th align="right">RSI</Th>
+                    <Th align="right">OU z</Th>
+                    <Th align="right">MLOFI</Th>
+                    <Th align="right">25Δ RR</Th>
+                    <Th align="right">Alt</Th>
+                    <Th align="right">ATR %</Th>
+                    <Th align="right">Mkt cap</Th>
+                    <Th>Leading driver</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rows.map((row) => (
+                    <tr key={row.symbol} className="hover:bg-obsidian-light/50">
+                      <Td>
+                        <Link
+                          href={`/terminal/${row.symbol}`}
+                          className="font-mono text-parchment underline decoration-obsidian-edge hover:decoration-gold"
+                        >
+                          {row.symbol}
+                        </Link>
+                        <span className="ml-2 hidden text-2xs text-parchment-faint xl:inline">{row.name}</span>
+                      </Td>
+                      <Td>
+                        <span className="text-2xs text-parchment-dim">{row.sector}</span>
+                      </Td>
+                      <Td align="right" numeric>
+                        {price(row.price)}
+                      </Td>
+                      <Td align="right" numeric className={row.changePercent >= 0 ? 'text-sage-bright' : 'text-burgundy-bright'}>
+                        {signedPercent(row.changePercent)}
+                      </Td>
+                      <Td align="right" numeric className="text-gold">
+                        {integer(row.conviction)}
+                      </Td>
+                      <Td align="right" numeric>
+                        {percent(row.probability * 100, 1)}
+                      </Td>
+                      <Td>
+                        <Badge tone={directionTone(row.direction)}>{row.direction}</Badge>
+                      </Td>
+                      <Td align="right" numeric>
+                        {ratio(row.relativeVolume, 2)}
+                      </Td>
+                      <Td align="right" numeric>
+                        {integer(row.rsi14)}
+                      </Td>
+                      <Td align="right" numeric>
+                        {sigma(row.ouZScore)}
+                      </Td>
+                      <Td align="right" numeric>
+                        {sigma(row.mlofiIntent)}
+                      </Td>
+                      <Td align="right" numeric>
+                        {ratio(row.riskReversal25, 2)}
+                      </Td>
+                      <Td align="right" numeric>
+                        {ratio(row.altComposite, 2)}
+                      </Td>
+                      <Td align="right" numeric>
+                        {percent(row.atrPercent, 1)}
+                      </Td>
+                      <Td align="right" numeric>
+                        {compact(row.marketCap, 1)}
+                      </Td>
+                      <Td>
+                        <span className="text-2xs text-parchment-faint">{row.topDriver}</span>
+                      </Td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {data.rows.map((row) => (
-                      <tr key={row.symbol} className="hover:bg-obsidian-light/50">
-                        <Td>
-                          <Link
-                            href={`/terminal/${row.symbol}`}
-                            className="font-mono text-parchment underline decoration-obsidian-edge hover:decoration-gold"
-                          >
-                            {row.symbol}
-                          </Link>
-                          <span className="ml-2 hidden text-2xs text-parchment-faint xl:inline">{row.name}</span>
-                        </Td>
-                        <Td>
-                          <span className="text-2xs text-parchment-dim">{row.sector}</span>
-                        </Td>
-                        <Td align="right" numeric>
-                          {price(row.price)}
-                        </Td>
-                        <Td align="right" numeric className={row.changePercent >= 0 ? 'text-sage-bright' : 'text-burgundy-bright'}>
-                          {signedPercent(row.changePercent)}
-                        </Td>
-                        <Td align="right" numeric className="text-gold">
-                          {integer(row.conviction)}
-                        </Td>
-                        <Td align="right" numeric>
-                          {percent(row.probability * 100, 1)}
-                        </Td>
-                        <Td>
-                          <Badge tone={directionTone(row.direction)}>{row.direction}</Badge>
-                        </Td>
-                        <Td align="right" numeric>
-                          {ratio(row.relativeVolume, 2)}
-                        </Td>
-                        <Td align="right" numeric>
-                          {integer(row.rsi14)}
-                        </Td>
-                        <Td align="right" numeric>
-                          {sigma(row.ouZScore)}
-                        </Td>
-                        <Td align="right" numeric>
-                          {sigma(row.mlofiIntent)}
-                        </Td>
-                        <Td align="right" numeric>
-                          {ratio(row.riskReversal25, 2)}
-                        </Td>
-                        <Td align="right" numeric>
-                          {ratio(row.altComposite, 2)}
-                        </Td>
-                        <Td align="right" numeric>
-                          {percent(row.atrPercent, 1)}
-                        </Td>
-                        <Td align="right" numeric>
-                          {compact(row.marketCap, 1)}
-                        </Td>
-                        <Td>
-                          <span className="text-2xs text-parchment-faint">{row.topDriver}</span>
-                        </Td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </TableShell>
-              </div>
+                  ))}
+                </tbody>
+              </TableShell>
             </Panel>
 
             <Notice tone="legal" className="mt-5">

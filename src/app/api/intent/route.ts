@@ -23,7 +23,7 @@
 import { z } from 'zod';
 import { ApiError, clickProvenanceSchema, handler, ok, parseBody } from '@/lib/api/respond';
 import { currentUser, entitlement, requestContext } from '@/lib/auth/session';
-import { mintIntentToken } from '@/lib/risk';
+import { killSwitchShed, mintIntentToken } from '@/lib/risk';
 import {
   findIntentToken,
   insertAuditEvent,
@@ -61,10 +61,11 @@ export const POST = handler(async (request: Request) => {
 
   // The kill switch is checked here as well as in the order route: refusing to
   // mint while routing is halted means a client cannot hold a pre-minted token
-  // across the halt and spend it the moment it lifts.
-  if (killSwitchState().engaged) {
-    throw new ApiError('KILL_SWITCH_ENGAGED', 'Order routing is halted platform-wide. No orders can be submitted.', 503);
-  }
+  // across the halt and spend it the moment it lifts. Both endpoints format the
+  // refusal through `killSwitchShed`, so a halt looks the same whichever one the
+  // client reaches.
+  const shed = killSwitchShed(killSwitchState());
+  if (shed !== null) throw new ApiError(shed.code, shed.message, shed.status, shed.details);
 
   const gate = entitlement(user);
   if (!gate.paper) throw new ApiError('TERMS_NOT_ACCEPTED', gate.reason, 403);

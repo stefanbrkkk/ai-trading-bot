@@ -20,6 +20,7 @@
 
 import { performance } from 'node:perf_hooks';
 import { SimulatorProvider } from '@/lib/market/provider';
+import { referenceNow } from '@/lib/domain/clock';
 import { ALL_SYMBOLS, BENCHMARK_SYMBOL, TRADABLE_SYMBOLS, requireSpec, symbolMeta } from '@/lib/market/universe';
 import { buildRiskReversalHistory, buildTrainingDataset } from '@/lib/engine/dataset';
 import { trainModelBundle } from '@/lib/engine/model';
@@ -37,7 +38,7 @@ const SEED = Number(process.env.AURELIUS_SEED ?? 20240117);
  * E2E expectations and the screenshots in the docs all agree. Override with
  * AURELIUS_NOW when regenerating for a different date.
  */
-const NOW = Number(process.env.AURELIUS_NOW ?? Date.UTC(2026, 7, 14, 20, 0, 0));
+const NOW = referenceNow(Date.UTC(2026, 7, 14, 20, 0, 0));
 
 const BUDGET = FAST
   ? { symbols: 18, samplesPerSymbol: 14, gbdtRounds: 60, agentEpochs: 2, tftEpochs: 1, bookSnapshots: 16, historyDepth: 24 }

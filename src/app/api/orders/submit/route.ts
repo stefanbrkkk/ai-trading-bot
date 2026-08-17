@@ -12,17 +12,25 @@
  * Order of operations, and why:
  *
  *   1. authenticate                — an anonymous request cannot route.
- *   2. rate limit (5/s/user)       — Control 5, applied before any work so a
+ *   2. kill switch (Control 6)     — shed with 503 before any other work. The risk
+ *                                    engine also refuses while the switch is
+ *                                    engaged, but it answers 422 (a *decision*
+ *                                    about an order), and the published limits
+ *                                    descriptor promises 503 (the platform is not
+ *                                    accepting orders at all). Both are needed:
+ *                                    the engine check is the fail-closed backstop,
+ *                                    this one is the contract.
+ *   3. rate limit (5/s/user)       — Control 5, applied before any work so a
  *                                    repeated Submit under network latency cannot
  *                                    flood the downstream broker.
- *   3. risk engine (commit: true)  — Controls 1–4 and the intent-token check. The
+ *   4. risk engine (commit: true)  — Controls 1–4 and the intent-token check. The
  *                                    token is *consumed* here, so a replay fails
  *                                    even with a valid signature.
- *   4. persist the pending order   — before dispatch, so a crash mid-flight still
+ *   5. persist the pending order   — before dispatch, so a crash mid-flight still
  *                                    leaves evidence the order was authorised.
- *   5. dispatch to the broker      — the raw payload and the exact HTTP status and
+ *   6. dispatch to the broker      — the raw payload and the exact HTTP status and
  *                                    body are captured whatever happens.
- *   6. telemetry                   — all six mandatory audit fields, including the
+ *   7. telemetry                   — all six mandatory audit fields, including the
  *                                    click coordinates and the click → API →
  *                                    broker-ACK timestamp array.
  *
@@ -40,6 +48,7 @@ import {
   ORDER_MESSAGES_PER_SECOND_PER_USER,
   RATE_LIMIT_WINDOW_MS,
   evaluateOrder,
+  killSwitchShed,
   notionalReferencePrice,
   orderNotionalUsd,
 } from '@/lib/risk';
@@ -51,6 +60,7 @@ import {
   insertOrder,
   insertOrderTelemetry,
   insertRiskDecision,
+  killSwitchState,
   updateOrderExecution,
 } from '@/lib/db';
 import { ERROR_COPY } from '@/lib/compliance/disclosures';
@@ -89,7 +99,42 @@ export const POST = handler(async (request: Request) => {
   const ctx = await requestContext();
   const sessionToken = await currentSessionToken();
 
-  // ── 2. Rate limit ────────────────────────────────────────────────────────
+  // ── 2. Kill switch — Control 6 ───────────────────────────────────────────
+  /*
+   * Shed here, and shed with 503.
+   *
+   * A stockpiled token is the case this covers. `/api/intent` refuses to mint
+   * while the switch is engaged, so in the ordinary flow a client never reaches
+   * this route during a halt. But a token minted a second before the halt is
+   * still signed, still unexpired and still unspent, and reaching the risk engine
+   * with it produced a 422 — the status the platform uses for "this order was
+   * assessed and refused", when the truth is that no order is being assessed at
+   * all. The published KILL_SWITCH_STATUS descriptor says 503, and this is the
+   * endpoint that descriptor is about.
+   */
+  const halt = killSwitchState();
+  const shed = killSwitchShed(halt);
+  if (shed !== null) {
+    insertAuditEvent({
+      eventType: 'order_shed_kill_switch',
+      userId: user.id,
+      sessionToken,
+      ipAddress: ctx.ipAddress,
+      userAgent: ctx.userAgent,
+      clickX: body.click.clickX,
+      clickY: body.click.clickY,
+      resource: symbol,
+      orderId: null,
+      rawPayload: JSON.stringify({ reason: halt.reason, engagedAt: halt.engagedAt, engagedBy: halt.engagedBy }),
+      brokerStatus: null,
+      brokerBody: null,
+      spiffeId: ROUTER_SPIFFE_ID,
+      correlationId: correlation,
+    });
+    throw new ApiError(shed.code, shed.message, shed.status, shed.details);
+  }
+
+  // ── 3. Rate limit ────────────────────────────────────────────────────────
   const verdict = hitRateLimit(`orders:${user.id}`, {
     limit: ORDER_MESSAGES_PER_SECOND_PER_USER,
     windowMs: RATE_LIMIT_WINDOW_MS,
@@ -135,7 +180,7 @@ export const POST = handler(async (request: Request) => {
     signalId: body.signalId ?? null,
   };
 
-  // ── 3. Risk engine — consumes the intent token ───────────────────────────
+  // ── 4. Risk engine — consumes the intent token ───────────────────────────
   const built = await buildOrderContext({
     user,
     intent,
@@ -149,14 +194,22 @@ export const POST = handler(async (request: Request) => {
   const decision = evaluateOrder(intent, built.context);
   const riskCompleted = Date.now();
 
-  insertRiskDecision(decision, {
-    orderId: null,
-    userId: user.id,
-    symbol,
-    correlationId: correlation,
-  });
-
+  /*
+   * A rejected order records its decision here; an approved one records it once
+   * the order id exists, a few lines below.
+   *
+   * Recording unconditionally at this point and again after persistence wrote two
+   * rows per routed order — same correlation id, one with a null order id — so
+   * /control's audit table listed every order twice and its rejection counters
+   * double-counted.
+   */
   if (!decision.approved) {
+    insertRiskDecision(decision, {
+      orderId: null,
+      userId: user.id,
+      symbol,
+      correlationId: correlation,
+    });
     const rejection = decision.rejection;
     insertAuditEvent({
       eventType: 'order_rejected_by_risk',
@@ -191,7 +244,7 @@ export const POST = handler(async (request: Request) => {
     );
   }
 
-  // ── 4. Persist the authorised order before dispatch ──────────────────────
+  // ── 5. Persist the authorised order before dispatch ──────────────────────
   const quantity = intent.quantity as number;
   const reference = notionalReferencePrice(intent, built.quote);
   const orderId = `ord_${randomUUID()}`;
@@ -225,7 +278,7 @@ export const POST = handler(async (request: Request) => {
   });
   consumeIntentToken(body.intentToken, { userId: user.id, symbol, now: riskCompleted, orderId });
 
-  // ── 5. Dispatch ──────────────────────────────────────────────────────────
+  // ── 6. Dispatch ──────────────────────────────────────────────────────────
   const broker = getBroker();
   const brokerDispatched = Date.now();
   const result = await broker.submitOrder(
@@ -256,7 +309,7 @@ export const POST = handler(async (request: Request) => {
     updatedAt: brokerAcknowledged,
   });
 
-  // ── 6. Forensic telemetry ────────────────────────────────────────────────
+  // ── 7. Forensic telemetry ────────────────────────────────────────────────
   const telemetry: OrderTelemetry = {
     orderId,
     timestamps: {

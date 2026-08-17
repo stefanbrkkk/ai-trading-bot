@@ -168,7 +168,7 @@ textarea::placeholder {
 input:focus,
 select:focus,
 textarea:focus {
-  border-color: var(--gold-dim, #8e7526);
+  border-color: #8e7526;
   outline: none;
   box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.35);
 }
@@ -290,6 +290,26 @@ svg text {
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * Dropdown indicator.
+ *
+ * `SELECT_CLASS` sets `appearance: none` — needed, because the native control
+ * ignores the palette — which also removes the arrow. Nothing replaced it, so
+ * every select in the app rendered as a text box with a blank 32px gutter and no
+ * sign it could be opened. Drawn here rather than per call site so a new select
+ * cannot ship without it.
+ */
+select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6' fill='none' stroke='%237a766d' stroke-width='1.4'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 10px 6px;
+}
+
+select:focus {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6' fill='none' stroke='%23d4af37' stroke-width='1.4'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+}
+
 /* Wide charts and tables scroll inside their own container; the page body must
    never scroll horizontally. */
 .scroll-x {
@@ -306,6 +326,57 @@ svg text {
    * while every individual overflow container looks correctly configured.
    */
   min-width: 0;
+}
+
+/*
+ * Edge fades for a region with content out of view.
+ *
+ * `ScrollAffordance` measures each scrolling region and stamps `data-fade` with
+ * the edges that actually have something behind them, re-measuring as the region
+ * scrolls. So the fade marks a continuation rather than decorating an edge: a
+ * table that fits gets none, and the right edge stops fading once you reach the
+ * last column.
+ *
+ * A mask is used rather than a gradient overlay because these regions sit on
+ * three different surfaces (vanta, obsidian and the charcoal table head) and an
+ * overlay would have to know which one it was covering.
+ */
+[data-fade] {
+  --scroll-fade: 2rem;
+}
+
+[data-fade='right'] {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--scroll-fade)), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--scroll-fade)), transparent);
+}
+
+[data-fade='left'] {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - var(--scroll-fade)), transparent);
+  mask-image: linear-gradient(to left, #000 calc(100% - var(--scroll-fade)), transparent);
+}
+
+[data-fade='both'] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--scroll-fade),
+    #000 calc(100% - var(--scroll-fade)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--scroll-fade),
+    #000 calc(100% - var(--scroll-fade)),
+    transparent
+  );
+}
+
+/* The same regions are made focusable so they can be scrolled with the arrow
+   keys; a focusable element that shows no focus is worse than one that is not. */
+[data-scroll-x-focusable]:focus-visible {
+  outline: 1px solid rgb(212 175 55 / 0.5);
+  outline-offset: 2px;
 }
 
 /* ── Motion ─────────────────────────────────────────────────────────────── */

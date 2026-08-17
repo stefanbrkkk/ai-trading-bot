@@ -431,3 +431,23 @@ describe('schema pruning', () => {
     expect(CATALOG.filter((e) => e.materialised).length).toBeGreaterThan(80);
   });
 });
+
+describe('column resolution picks the subject nearest the comparison', () => {
+  it('binds "price under 50" to price even when a regime word precedes it', () => {
+    const compiled = compileQuestion('technology stocks in a trending bear regime with price under 50');
+    expect(compiled.sql).toContain('price < ?');
+    expect(compiled.sql).not.toContain('regime_trend_score <');
+    expect(compiled.params).toContain(50);
+  });
+
+  it('still prefers the longer phrase when two candidates end together', () => {
+    const compiled = compileQuestion('names with relative volume above 2');
+    expect(compiled.sql).toContain('rel_volume_20 > ?');
+  });
+
+  it('reports a qualitative clause it could not compile rather than dropping it', () => {
+    const compiled = compileQuestion('Which symbols have relative volume above 2 and a positive MLOFI intent?');
+    expect(compiled.sql).toContain('rel_volume_20 > ?');
+    expect(compiled.unparsed.join(' ').toLowerCase()).toContain('mlofi');
+  });
+});

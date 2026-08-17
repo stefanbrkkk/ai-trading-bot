@@ -27,13 +27,85 @@ export const WATERFALL_SPRING = { type: 'spring' as const, stiffness: 70, dampin
 /** Stagger: `delay = index × 0.05s`. */
 export const WATERFALL_STAGGER = 0.05;
 
+/**
+ * Drops labels that would collide, keeping the first of each cluster.
+ *
+ * For an axis whose ticks are fixed by the data — a log time axis, a set of price
+ * levels — the honest response to "these two labels overlap" is to print one of
+ * them, not to print both on top of each other. Returns the indices to keep.
+ */
+export function thinLabels(positions: readonly number[], minGap: number): number[] {
+  const order = positions.map((value, index) => ({ value, index })).sort((a, b) => a.value - b.value);
+  const keep: number[] = [];
+  let last = Number.NEGATIVE_INFINITY;
+  for (const item of order) {
+    if (item.value - last < minGap) continue;
+    keep.push(item.index);
+    last = item.value;
+  }
+  return keep.sort((a, b) => a - b);
+}
+
+/**
+ * Pushes labels apart so none overlaps, keeping their order and staying inside
+ * `[lo, hi]`.
+ *
+ * Used where every label has to be shown — the four signal levels on the price
+ * chart are each meaningful, and dropping "invalidation" because it sits near the
+ * entry zone would remove the one a reader most needs. A single forward pass
+ * separates them, then a backward pass pulls the overrun back inside the frame.
+ */
+export function spreadLabels(
+  positions: readonly number[],
+  minGap: number,
+  lo: number,
+  hi: number,
+): number[] {
+  const order = positions.map((value, index) => ({ value, index })).sort((a, b) => a.value - b.value);
+  const placed = order.map((item) => item.value);
+  for (let i = 1; i < placed.length; i += 1) {
+    const previous = placed[i - 1] as number;
+    if ((placed[i] as number) - previous < minGap) placed[i] = previous + minGap;
+  }
+  const overrun = (placed[placed.length - 1] ?? hi) - hi;
+  if (overrun > 0) {
+    for (let i = 0; i < placed.length; i += 1) placed[i] = (placed[i] as number) - overrun;
+    for (let i = 1; i < placed.length; i += 1) {
+      const previous = placed[i - 1] as number;
+      if ((placed[i] as number) - previous < minGap) placed[i] = previous + minGap;
+    }
+  }
+  if ((placed[0] as number) < lo) {
+    const shift = lo - (placed[0] as number);
+    for (let i = 0; i < placed.length; i += 1) placed[i] = (placed[i] as number) + shift;
+  }
+  const out = new Array<number>(positions.length);
+  order.forEach((item, i) => {
+    out[item.index] = placed[i] as number;
+  });
+  return out;
+}
+
 /** Conviction ring geometry. */
 export const CONVICTION_RADIUS = 84;
 export const CONVICTION_STROKE = 3;
 export const CONVICTION_CIRCUMFERENCE = 2 * Math.PI * CONVICTION_RADIUS; // 527.7876…
 
-/** Flubber interpolation granularity for the force-plot ↔ waterfall morph. */
-export const MORPH_MAX_SEGMENT_LENGTH = 0.1;
+/**
+ * Flubber interpolation granularity for the conviction "unspool" morph.
+ *
+ * The research specifies 0.1, which on the r=84 ring means resampling a 528-unit
+ * circumference into ~5,300 anchors and matching them against the axis on every
+ * mixer construction. Measured on the publication list — five dials — that cost
+ * 12.5s of blocked main thread on load and 1.4s on every hover, with the scores
+ * frozen at "0" for the first seven seconds.
+ *
+ * At 4 the ring resamples to ~130 anchors, the morph is visually identical at the
+ * sizes it is drawn (132–220px), and the construction is imperceptible. The dial
+ * also builds the mixer lazily now, so a page that never morphs never pays for it
+ * at all — see `ConvictionDial`.
+ */
+export const MORPH_MAX_SEGMENT_LENGTH = 4;
 
 /** Z-oscillator reference lines: entry at ±2.0σ, exit band at ±0.5σ. */
 export const Z_ENTRY_THRESHOLD = 2.0;

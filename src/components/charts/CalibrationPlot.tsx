@@ -24,6 +24,7 @@ import { motion, useReducedMotion } from 'framer-motion';
 import { frame, linearScale, smoothPath, type ChartFrame, type Scale } from '@/lib/ui/svg';
 import { GOLD, OBSIDIAN_EDGE, PARCHMENT_DIM, PARCHMENT_FAINT, fractionAsPercent, integer, ratio } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
+import { useChartWidth } from './useChartWidth';
 
 const AXIS_TEXT = 9;
 /** 0.25 ticks on both axes, as specified. */
@@ -126,7 +127,8 @@ function computeLayout(props: CalibrationPlotProps): Layout | null {
   };
 }
 
-export function CalibrationPlot({ curve, brier, ece, width = 380, height = 340 }: CalibrationPlotProps) {
+export function CalibrationPlot({ curve, brier, ece, width: widthFallback = 380, height = 340 }: CalibrationPlotProps) {
+  const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
   const layout = useMemo(() => computeLayout({ curve, width, height }), [curve, width, height]);
 
@@ -162,6 +164,7 @@ export function CalibrationPlot({ curve, brier, ece, width = 380, height = 340 }
       </div>
 
       <svg
+        ref={chartRef}
         viewBox={`0 0 ${width} ${height}`}
         width={width}
         height={height}

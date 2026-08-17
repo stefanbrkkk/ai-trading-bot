@@ -25,6 +25,7 @@
 
 import { useMemo } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
+import { useChartWidth } from './useChartWidth';
 import {
   Z_AXIS_LIMIT,
   Z_ENTRY_THRESHOLD,
@@ -32,6 +33,7 @@ import {
   frame,
   linearScale,
   type ChartFrame,
+  spreadLabels,
 } from '@/lib/ui/svg';
 import {
   BURGUNDY,
@@ -144,9 +146,10 @@ export function ZOscillator({
   exitThreshold = Z_EXIT_THRESHOLD,
   label,
   height = 190,
-  width = 620,
+  width: widthFallback = 620,
   currentLabel,
 }: ZOscillatorProps) {
+  const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
   const layout = useMemo(
     () => buildLayout(values, entryThreshold, exitThreshold, width, height),
@@ -158,6 +161,7 @@ export function ZOscillator({
     // panel slot beside the signal gate and must not change the panel's height.
     return (
       <svg
+        ref={chartRef}
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="xMidYMid meet"
         className="h-auto w-full"
@@ -199,15 +203,32 @@ export function ZOscillator({
             ? 'normalised'
             : 'in transit';
 
-  const captions: { y: number; text: string; colour: string }[] = [
+  /*
+   * Five captions share the right gutter — the four thresholds and the zero rail —
+   * and at ±0.5σ on a 190px frame the exit pair sits 5px from the zero label, so
+   * all three printed on top of each other. The lines stay where the thresholds
+   * are; only the text is separated, in the same way the price chart handles its
+   * level labels.
+   */
+  const captionSource = [
     { y: yEntryHigh, text: `+${ratio(entry, 1)} entry`, colour: GOLD },
     { y: yExitHigh, text: `+${ratio(exit, 1)} exit`, colour: CHAMPAGNE },
+    { y: centreY, text: '0', colour: PARCHMENT_FAINT },
     { y: yExitLow, text: `−${ratio(exit, 1)} exit`, colour: CHAMPAGNE },
     { y: yEntryLow, text: `−${ratio(entry, 1)} entry`, colour: GOLD },
   ];
+  const captionYs = spreadLabels(
+    captionSource.map((c) => c.y),
+    // A 9px label's line box is ~11px tall, so an 11px pitch leaves them touching.
+    AXIS_TEXT + 5,
+    AXIS_TEXT,
+    height - 2,
+  );
+  const captions = captionSource.map((c, i) => ({ ...c, y: captionYs[i] as number }));
 
   return (
     <svg
+      ref={chartRef}
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="xMidYMid meet"
       className="h-auto w-full"
@@ -285,22 +306,12 @@ export function ZOscillator({
             y={caption.y}
             dominantBaseline="middle"
             fontSize={AXIS_TEXT}
-            fill={PARCHMENT_FAINT}
+            fill={caption.colour}
             className="tabular"
           >
             {caption.text}
           </text>
         ))}
-        <text
-          x={f.x1 + 5}
-          y={centreY}
-          dominantBaseline="middle"
-          fontSize={AXIS_TEXT}
-          fill={PARCHMENT_FAINT}
-          className="tabular"
-        >
-          0
-        </text>
       </g>
 
       {/* ── 4. The series. Parchment, because the colour in this chart belongs

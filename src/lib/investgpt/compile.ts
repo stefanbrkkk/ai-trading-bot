@@ -192,33 +192,54 @@ interface Resolved {
 }
 
 /** Binds a phrase to a column, preferring the longest match. */
+/**
+ * Resolves the column a fragment is talking about.
+ *
+ * Candidates are ranked by where they *end*, then by length — nearest the
+ * comparison wins, and a longer phrase beats a shorter one that ends in the same
+ * place.
+ *
+ * Longest-anywhere was the previous rule and it read the wrong subject out of any
+ * sentence carrying two of them: "technology stocks in a trending bear regime
+ * with price under 50" matched "trend" from earlier in the string over "price"
+ * immediately before the operator, and filtered on `regime_trend_score < 50` —
+ * returning rows priced 187.23, 281.86 and 94.44 in answer to "price under 50".
+ * A query that quietly answers a different question is the worst failure this
+ * compiler has, because the SQL is shown and looks perfectly reasonable.
+ *
+ * Ranking on the end position keeps "relative volume" winning over "volume":
+ * both end at the same index, so the longer phrase takes it.
+ */
 function resolveColumn(text: string): Resolved | null {
   const lower = text.toLowerCase();
-  let best: { length: number; resolved: Resolved } | null = null;
+  let best: { end: number; length: number; resolved: Resolved } | null = null;
+
+  const consider = (phrase: string, resolved: Resolved): void => {
+    const at = lower.lastIndexOf(phrase);
+    if (at < 0) return;
+    const end = at + phrase.length;
+    if (best !== null && (end < best.end || (end === best.end && phrase.length <= best.length))) return;
+    best = { end, length: phrase.length, resolved };
+  };
 
   for (const entry of DIMENSION_PHRASES) {
-    if (lower.includes(entry.phrase) && (best === null || entry.phrase.length > best.length)) {
-      best = {
-        length: entry.phrase.length,
-        resolved: { column: entry.column, label: entry.label, definition: null, matchedPhrase: entry.phrase },
-      };
-    }
+    consider(entry.phrase, {
+      column: entry.column,
+      label: entry.label,
+      definition: null,
+      matchedPhrase: entry.phrase,
+    });
   }
   for (const entry of FEATURE_PHRASES) {
-    if (lower.includes(entry.phrase) && (best === null || entry.phrase.length > best.length)) {
-      best = {
-        length: entry.phrase.length,
-        resolved: {
-          column: entry.definition.sqlColumn,
-          label: entry.definition.label,
-          definition: entry.definition,
-          matchedPhrase: entry.phrase,
-        },
-      };
-    }
+    consider(entry.phrase, {
+      column: entry.definition.sqlColumn,
+      label: entry.definition.label,
+      definition: entry.definition,
+      matchedPhrase: entry.phrase,
+    });
   }
 
-  return best?.resolved ?? null;
+  return best === null ? null : (best as { resolved: Resolved }).resolved;
 }
 
 /** The text surrounding a span, used by the adjacency tests. */
@@ -289,6 +310,16 @@ interface Clause {
   /** Columns the clause needs in the projection so the result explains itself. */
   project: string[];
 }
+
+/**
+ * Words that make a fragment read like a filter rather than framing.
+ *
+ * Comparisons were the whole list, which missed every qualitative predicate the
+ * compiler also understands — "positive MLOFI intent", "bullish", "oversold" —
+ * so those went unreported when they failed to compile.
+ */
+const CONSTRAINT_LIKE =
+  /\b(above|below|over|under|than|between|at least|at most|is|has|have|positive|negative|bullish|bearish|rising|falling|oversold|overbought|strong|weak|high|low|trending|reverting)\b/i;
 
 export function compileQuestion(question: string): CompiledQuery {
   const original = question.trim();
@@ -648,9 +679,20 @@ export function compileQuestion(question: string): CompiledQuery {
     const start = original.indexOf(trimmed);
     const covered = consumed.some((span) => start < span.end && start + trimmed.length > span.start);
     if (covered) continue;
-    if (resolveColumn(trimmed) !== null) continue;
+    /*
+     * A fragment that names a known column and still produced no clause is the
+     * case that most needs reporting, not the case to skip.
+     *
+     * `resolveColumn(trimmed) !== null → continue` did the opposite, and combined
+     * with a constraint pattern that only recognised comparisons it made the
+     * platform's own example chip — "Which symbols have relative volume above 2
+     * and a positive MLOFI intent?" — compile to SQL carrying the volume filter
+     * alone, with nothing anywhere saying the second half had been dropped. A
+     * query that silently answers a different question than the one asked is
+     * worse than one that refuses.
+     */
     // Only report fragments that read like constraints, not the question's framing.
-    if (!/\b(above|below|over|under|than|between|at least|at most|is|has|have)\b/i.test(trimmed)) continue;
+    if (!CONSTRAINT_LIKE.test(trimmed)) continue;
     unparsed.push(trimmed);
   }
 

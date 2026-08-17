@@ -149,28 +149,26 @@ export default function CompliancePage() {
                   detail="Published so the claim is checkable rather than asserted. Generated text is filtered against this list, and a sentence containing one of these phrases is removed with the removal reported in the response."
                 />
               </div>
-              <div className="scroll-x mt-4">
-                <TableShell>
-                  <thead>
-                    <tr>
-                      <Th>Phrase</Th>
-                      <Th>Why it is prohibited</Th>
+              <TableShell className="mt-4">
+                <thead>
+                  <tr>
+                    <Th>Phrase</Th>
+                    <Th>Why it is prohibited</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.prohibitedCopy.map((entry) => (
+                    <tr key={entry.phrase}>
+                      <Td>
+                        <code className="font-mono text-2xs text-burgundy-bright">{entry.phrase}</code>
+                      </Td>
+                      <Td>
+                        <span className="text-2xs leading-snug text-parchment-dim">{entry.reason}</span>
+                      </Td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {data.prohibitedCopy.map((entry) => (
-                      <tr key={entry.phrase}>
-                        <Td>
-                          <code className="font-mono text-2xs text-burgundy-bright">{entry.phrase}</code>
-                        </Td>
-                        <Td>
-                          <span className="text-2xs leading-snug text-parchment-dim">{entry.reason}</span>
-                        </Td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </TableShell>
-              </div>
+                  ))}
+                </tbody>
+              </TableShell>
               <div className="border-t border-obsidian-edge p-5">
                 <p className="eyebrow mb-2">Neutral framing template</p>
                 <p className="text-[0.8125rem] leading-relaxed text-parchment-dim">{data.neutralFraming}</p>
@@ -186,28 +184,26 @@ export default function CompliancePage() {
                   detail="Listed before you route anything, rather than disclosed on request. Every field below is written to an append-only ledger that cannot be edited or deleted."
                 />
               </div>
-              <div className="scroll-x mt-4">
-                <TableShell>
-                  <thead>
-                    <tr>
-                      <Th>Field</Th>
-                      <Th>Why it is recorded</Th>
+              <TableShell className="mt-4">
+                <thead>
+                  <tr>
+                    <Th>Field</Th>
+                    <Th>Why it is recorded</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.auditFields.map((field) => (
+                    <tr key={field.field}>
+                      <Td>
+                        <code className="font-mono text-2xs text-parchment">{field.field}</code>
+                      </Td>
+                      <Td>
+                        <span className="text-2xs leading-snug text-parchment-dim">{field.purpose}</span>
+                      </Td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {data.auditFields.map((field) => (
-                      <tr key={field.field}>
-                        <Td>
-                          <code className="font-mono text-2xs text-parchment">{field.field}</code>
-                        </Td>
-                        <Td>
-                          <span className="text-2xs leading-snug text-parchment-dim">{field.purpose}</span>
-                        </Td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </TableShell>
-              </div>
+                  ))}
+                </tbody>
+              </TableShell>
             </Panel>
 
             {/* ── Privacy ──────────────────────────────────────────── */}
@@ -235,40 +231,38 @@ export default function CompliancePage() {
                     detail="Append-only. Re-accepting adds an entry rather than replacing one, so the record shows what you agreed to and when."
                   />
                 </div>
-                <div className="scroll-x mt-4">
-                  <TableShell>
-                    <thead>
-                      <tr>
-                        <Th>Accepted at</Th>
-                        <Th>Version</Th>
-                        <Th align="right">Read time</Th>
-                        <Th align="right">Click</Th>
-                        <Th>IP</Th>
+                <TableShell className="mt-4">
+                  <thead>
+                    <tr>
+                      <Th>Accepted at</Th>
+                      <Th>Version</Th>
+                      <Th align="right">Read time</Th>
+                      <Th align="right">Click</Th>
+                      <Th>IP</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {consent.data.history.map((entry) => (
+                      <tr key={entry.id}>
+                        <Td>
+                          <span className="font-mono text-2xs text-parchment-dim">{nyDateTime(entry.acceptedAt)}</span>
+                        </Td>
+                        <Td>
+                          <span className="font-mono text-2xs text-parchment-faint">{entry.tosVersion}</span>
+                        </Td>
+                        <Td align="right" numeric>
+                          {(entry.scrollDurationMs / 1000).toFixed(1)}s
+                        </Td>
+                        <Td align="right" numeric>
+                          {entry.clickX}, {entry.clickY}
+                        </Td>
+                        <Td>
+                          <span className="font-mono text-2xs text-parchment-ghost">{entry.ipAddress}</span>
+                        </Td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {consent.data.history.map((entry) => (
-                        <tr key={entry.id}>
-                          <Td>
-                            <span className="font-mono text-2xs text-parchment-dim">{nyDateTime(entry.acceptedAt)}</span>
-                          </Td>
-                          <Td>
-                            <span className="font-mono text-2xs text-parchment-faint">{entry.tosVersion}</span>
-                          </Td>
-                          <Td align="right" numeric>
-                            {(entry.scrollDurationMs / 1000).toFixed(1)}s
-                          </Td>
-                          <Td align="right" numeric>
-                            {entry.clickX}, {entry.clickY}
-                          </Td>
-                          <Td>
-                            <span className="font-mono text-2xs text-parchment-ghost">{entry.ipAddress}</span>
-                          </Td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </TableShell>
-                </div>
+                    ))}
+                  </tbody>
+                </TableShell>
               </Panel>
             ) : null}
           </>

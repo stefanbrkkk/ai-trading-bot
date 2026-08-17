@@ -55,6 +55,7 @@ import {
   volPoints,
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
+import { useChartWidth } from './useChartWidth';
 
 const AXIS_TEXT = 9;
 const GRID_TICKS = 4;
@@ -92,6 +93,8 @@ interface DeltaMark {
   x: number;
   y: number;
   anchor: 'start' | 'end';
+  /** Caption baseline, dropped to a second row when the two captions collide. */
+  labelY: number;
 }
 
 interface Layout {
@@ -169,6 +172,7 @@ function buildLayout(props: Required<Pick<SabrSmileProps, 'width' | 'height'>> &
       x: x(strike25Put as number),
       y: y(vol25Put as number),
       anchor: 'start',
+      labelY: 0,
     });
   }
   if (Number.isFinite(strike25Call) && Number.isFinite(vol25Call)) {
@@ -178,7 +182,28 @@ function buildLayout(props: Required<Pick<SabrSmileProps, 'width' | 'height'>> &
       x: x(strike25Call as number),
       y: y(vol25Call as number),
       anchor: 'end',
+      labelY: 0,
     });
+  }
+
+  /*
+   * The two delta captions share one line across the top of the plot, the put
+   * reading rightwards from its strike and the call leftwards from its. On a
+   * narrow panel — 391px in the symbol page's right column — the strikes are
+   * close enough that the two runs of text meet, and the result renders as
+   * "25Δ call 22[5Δ]put 24.9%". When they would collide the call caption drops to
+   * a second row, which is the only way to keep both readable without shortening
+   * either.
+   */
+  const captionWidth = (text: string): number => text.length * AXIS_TEXT * 0.62;
+  const put = deltaMarks.find((m) => m.key === 'put');
+  const call = deltaMarks.find((m) => m.key === 'call');
+  const collide =
+    put !== undefined &&
+    call !== undefined &&
+    put.x + 6 + captionWidth(put.label) > call.x - 6 - captionWidth(call.label);
+  for (const mark of deltaMarks) {
+    mark.labelY = f.y0 + 9 + (collide && mark.key === 'call' ? AXIS_TEXT + 3 : 0);
   }
 
   return {
@@ -208,8 +233,9 @@ export function SabrSmile({
   volAtm,
   riskReversal,
   height = 300,
-  width = 680,
+  width: widthFallback = 680,
 }: SabrSmileProps) {
+  const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
   const gradientId = useId();
   const layout = useMemo(
@@ -278,6 +304,7 @@ export function SabrSmile({
       </div>
 
       <svg
+        ref={chartRef}
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="xMidYMid meet"
         className="h-auto w-full"
@@ -434,7 +461,7 @@ export function SabrSmile({
               </circle>
               <text
                 x={mark.anchor === 'start' ? mark.x + 6 : mark.x - 6}
-                y={f.y0 + 9}
+                y={mark.labelY}
                 textAnchor={mark.anchor}
                 fontSize={AXIS_TEXT}
                 fill={PARCHMENT_DIM}
@@ -449,7 +476,9 @@ export function SabrSmile({
         {/* ── 7. Risk reversal, stated with its interpretation ─────────────── */}
         {hasRr ? (
           <g aria-hidden>
-            <text x={f.x0 + 4} y={f.y1 - 16} fontSize={AXIS_TEXT} fill={CHAMPAGNE} className="tabular">
+            {/* 13px apart: at 11px the two 9px line boxes met and the reading
+                printed into the figure above it on a narrow panel. */}
+            <text x={f.x0 + 4} y={f.y1 - 18} fontSize={AXIS_TEXT} fill={CHAMPAGNE} className="tabular">
               RR₂₅ {volPoints(rr)}
             </text>
             <text x={f.x0 + 4} y={f.y1 - 5} fontSize={AXIS_TEXT} fill={PARCHMENT_FAINT}>

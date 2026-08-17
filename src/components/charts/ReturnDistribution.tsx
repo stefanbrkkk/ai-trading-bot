@@ -27,7 +27,7 @@
 import { useMemo } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { mean, quantile } from '@/lib/quant/stats';
-import { frame, linearScale, niceTicks, type ChartFrame, type Scale } from '@/lib/ui/svg';
+import { frame, linearScale, niceTicks, thinLabels, type ChartFrame, type Scale } from '@/lib/ui/svg';
 import {
   BURGUNDY,
   BURGUNDY_BRIGHT,
@@ -40,6 +40,7 @@ import {
   signedFractionAsPercent,
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
+import { useChartWidth } from './useChartWidth';
 
 const AXIS_TEXT = 9;
 const Y_TICKS = 4;
@@ -221,7 +222,12 @@ function computeLayout(props: ReturnDistributionProps): Layout | null {
     y,
     bars,
     yTicks: niceTicks([0, maxCount > 0 ? maxCount : 1], Y_TICKS),
-    xTicks: niceTicks([lo, hi], X_TICKS),
+    // Thinned by pixel gap: at 308px the ±5% steps sit 3px closer than their labels are wide.
+    xTicks: (() => {
+      const candidates = niceTicks([lo, hi], X_TICKS);
+      const keep = new Set(thinLabels(candidates.map((t) => x(t)), 46));
+      return candidates.filter((_, i) => keep.has(i));
+    })(),
     meanX: clampX(meanValue),
     meanValue,
     markers,
@@ -244,10 +250,11 @@ export function ReturnDistribution({
   returns,
   var95,
   cvar95,
-  width = 560,
+  width: widthFallback = 560,
   height = 280,
   bins,
 }: ReturnDistributionProps) {
+  const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
   const layout = useMemo(
     () => computeLayout({ returns, var95, cvar95, width, height, bins }),
@@ -269,6 +276,7 @@ export function ReturnDistribution({
   return (
     <div>
       <svg
+        ref={chartRef}
         viewBox={`0 0 ${width} ${height}`}
         width={width}
         height={height}
@@ -325,8 +333,18 @@ export function ReturnDistribution({
               height={bar.h}
               fill={bar.fill}
               fillOpacity={0.78}
-              initial={reduceMotion ? false : { y: baseline, height: 0 }}
-              animate={{ y: bar.y, height: bar.h }}
+              /*
+                `attrY`, not `y`.
+                Framer Motion treats `y` as a CSS transform, so animating it while
+                the element also carries a static `y` attribute *adds* the two: the
+                bars rendered at `bar.y + bar.y`, which put six of ten of them past
+                the bottom of a 280-unit viewBox and left the two survivors hanging
+                below the axis. `attrY` drives the SVG attribute itself, so the
+                static value is the one that moves and the server-rendered position
+                is already correct.
+              */
+              initial={reduceMotion ? false : { attrY: baseline, height: 0 }}
+              animate={{ attrY: bar.y, height: bar.h }}
               transition={{
                 duration: reduceMotion ? 0 : 0.45,
                 // Sweeping left to right reads as the distribution filling in

@@ -34,6 +34,7 @@ import {
   TableShell,
   Td,
   Th,
+  signTone,
 } from '@/components/ui/primitives';
 import { useApi, type MeResponse } from '@/lib/ui/api';
 import { integer, money, nyDateTime, price, signedFractionAsPercent } from '@/lib/ui/format';
@@ -171,9 +172,16 @@ export default function PortfolioPage() {
         title="Portfolio"
         lede="Positions, orders and account state, read from the broker. Shown here and used for the pre-trade margin check — and for nothing else."
         action={
+          /*
+            The account kind and the adapter name are the same word under the paper
+            broker, and "paper · paper" told the reader nothing twice. Only the
+            second half is printed when they agree.
+          */
           account.data ? (
             <Badge tone={account.data.account?.account === 'live' ? 'burgundy' : 'neutral'}>
-              {account.data.account?.account ?? 'no account'} · {account.data.broker.name}
+              {account.data.account?.account && account.data.account.account !== account.data.broker.name
+                ? `${account.data.account.account} · ${account.data.broker.name}`
+                : (account.data.account?.account ?? account.data.broker.name ?? 'no account')}
             </Badge>
           ) : null
         }
@@ -216,12 +224,12 @@ export default function PortfolioPage() {
                 <StatTile
                   label="Day P&L"
                   value={money(data.account.dayPnl)}
-                  tone={data.account.dayPnl >= 0 ? 'sage' : 'burgundy'}
+                  tone={signTone(data.account.dayPnl)}
                 />
                 <StatTile
                   label="Total P&L"
                   value={money(data.account.totalPnl)}
-                  tone={data.account.totalPnl >= 0 ? 'sage' : 'burgundy'}
+                  tone={signTone(data.account.totalPnl)}
                 />
               </StatGrid>
 
@@ -245,67 +253,65 @@ export default function PortfolioPage() {
                   />
                 </div>
                 {data.account.positions.length > 0 ? (
-                  <div className="scroll-x mt-4">
-                    <TableShell>
-                      <thead>
-                        <tr>
-                          <Th>Symbol</Th>
-                          <Th align="right">Quantity</Th>
-                          <Th align="right">Avg entry</Th>
-                          <Th align="right">Mark</Th>
-                          <Th align="right">Market value</Th>
-                          <Th align="right">Unrealised</Th>
-                          <Th align="right">Return</Th>
-                          <Th>Opened</Th>
+                  <TableShell className="mt-4">
+                    <thead>
+                      <tr>
+                        <Th>Symbol</Th>
+                        <Th align="right">Quantity</Th>
+                        <Th align="right">Avg entry</Th>
+                        <Th align="right">Mark</Th>
+                        <Th align="right">Market value</Th>
+                        <Th align="right">Unrealised</Th>
+                        <Th align="right">Return</Th>
+                        <Th>Opened</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.account.positions.map((position) => (
+                        <tr key={position.symbol}>
+                          <Td>
+                            <Link
+                              href={`/terminal/${position.symbol}`}
+                              className="font-mono text-parchment underline decoration-obsidian-edge hover:decoration-gold"
+                            >
+                              {position.symbol}
+                            </Link>
+                          </Td>
+                          <Td align="right" numeric>
+                            {integer(position.quantity)}
+                          </Td>
+                          <Td align="right" numeric>
+                            {price(position.averageEntry)}
+                          </Td>
+                          <Td align="right" numeric>
+                            {price(position.marketPrice)}
+                          </Td>
+                          <Td align="right" numeric>
+                            {money(position.marketValue, { whole: true })}
+                          </Td>
+                          <Td
+                            align="right"
+                            numeric
+                            className={position.unrealisedPnl >= 0 ? 'text-sage-bright' : 'text-burgundy-bright'}
+                          >
+                            {money(position.unrealisedPnl)}
+                          </Td>
+                          <Td
+                            align="right"
+                            numeric
+                            className={position.unrealisedPnlPercent >= 0 ? 'text-sage-bright' : 'text-burgundy-bright'}
+                          >
+                            {signedFractionAsPercent(position.unrealisedPnlPercent)}
+                          </Td>
+                          <Td>
+                            <span className="font-mono text-2xs text-parchment-faint">
+                              {nyDateTime(position.openedAt)}
+                            </span>
+                          </Td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {data.account.positions.map((position) => (
-                          <tr key={position.symbol}>
-                            <Td>
-                              <Link
-                                href={`/terminal/${position.symbol}`}
-                                className="font-mono text-parchment underline decoration-obsidian-edge hover:decoration-gold"
-                              >
-                                {position.symbol}
-                              </Link>
-                            </Td>
-                            <Td align="right" numeric>
-                              {integer(position.quantity)}
-                            </Td>
-                            <Td align="right" numeric>
-                              {price(position.averageEntry)}
-                            </Td>
-                            <Td align="right" numeric>
-                              {price(position.marketPrice)}
-                            </Td>
-                            <Td align="right" numeric>
-                              {money(position.marketValue, { whole: true })}
-                            </Td>
-                            <Td
-                              align="right"
-                              numeric
-                              className={position.unrealisedPnl >= 0 ? 'text-sage-bright' : 'text-burgundy-bright'}
-                            >
-                              {money(position.unrealisedPnl)}
-                            </Td>
-                            <Td
-                              align="right"
-                              numeric
-                              className={position.unrealisedPnlPercent >= 0 ? 'text-sage-bright' : 'text-burgundy-bright'}
-                            >
-                              {signedFractionAsPercent(position.unrealisedPnlPercent)}
-                            </Td>
-                            <Td>
-                              <span className="font-mono text-2xs text-parchment-faint">
-                                {nyDateTime(position.openedAt)}
-                              </span>
-                            </Td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </TableShell>
-                  </div>
+                      ))}
+                    </tbody>
+                  </TableShell>
                 ) : (
                   <div className="p-5" />
                 )}
@@ -351,76 +357,74 @@ export default function PortfolioPage() {
                 detail="Including rejections, with the control that stopped them."
               />
             </div>
-            <div className="scroll-x mt-4">
-              <TableShell>
-                <thead>
-                  <tr>
-                    <Th>Submitted</Th>
-                    <Th>Symbol</Th>
-                    <Th>Side</Th>
-                    <Th>Type</Th>
-                    <Th align="right">Qty</Th>
-                    <Th align="right">Filled</Th>
-                    <Th align="right">Avg fill</Th>
-                    <Th>Status</Th>
-                    <Th>Account</Th>
-                    <Th>Risk outcome</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.orders.map((order) => {
-                    const rejection = order.riskDecision?.rejection ?? null;
-                    return (
-                      <tr key={order.id}>
-                        <Td>
-                          <span className="font-mono text-2xs text-parchment-faint">{nyDateTime(order.createdAt)}</span>
-                        </Td>
-                        <Td>
-                          <Link
-                            href={`/terminal/${order.symbol}`}
-                            className="font-mono text-parchment underline decoration-obsidian-edge hover:decoration-gold"
-                          >
-                            {order.symbol}
-                          </Link>
-                        </Td>
-                        <Td>
-                          <Badge tone={order.side === 'buy' ? 'sage' : 'burgundy'}>{order.side}</Badge>
-                        </Td>
-                        <Td>
-                          <span className="text-2xs text-parchment-dim">{order.type.replace(/_/g, ' ')}</span>
-                        </Td>
-                        <Td align="right" numeric>
-                          {integer(order.quantity)}
-                        </Td>
-                        <Td align="right" numeric>
-                          {integer(order.filledQuantity)}
-                        </Td>
-                        <Td align="right" numeric>
-                          {order.averageFillPrice === null ? '—' : price(order.averageFillPrice)}
-                        </Td>
-                        <Td>
-                          <Badge tone={STATUS_TONE[order.status] ?? 'neutral'}>{order.status.replace(/_/g, ' ')}</Badge>
-                        </Td>
-                        <Td>
-                          <span className="text-2xs text-parchment-dim">{order.account}</span>
-                        </Td>
-                        <Td>
-                          {rejection !== null ? (
-                            <span className="text-2xs leading-snug text-burgundy-bright" title={rejection.message}>
-                              {rejection.code}
-                            </span>
-                          ) : order.riskDecision?.approved === true ? (
-                            <span className="text-2xs text-sage-bright">approved</span>
-                          ) : (
-                            <span className="text-2xs text-parchment-faint">—</span>
-                          )}
-                        </Td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </TableShell>
-            </div>
+            <TableShell className="mt-4">
+              <thead>
+                <tr>
+                  <Th>Submitted</Th>
+                  <Th>Symbol</Th>
+                  <Th>Side</Th>
+                  <Th>Type</Th>
+                  <Th align="right">Qty</Th>
+                  <Th align="right">Filled</Th>
+                  <Th align="right">Avg fill</Th>
+                  <Th>Status</Th>
+                  <Th>Account</Th>
+                  <Th>Risk outcome</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.orders.map((order) => {
+                  const rejection = order.riskDecision?.rejection ?? null;
+                  return (
+                    <tr key={order.id}>
+                      <Td>
+                        <span className="font-mono text-2xs text-parchment-faint">{nyDateTime(order.createdAt)}</span>
+                      </Td>
+                      <Td>
+                        <Link
+                          href={`/terminal/${order.symbol}`}
+                          className="font-mono text-parchment underline decoration-obsidian-edge hover:decoration-gold"
+                        >
+                          {order.symbol}
+                        </Link>
+                      </Td>
+                      <Td>
+                        <Badge tone={order.side === 'buy' ? 'sage' : 'burgundy'}>{order.side}</Badge>
+                      </Td>
+                      <Td>
+                        <span className="text-2xs text-parchment-dim">{order.type.replace(/_/g, ' ')}</span>
+                      </Td>
+                      <Td align="right" numeric>
+                        {integer(order.quantity)}
+                      </Td>
+                      <Td align="right" numeric>
+                        {integer(order.filledQuantity)}
+                      </Td>
+                      <Td align="right" numeric>
+                        {order.averageFillPrice === null ? '—' : price(order.averageFillPrice)}
+                      </Td>
+                      <Td>
+                        <Badge tone={STATUS_TONE[order.status] ?? 'neutral'}>{order.status.replace(/_/g, ' ')}</Badge>
+                      </Td>
+                      <Td>
+                        <span className="text-2xs text-parchment-dim">{order.account}</span>
+                      </Td>
+                      <Td>
+                        {rejection !== null ? (
+                          <span className="text-2xs leading-snug text-burgundy-bright" title={rejection.message}>
+                            {rejection.code}
+                          </span>
+                        ) : order.riskDecision?.approved === true ? (
+                          <span className="text-2xs text-sage-bright">approved</span>
+                        ) : (
+                          <span className="text-2xs text-parchment-faint">—</span>
+                        )}
+                      </Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </TableShell>
             <div className="p-5 pt-4">
               <Link href="/control">
                 <Button variant="ghost" size="sm">

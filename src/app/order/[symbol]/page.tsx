@@ -47,6 +47,7 @@ import {
 } from '@/components/ui/primitives';
 import { ApiRequestError, clickProvenance, request, useApi, type MeResponse } from '@/lib/ui/api';
 import { duration, integer, money, price } from '@/lib/ui/format';
+import { getSpec } from '@/lib/market/universe';
 
 interface RiskCheck {
   code: string | null;
@@ -254,6 +255,38 @@ export default function OrderTicketPage() {
 
   const signedIn = me.data?.user !== null && me.data?.user !== undefined;
   const liveAllowed = me.data?.entitlement.live === true;
+
+  /*
+   * An unknown symbol gets a refusal, not a ticket.
+   *
+   * /order/ZZZZ rendered a complete, live order form — four selects, a quantity
+   * field, pre-trade checks and Execute — for a security that does not exist. Every
+   * request it could send would be rejected, but the page said nothing until the
+   * user had filled it in and clicked, and /terminal/ZZZZ has always refused
+   * outright. The universe is a published table, so the check is local and needs
+   * no request.
+   */
+  if (getSpec(symbol) === undefined) {
+    return (
+      <PageShell>
+        <PageHeader
+          eyebrow={`${symbol} · order ticket`}
+          title="Not a tradable symbol"
+          lede={`${symbol} is not in the published universe, so no order ticket exists for it.`}
+        />
+        <Notice tone="warning" title="Unknown symbol">
+          Aurelius publishes analysis for a fixed universe. Open the screener for the names it covers.
+          <span className="mt-3 block">
+            <Link href="/screener">
+              <Button variant="ghost" size="sm">
+                Browse the universe
+              </Button>
+            </Link>
+          </span>
+        </Notice>
+      </PageShell>
+    );
+  }
 
   return (
     <PageShell>

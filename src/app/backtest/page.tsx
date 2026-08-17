@@ -23,6 +23,7 @@
 
 import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
 import { EquityCurve, MonthlyHeatmap, ReturnDistribution } from '@/components/charts';
+import { COMBINE_THRESHOLDS } from '@/lib/engine/backtest';
 import {
   Badge,
   DataRow,
@@ -126,6 +127,15 @@ interface BacktestResponse {
   cached: boolean;
 }
 
+/**
+ * One tone rule for every headline metric: sage once it clears its published
+ * survival threshold, burgundy while it does not. `value` and `threshold` are both
+ * "higher is better", so max drawdown is passed negated.
+ */
+function survivalTone(value: number, threshold: number): 'sage' | 'burgundy' {
+  return Number.isFinite(value) && value >= threshold ? 'sage' : 'burgundy';
+}
+
 export default function BacktestPage() {
   const backtest = useApi<BacktestResponse>('/backtest/run');
 
@@ -164,40 +174,51 @@ export default function BacktestPage() {
                 </Notice>
               ) : null}
 
+              {/*
+                One colour rule across the row: sage where the strategy cleared the
+                published survival threshold for that metric, burgundy where it did
+                not. Three rules were in use — sign for return and expectancy, a
+                threshold for drawdown, nothing at all for win rate — which put a
+                12.8% max drawdown in green next to a −3.7% return in red on the
+                same losing run, and left the worst metric on the page uncoloured.
+                Drawdown is passed as a loss so "better" is the same direction for
+                every tile.
+              */}
               <StatGrid className="mb-5" columns={6}>
                 <StatTile
                   label="Total return"
                   value={signedFractionAsPercent(m.totalReturn)}
-                  tone={m.totalReturn >= 0 ? 'sage' : 'burgundy'}
+                  tone={survivalTone(m.totalReturn, 0)}
                   footnote={`CAGR ${signedFractionAsPercent(m.cagr)}`}
                 />
                 <StatTile
                   label="Sharpe"
                   value={ratio(m.sharpe, 2)}
-                  tone={m.sharpe >= 1 ? 'sage' : m.sharpe >= 0 ? 'neutral' : 'burgundy'}
+                  tone={survivalTone(m.sharpe, COMBINE_THRESHOLDS.sharpe)}
                   footnote={`Sortino ${ratio(m.sortino, 2)}`}
                 />
                 <StatTile
                   label="Max drawdown"
                   value={fractionAsPercent(m.maxDrawdown)}
-                  tone={m.maxDrawdown <= 0.15 ? 'sage' : 'burgundy'}
+                  tone={survivalTone(-m.maxDrawdown, -COMBINE_THRESHOLDS.maxDrawdown)}
                   footnote={`${integer(m.maxDrawdownDurationDays)} days to recover`}
                 />
                 <StatTile
                   label="Profit factor"
                   value={Number.isFinite(m.profitFactor) ? ratio(m.profitFactor, 2) : '∞'}
-                  tone={m.profitFactor >= 2 ? 'sage' : 'burgundy'}
+                  tone={survivalTone(m.profitFactor, COMBINE_THRESHOLDS.profitFactor)}
                   footnote={`Payoff ${ratio(m.payoffRatio, 2)}`}
                 />
                 <StatTile
                   label="Win rate"
                   value={fractionAsPercent(m.winRate)}
+                  tone={survivalTone(m.winRate, COMBINE_THRESHOLDS.winRate)}
                   footnote={`${integer(m.wins)}W / ${integer(m.losses)}L`}
                 />
                 <StatTile
                   label="Expectancy"
                   value={money(m.expectancy)}
-                  tone={m.expectancy >= 0 ? 'sage' : 'burgundy'}
+                  tone={survivalTone(m.expectancy, 0)}
                   footnote="Per trade, net of costs"
                 />
               </StatGrid>
@@ -220,42 +241,40 @@ export default function BacktestPage() {
                     }
                   />
                 </div>
-                <div className="scroll-x mt-4">
-                  <TableShell>
-                    <thead>
-                      <tr>
-                        <Th>Metric</Th>
-                        <Th align="right">Observed</Th>
-                        <Th align="center">Test</Th>
-                        <Th align="right">Threshold</Th>
-                        <Th align="center">Result</Th>
-                        <Th>Why this threshold</Th>
+                <TableShell className="mt-4">
+                  <thead>
+                    <tr>
+                      <Th>Metric</Th>
+                      <Th align="right">Observed</Th>
+                      <Th align="center">Test</Th>
+                      <Th align="right">Threshold</Th>
+                      <Th align="center">Result</Th>
+                      <Th>Why this threshold</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.scorecard.rows.map((row) => (
+                      <tr key={row.metric}>
+                        <Td>{row.metric}</Td>
+                        <Td align="right" numeric className={row.passed ? 'text-sage-bright' : 'text-burgundy-bright'}>
+                          {formatScorecardValue(row.metric, row.observed)}
+                        </Td>
+                        <Td align="center">
+                          <span className="font-mono text-2xs text-parchment-faint">{row.comparator}</span>
+                        </Td>
+                        <Td align="right" numeric>
+                          {formatScorecardValue(row.metric, row.threshold)}
+                        </Td>
+                        <Td align="center">
+                          <Badge tone={row.passed ? 'sage' : 'burgundy'}>{row.passed ? 'pass' : 'fail'}</Badge>
+                        </Td>
+                        <Td>
+                          <span className="text-2xs leading-snug text-parchment-faint">{row.rationale}</span>
+                        </Td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {data.scorecard.rows.map((row) => (
-                        <tr key={row.metric}>
-                          <Td>{row.metric}</Td>
-                          <Td align="right" numeric className={row.passed ? 'text-sage-bright' : 'text-burgundy-bright'}>
-                            {formatScorecardValue(row.metric, row.observed)}
-                          </Td>
-                          <Td align="center">
-                            <span className="font-mono text-2xs text-parchment-faint">{row.comparator}</span>
-                          </Td>
-                          <Td align="right" numeric>
-                            {formatScorecardValue(row.metric, row.threshold)}
-                          </Td>
-                          <Td align="center">
-                            <Badge tone={row.passed ? 'sage' : 'burgundy'}>{row.passed ? 'pass' : 'fail'}</Badge>
-                          </Td>
-                          <Td>
-                            <span className="text-2xs leading-snug text-parchment-faint">{row.rationale}</span>
-                          </Td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </TableShell>
-                </div>
+                    ))}
+                  </tbody>
+                </TableShell>
               </Panel>
 
               {/* ── Equity and distribution ───────────────────────────── */}
@@ -264,7 +283,18 @@ export default function BacktestPage() {
                   <PanelHeader
                     eyebrow="Equity"
                     title="Curve, drawdown and benchmark"
-                    detail={`${nyDate(data.result.config.startTime)} — ${nyDate(data.result.config.endTime)} across ${integer(data.result.config.symbols.length)} symbols.`}
+                    /*
+                      Dated from the curve, not from the config.
+                      `config.startTime` is when the *evaluation* window opens; the
+                      plotted series begins a year earlier, at the start of the
+                      first training fold. Captioning the chart with the config
+                      dates put "Aug 26, 2024 — Aug 14, 2026" directly above an
+                      axis reading "Aug 14, 2023", and a chart whose caption
+                      disagrees with its own axis is worse than an uncaptioned one.
+                    */
+                    detail={`${nyDate(data.result.equityCurve[0]?.time ?? data.result.config.startTime)} — ${nyDate(
+                      data.result.equityCurve[data.result.equityCurve.length - 1]?.time ?? data.result.config.endTime,
+                    )} across ${integer(data.result.config.symbols.length)} symbols, including the first training fold.`}
                   />
                   <div className="scroll-x mt-4">
                     <EquityCurve points={data.result.equityCurve} />
@@ -317,64 +347,62 @@ export default function BacktestPage() {
                     detail="Efficiency is out-of-sample Sharpe over in-sample Sharpe. A strategy that fits well and degrades to nothing out of sample is indistinguishable from a good one until the sample is split."
                   />
                 </div>
-                <div className="scroll-x mt-4">
-                  <TableShell>
-                    <thead>
-                      <tr>
-                        <Th align="right">Fold</Th>
-                        <Th>Train</Th>
-                        <Th>Test</Th>
-                        <Th align="right">IS Sharpe</Th>
-                        <Th align="right">OOS Sharpe</Th>
-                        <Th align="right">OOS return</Th>
-                        <Th align="right">Trades</Th>
-                        <Th align="right">Efficiency</Th>
+                <TableShell className="mt-4">
+                  <thead>
+                    <tr>
+                      <Th align="right">Fold</Th>
+                      <Th>Train</Th>
+                      <Th>Test</Th>
+                      <Th align="right">IS Sharpe</Th>
+                      <Th align="right">OOS Sharpe</Th>
+                      <Th align="right">OOS return</Th>
+                      <Th align="right">Trades</Th>
+                      <Th align="right">Efficiency</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.result.folds.map((fold) => (
+                      <tr key={fold.index}>
+                        <Td align="right" numeric>
+                          {integer(fold.index + 1)}
+                        </Td>
+                        <Td>
+                          <span className="font-mono text-2xs text-parchment-faint">
+                            {nyDate(fold.trainStart)} → {nyDate(fold.trainEnd)}
+                          </span>
+                        </Td>
+                        <Td>
+                          <span className="font-mono text-2xs text-parchment-faint">
+                            {nyDate(fold.testStart)} → {nyDate(fold.testEnd)}
+                          </span>
+                        </Td>
+                        <Td align="right" numeric>
+                          {ratio(fold.inSampleSharpe, 2)}
+                        </Td>
+                        <Td
+                          align="right"
+                          numeric
+                          className={fold.outOfSampleSharpe >= 0 ? 'text-sage-bright' : 'text-burgundy-bright'}
+                        >
+                          {ratio(fold.outOfSampleSharpe, 2)}
+                        </Td>
+                        <Td align="right" numeric>
+                          {signedFractionAsPercent(fold.outOfSampleReturn)}
+                        </Td>
+                        <Td align="right" numeric>
+                          {integer(fold.trades)}
+                        </Td>
+                        <Td
+                          align="right"
+                          numeric
+                          className={fold.efficiency >= 0.5 ? 'text-sage-bright' : 'text-burgundy-bright'}
+                        >
+                          {Number.isFinite(fold.efficiency) ? ratio(fold.efficiency, 2) : '—'}
+                        </Td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {data.result.folds.map((fold) => (
-                        <tr key={fold.index}>
-                          <Td align="right" numeric>
-                            {integer(fold.index + 1)}
-                          </Td>
-                          <Td>
-                            <span className="font-mono text-2xs text-parchment-faint">
-                              {nyDate(fold.trainStart)} → {nyDate(fold.trainEnd)}
-                            </span>
-                          </Td>
-                          <Td>
-                            <span className="font-mono text-2xs text-parchment-faint">
-                              {nyDate(fold.testStart)} → {nyDate(fold.testEnd)}
-                            </span>
-                          </Td>
-                          <Td align="right" numeric>
-                            {ratio(fold.inSampleSharpe, 2)}
-                          </Td>
-                          <Td
-                            align="right"
-                            numeric
-                            className={fold.outOfSampleSharpe >= 0 ? 'text-sage-bright' : 'text-burgundy-bright'}
-                          >
-                            {ratio(fold.outOfSampleSharpe, 2)}
-                          </Td>
-                          <Td align="right" numeric>
-                            {signedFractionAsPercent(fold.outOfSampleReturn)}
-                          </Td>
-                          <Td align="right" numeric>
-                            {integer(fold.trades)}
-                          </Td>
-                          <Td
-                            align="right"
-                            numeric
-                            className={fold.efficiency >= 0.5 ? 'text-sage-bright' : 'text-burgundy-bright'}
-                          >
-                            {Number.isFinite(fold.efficiency) ? ratio(fold.efficiency, 2) : '—'}
-                          </Td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </TableShell>
-                </div>
+                    ))}
+                  </tbody>
+                </TableShell>
               </Panel>
 
               {/* ── Per strategy ─────────────────────────────────────── */}
@@ -382,34 +410,32 @@ export default function BacktestPage() {
                 <div className="p-5 pb-0">
                   <PanelHeader eyebrow="By strategy" title="Where the trades came from" />
                 </div>
-                <div className="scroll-x mt-4">
-                  <TableShell>
-                    <thead>
-                      <tr>
-                        <Th>Strategy</Th>
-                        <Th align="right">Trades</Th>
-                        <Th align="right">Win rate</Th>
-                        <Th align="right">Net P&amp;L</Th>
+                <TableShell className="mt-4">
+                  <thead>
+                    <tr>
+                      <Th>Strategy</Th>
+                      <Th align="right">Trades</Th>
+                      <Th align="right">Win rate</Th>
+                      <Th align="right">Net P&amp;L</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.result.byStrategy.map((row) => (
+                      <tr key={row.strategy}>
+                        <Td>{row.strategy.replace(/_/g, ' ')}</Td>
+                        <Td align="right" numeric>
+                          {integer(row.trades)}
+                        </Td>
+                        <Td align="right" numeric>
+                          {fractionAsPercent(row.winRate)}
+                        </Td>
+                        <Td align="right" numeric className={row.netPnl >= 0 ? 'text-sage-bright' : 'text-burgundy-bright'}>
+                          {money(row.netPnl)}
+                        </Td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {data.result.byStrategy.map((row) => (
-                        <tr key={row.strategy}>
-                          <Td>{row.strategy.replace(/_/g, ' ')}</Td>
-                          <Td align="right" numeric>
-                            {integer(row.trades)}
-                          </Td>
-                          <Td align="right" numeric>
-                            {fractionAsPercent(row.winRate)}
-                          </Td>
-                          <Td align="right" numeric className={row.netPnl >= 0 ? 'text-sage-bright' : 'text-burgundy-bright'}>
-                            {money(row.netPnl)}
-                          </Td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </TableShell>
-                </div>
+                    ))}
+                  </tbody>
+                </TableShell>
               </Panel>
 
               <p className="mt-6 font-mono text-2xs uppercase tracking-institutional text-parchment-faint">

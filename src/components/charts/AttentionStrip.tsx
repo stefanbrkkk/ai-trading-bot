@@ -37,8 +37,10 @@ import {
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
 import { FeatureBars, type FeatureBarItem } from '@/components/charts/FeatureBars';
+import { useChartWidth } from './useChartWidth';
 
 const AXIS_TEXT = 9;
+/** Server-render fallback; the rendered width is measured — see `useChartWidth`. */
 const VIEW_WIDTH = 520;
 /** Rows above and below the cells: argmax caption, then the sequence ends. */
 const TOP_LABEL_ROW = 12;
@@ -54,6 +56,8 @@ export interface AttentionStripProps {
   sequenceLabels?: string[];
   /** viewBox height of the heat strip. */
   height?: number;
+  /** Server-render fallback width; the rendered width is measured. */
+  width?: number;
 }
 
 interface Cell {
@@ -126,7 +130,9 @@ export function AttentionStrip({
   variableWeights,
   sequenceLabels,
   height = 52,
+  width: widthFallback = VIEW_WIDTH,
 }: AttentionStripProps) {
+  const { ref: chartRef, width: VIEW_WIDTH_LOCAL } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
   const strip = useMemo(() => buildStrip(attention, sequenceLabels, height), [attention, sequenceLabels, height]);
 
@@ -161,7 +167,8 @@ export function AttentionStrip({
       {strip ? (
         <div>
           <svg
-            viewBox={`0 0 ${VIEW_WIDTH} ${strip.viewHeight}`}
+            ref={chartRef}
+            viewBox={`0 0 ${VIEW_WIDTH_LOCAL} ${strip.viewHeight}`}
             preserveAspectRatio="xMidYMid meet"
             className="h-auto w-full"
             role="img"
@@ -217,10 +224,10 @@ export function AttentionStrip({
                   shapeRendering="crispEdges"
                 />
                 <text
-                  x={Math.max(0, Math.min(VIEW_WIDTH, strip.argmax.x + strip.argmax.width / 2))}
+                  x={Math.max(0, Math.min(VIEW_WIDTH_LOCAL, strip.argmax.x + strip.argmax.width / 2))}
                   y={strip.cellY - 4}
                   textAnchor={
-                    strip.argmax.x < 40 ? 'start' : strip.argmax.x > VIEW_WIDTH - 40 ? 'end' : 'middle'
+                    strip.argmax.x < 40 ? 'start' : strip.argmax.x > VIEW_WIDTH_LOCAL - 40 ? 'end' : 'middle'
                   }
                   fontSize={AXIS_TEXT}
                   fill={PARCHMENT_DIM}
@@ -238,7 +245,7 @@ export function AttentionStrip({
                 {`oldest · ${truncate((strip.cells[0] as Cell).label, LABEL_CHARS)}`}
               </text>
               <text
-                x={VIEW_WIDTH}
+                x={VIEW_WIDTH_LOCAL}
                 y={strip.viewHeight - 3}
                 textAnchor="end"
                 fontSize={AXIS_TEXT}

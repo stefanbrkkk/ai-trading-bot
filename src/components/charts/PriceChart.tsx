@@ -35,6 +35,7 @@ import {
   type ChartFrame,
   type Point,
   type Scale,
+  spreadLabels,
 } from '@/lib/ui/svg';
 import {
   BURGUNDY,
@@ -50,6 +51,7 @@ import {
   price,
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
+import { useChartWidth } from './useChartWidth';
 
 /** Volume panel occupies 18% of the chart height. */
 const VOLUME_SHARE = 0.18;
@@ -116,7 +118,10 @@ interface VolumeBar {
 }
 
 interface LevelMark {
+  /** Where the line is drawn — the price. */
   y: number;
+  /** Where the text is drawn, after de-collision. Set during layout. */
+  labelY: number;
   label: string;
   colour: string;
   dash?: string;
@@ -283,7 +288,15 @@ function computeLayout(props: PriceChartProps): Layout | null {
     }
   }
 
-  const labelCount = Math.min(DATE_LABELS, shown.length);
+  /*
+   * The number of date labels is bounded by the width, not fixed.
+   *
+   * A constant five labels means five "Mar 13, 2026" strings — about 70px each —
+   * on a 308px mobile chart, so consecutive dates overlapped by up to 44px. One
+   * label per ~90px keeps them apart at every width and still gives the desktop
+   * chart its full set.
+   */
+  const labelCount = Math.max(2, Math.min(DATE_LABELS, shown.length, Math.floor(f.innerWidth / 90)));
   const step = labelCount <= 1 ? 0 : (shown.length - 1) / (labelCount - 1);
   const seen = new Set<number>();
   const dateLabels: Layout['dateLabels'] = [];
@@ -303,13 +316,13 @@ function computeLayout(props: PriceChartProps): Layout | null {
   let entryZone: Layout['entryZone'] = null;
   if (levels) {
     if (Number.isFinite(levels.invalidation)) {
-      levelMarks.push({ y: yPrice(levels.invalidation), label: `INVALIDATION ${price(levels.invalidation)}`, colour: BURGUNDY, dash: '5 4' });
+      levelMarks.push({ y: yPrice(levels.invalidation), labelY: yPrice(levels.invalidation), label: `INVALIDATION ${price(levels.invalidation)}`, colour: BURGUNDY, dash: '5 4' });
     }
     if (Number.isFinite(levels.target1)) {
-      levelMarks.push({ y: yPrice(levels.target1), label: `T1 ${price(levels.target1)}`, colour: SAGE, dash: '5 4' });
+      levelMarks.push({ y: yPrice(levels.target1), labelY: yPrice(levels.target1), label: `T1 ${price(levels.target1)}`, colour: SAGE, dash: '5 4' });
     }
     if (Number.isFinite(levels.target2)) {
-      levelMarks.push({ y: yPrice(levels.target2), label: `T2 ${price(levels.target2)}`, colour: SAGE, dash: '5 4' });
+      levelMarks.push({ y: yPrice(levels.target2), labelY: yPrice(levels.target2), label: `T2 ${price(levels.target2)}`, colour: SAGE, dash: '5 4' });
     }
     if (Number.isFinite(levels.entryZoneLow) && Number.isFinite(levels.entryZoneHigh)) {
       const a = yPrice(levels.entryZoneHigh);
@@ -318,11 +331,32 @@ function computeLayout(props: PriceChartProps): Layout | null {
       entryZone = { y: top, height: Math.max(1, Math.abs(b - a)) };
       levelMarks.push({
         y: top,
+        labelY: top,
         label: `ENTRY ${price(Math.min(levels.entryZoneLow, levels.entryZoneHigh))}–${price(Math.max(levels.entryZoneLow, levels.entryZoneHigh))}`,
         colour: GOLD,
       });
     }
   }
+
+  /*
+   * Label positions are separated from line positions.
+   *
+   * The four level lines are wherever the prices put them, and on a name whose
+   * entry zone sits just above its invalidation they were three pixels apart —
+   * so "INVALIDATION 136.29" and "ENTRY 141.52–143.60" printed straight through
+   * each other, 103px of overlap on a 1298px chart. The lines stay exactly where
+   * the prices are; only the text is pushed apart, and each label keeps a leader
+   * to the line it belongs to.
+   */
+  const labelYs = spreadLabels(
+    levelMarks.map((mark) => mark.y),
+    LEVEL_TEXT + 3,
+    priceY0 + LEVEL_TEXT,
+    priceY1,
+  );
+  levelMarks.forEach((mark, i) => {
+    mark.labelY = labelYs[i] as number;
+  });
 
   return {
     f,
@@ -356,7 +390,8 @@ interface Cursor {
 }
 
 export function PriceChart(props: PriceChartProps) {
-  const { bars, kalmanBand, bollinger, levels, showVolume, width = 920, height = 380, vwap, mode = 'candles' } = props;
+  const { bars, kalmanBand, bollinger, levels, showVolume, width: widthFallback = 920, height = 380, vwap, mode = 'candles' } = props;
+  const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
   const [cursor, setCursor] = useState<Cursor | null>(null);
 
@@ -480,6 +515,7 @@ export function PriceChart(props: PriceChartProps) {
       ) : null}
 
       <svg
+        ref={chartRef}
         viewBox={`0 0 ${width} ${height}`}
         width={width}
         height={height}
@@ -620,9 +656,21 @@ export function PriceChart(props: PriceChartProps) {
                 {/* Labels sit inside the right edge of the plot: the right margin
                     already belongs to the price axis, and overlapping the two
                     would make both unreadable. */}
+                {Math.abs(mark.labelY - mark.y) > 1 ? (
+                  // The label was moved off its line, so a leader says which line it names.
+                  <line
+                    x1={f.x1 - 2}
+                    x2={f.x1 - 2}
+                    y1={mark.y}
+                    y2={mark.labelY - 3}
+                    stroke={mark.colour}
+                    strokeWidth={1}
+                    strokeOpacity={0.5}
+                  />
+                ) : null}
                 <text
-                  x={f.x1 - 4}
-                  y={mark.y - 3}
+                  x={f.x1 - 6}
+                  y={mark.labelY - 3}
                   textAnchor="end"
                   fontSize={LEVEL_TEXT}
                   fill={mark.colour}

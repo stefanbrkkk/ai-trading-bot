@@ -51,7 +51,15 @@ export const GET = handler(async (request: Request) => {
 
   const validSectors = new Set<string>(SECTORS);
   const filter: ScreenerFilter = {
-    ...(q.sectors ? { sectors: q.sectors.filter((s) => validSectors.has(s)) as Sector[] } : {}),
+    /*
+     * An unrecognised sector is an error, not an empty filter.
+     *
+     * Filtering the list silently dropped `?sectors=Nope` and returned the whole
+     * universe — the same class of bad input that returns 0 rows for an unknown
+     * regime and a 422 for an unknown direction. Three behaviours for one mistake
+     * is worse than any one of them.
+     */
+    ...(q.sectors ? { sectors: q.sectors as Sector[] } : {}),
     ...(q.regimes ? { regimes: q.regimes as RegimeLabel[] } : {}),
     ...(q.direction ? { direction: q.direction as SignalDirection } : {}),
     ...(q.minConviction !== undefined ? { minConviction: q.minConviction } : {}),
@@ -69,11 +77,29 @@ export const GET = handler(async (request: Request) => {
     limit: q.limit ?? 64,
   };
 
+  /*
+   * `matched` counts what the filter matched; `rows` is the page returned.
+   *
+   * Reading it off the truncated array made the screener's own headline tile read
+   * "MATCHED 64 / of 67" with no filter applied at all, and "MATCHED 10" for
+   * `?limit=10` — the limit was being reported as a property of the market.
+   */
+  const matchedRows = applyScreenerFilter(snapshot.rows, { ...filter, limit: 0 });
+  const unknownSectors = (q.sectors ?? []).filter((sector) => !validSectors.has(sector));
+  if (unknownSectors.length > 0) {
+    throw new ApiError(
+      'INVALID_REQUEST',
+      `Unknown sector${unknownSectors.length > 1 ? 's' : ''}: ${unknownSectors.join(', ')}. Known sectors are ${SECTORS.join(', ')}.`,
+      422,
+    );
+  }
+
   const rows = applyScreenerFilter(snapshot.rows, filter);
   return ok({
     rows,
     total: snapshot.rows.length,
-    matched: rows.length,
+    matched: matchedRows.length,
+    returned: rows.length,
     computedAt: snapshot.computedAt,
     provider: snapshot.provider,
     modelVersion: snapshot.modelVersion,

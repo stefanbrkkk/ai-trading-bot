@@ -3,8 +3,6 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  // node:sqlite is a Node built-in behind an experimental flag; keep it out of the bundler graph.
-  serverExternalPackages: ['node-sql-parser'],
   experimental: {
     // Deterministic server-render of the terminal shell.
     optimizePackageImports: ['framer-motion'],

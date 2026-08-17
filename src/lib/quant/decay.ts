@@ -151,6 +151,10 @@ export interface AggregatedStream {
   currentWeight: number;
   halfLifeMs: number;
   authority: number;
+  /** The profile's decay shape, carried through so a client can draw the curve. */
+  shape: DecayProfile['shape'];
+  /** Plateau length for the smoothed shape, in ms; 0 for a sharp profile. */
+  plateauMs: number;
 }
 
 /**
@@ -186,6 +190,8 @@ export function aggregateStream(
     currentWeight: Number.isFinite(freshnessMs) ? decayWeight(profile, freshnessMs) : 0,
     halfLifeMs: profile.halfLifeMs,
     authority: profile.authority,
+    shape: profile.shape,
+    plateauMs: profile.plateauMs ?? 0,
   };
 }
 

@@ -34,7 +34,7 @@ export function price(value: number): string {
   if (!Number.isFinite(value)) return '—';
   // Sub-dollar names need more precision than a two-decimal currency format.
   const digits = Math.abs(value) < 1 ? 4 : 2;
-  return value.toFixed(digits);
+  return fixed(value, digits);
 }
 
 export function signedPercent(value: number, digits = 2): string {
@@ -44,7 +44,7 @@ export function signedPercent(value: number, digits = 2): string {
 
 export function percent(value: number, digits = 2): string {
   if (!Number.isFinite(value)) return '—';
-  return `${value.toFixed(digits)}%`;
+  return `${fixed(value, digits)}%`;
 }
 
 /** Formats a decimal fraction (0.0342) as a percentage string. */
@@ -97,7 +97,24 @@ export function multiple(value: number, digits = 2): string {
 
 export function ratio(value: number, digits = 3): string {
   if (!Number.isFinite(value)) return '—';
-  return value.toFixed(digits);
+  return fixed(value, digits);
+}
+
+/**
+ * `toFixed` with the typographic minus, and without a signed zero.
+ *
+ * Two defects come from `toFixed` alone. It emits U+002D HYPHEN-MINUS while every
+ * signed formatter above emits U+2212 MINUS SIGN, so "CAGR −1.90%" and
+ * "Sortino -0.10" sat adjacent in the same 11px row with visibly different
+ * glyphs. And it rounds −0.004 to "-0.00", which reads as a small negative number
+ * when the value is a rounding artefact — the screener's ALT column showed
+ * "−0.00" for three names at once.
+ */
+export function fixed(value: number, digits: number): string {
+  if (!Number.isFinite(value)) return '—';
+  const rounded = Number(value.toFixed(digits));
+  const magnitude = Math.abs(rounded).toFixed(digits);
+  return rounded < 0 ? `−${magnitude}` : magnitude;
 }
 
 /** Millisecond duration, scaled to the most readable unit. */

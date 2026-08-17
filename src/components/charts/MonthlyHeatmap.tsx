@@ -32,6 +32,7 @@ import {
   signedFractionAsPercent,
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
+import { useChartWidth } from './useChartWidth';
 
 const MONTH_INITIALS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'] as const;
 const MONTH_NAMES = [
@@ -113,9 +114,21 @@ interface Layout {
   worst: number;
 }
 
+/** Below this a month rounds to "+0.0%" in the cell, so it is drawn as flat. */
+const FLAT_RETURN = 0.00005;
+
 function tint(value: number, magnitude: number): string {
+  /*
+   * A month that returned nothing is not a month that returned something
+   * positive. `value >= 0` painted 22 of 41 cells sage on a strategy that lost
+   * money over the period — every one of them reading "+0.0%" — which made a
+   * losing backtest look like a mostly-green year. Flat months get the charcoal
+   * ground instead, so the greens and reds in the grid are the months that
+   * actually moved.
+   */
+  if (!(Math.abs(value) > FLAT_RETURN)) return CHARCOAL;
   const t = magnitude > 0 ? Math.min(1, Math.abs(value) / magnitude) : 0;
-  return mixColour(CHARCOAL, value >= 0 ? SAGE : BURGUNDY, MIN_TINT + (1 - MIN_TINT) * t);
+  return mixColour(CHARCOAL, value > 0 ? SAGE : BURGUNDY, MIN_TINT + (1 - MIN_TINT) * t);
 }
 
 function computeLayout(props: MonthlyHeatmapProps): Layout | null {
@@ -239,7 +252,8 @@ function computeLayout(props: MonthlyHeatmapProps): Layout | null {
   };
 }
 
-export function MonthlyHeatmap({ returns, width = 760, height }: MonthlyHeatmapProps) {
+export function MonthlyHeatmap({ returns, width: widthFallback = 760, height }: MonthlyHeatmapProps) {
+  const { ref: chartRef, width } = useChartWidth(widthFallback);
   const layout = useMemo(() => computeLayout({ returns, width, height }), [returns, width, height]);
 
   if (!layout) {
@@ -258,6 +272,7 @@ export function MonthlyHeatmap({ returns, width = 760, height }: MonthlyHeatmapP
   return (
     <div>
       <svg
+        ref={chartRef}
         viewBox={`0 0 ${width} ${viewHeight}`}
         width={width}
         height={viewHeight}

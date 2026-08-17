@@ -22,7 +22,7 @@
  * statement that f(x) is E[f(x)] plus the balance of the forces shown.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { WATERFALL_STAGGER, linePath, linearScale, type Point } from '@/lib/ui/svg';
 import {
@@ -37,6 +37,7 @@ import {
   integer,
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
+import { useChartWidth } from './useChartWidth';
 import {
   DriverTooltip,
   elementPoint,
@@ -147,11 +148,25 @@ export function ShapForcePlot({
   contributions,
   onHover,
   hoveredKey,
-  width = 760,
+  width: widthFallback = 760,
 }: ShapForcePlotProps) {
+  const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
   const host = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<{ key: string; point: HostPoint } | null>(null);
+  /*
+   * The tooltip stays mounted once it has been shown, and `visible` carries the
+   * hover state instead.
+   *
+   * Unmounting it on mouse-out took the `AnimatePresence` boundary with it, so the
+   * exit animation it declares could never run — the tooltip vanished on the frame
+   * the pointer left. Retaining the last hover keeps a position to fade out from.
+   * Declared here, above the empty-state return, so the hooks run unconditionally.
+   */
+  const [restingHover, setRestingHover] = useState(hover);
+  useEffect(() => {
+    if (hover !== null) setRestingHover(hover);
+  }, [hover]);
 
   const layout = useMemo(() => {
     const items = contributions.filter((c) => Number.isFinite(c.share) && c.share > 0);
@@ -251,6 +266,9 @@ export function ShapForcePlot({
 
   const hoveredSegment = hover ? layout.segments.find((s) => s.key === hover.key) : undefined;
   const tip = hover && hoveredSegment ? { segment: hoveredSegment, point: hover.point } : null;
+  const shownHover = hover ?? restingHover;
+  const shownRowOrSegment = shownHover ? layout.segments.find((s) => s.key === shownHover.key) : undefined;
+  const shownTip = shownHover && shownRowOrSegment ? { segment: shownRowOrSegment, point: shownHover.point } : null;
   const basePct = fractionAsPercent(baseProbability, 1);
   const finalPct = fractionAsPercent(finalProbability, 1);
 
@@ -336,6 +354,7 @@ export function ShapForcePlot({
   return (
     <div ref={host} className="relative">
       <svg
+        ref={chartRef}
         viewBox={`0 0 ${viewWidth} ${VIEW_HEIGHT}`}
         preserveAspectRatio="xMidYMid meet"
         className="h-auto w-full"
@@ -401,16 +420,16 @@ export function ShapForcePlot({
         </text>
       </svg>
 
-      {tip ? (
+      {shownTip ? (
         <DriverTooltip
-          label={tip.segment.label}
-          narrative={tip.segment.narrative}
-          share={tip.segment.share}
-          state={tip.segment.state}
-          x={tip.point.x}
-          y={tip.point.y}
-          anchor={tooltipAnchor(tip.point.x, tip.point.hostWidth)}
-          visible
+          label={shownTip.segment.label}
+          narrative={shownTip.segment.narrative}
+          share={shownTip.segment.share}
+          state={shownTip.segment.state}
+          x={shownTip.point.x}
+          y={shownTip.point.y}
+          anchor={tooltipAnchor(shownTip.point.x, shownTip.point.hostWidth)}
+          visible={tip !== null}
         />
       ) : null}
     </div>

@@ -337,6 +337,14 @@ export type RiskRejectionCode =
   | 'SYMBOL_NOT_TRADABLE'
   | 'SUBSCRIPTION_REQUIRED'
   | 'UNTRUSTED_CLICK'
+  /*
+   * Split out of `UNTRUSTED_CLICK`. A token that does not match the order, and a
+   * token that has already been spent, are different events with different
+   * remedies — re-submit with the parameters you authorised, versus click Execute
+   * again — and a single code left the UI unable to say which had happened.
+   */
+  | 'INTENT_TOKEN_MISMATCH'
+  | 'INTENT_TOKEN_SPENT'
   | 'MAX_OPEN_ORDERS'
   | 'DUPLICATE_ORDER';
 
@@ -694,7 +702,15 @@ export type RagSourceType =
   | 'analyst_note'
   | 'news'
   | 'social_x'
-  | 'reddit';
+  | 'reddit'
+  /*
+   * The platform's own published statement of scope. Filed as `sec_8k` before,
+   * which made /research label it "SEC Form 8-K" and cite it, at 0.9 authority, as
+   * a regulatory filing — a synthetic corpus asserting that a real regulator had
+   * published the platform's own compliance position. It is a first-party
+   * statement and now says so.
+   */
+  | 'platform_statement';
 
 export interface RagAnswer {
   question: string;

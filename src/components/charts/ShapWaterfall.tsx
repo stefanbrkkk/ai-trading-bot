@@ -25,7 +25,7 @@
  *     given log-odds contribution has the same physical width in every signal.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import {
   WATERFALL_BAR_HEIGHT,
@@ -47,6 +47,7 @@ import {
   truncate,
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
+import { useChartWidth } from './useChartWidth';
 import {
   DriverTooltip,
   elementPoint,
@@ -88,10 +89,12 @@ export interface ShapWaterfallProps {
 const LABEL_COLUMN = 176;
 const VALUE_COLUMN = 62;
 const GUTTER = 14;
+/** Narrowest the plot column is allowed to get before the viewBox grows instead. */
+const MIN_PLOT_SPAN = 130;
 /** Room for the E[f(x)] hairline caption above the first row. */
 const HEADER = 38;
 /** Room for the f(x) hairline caption below the last row. */
-const FOOTER = 32;
+const FOOTER = 38;
 const LABEL_CHARS = 24;
 
 interface Row {
@@ -122,13 +125,27 @@ export function ShapWaterfall({
   finalValue,
   onHover,
   hoveredKey,
-  width = 720,
+  width: widthFallback = 720,
   baseProbability,
   finalProbability,
 }: ShapWaterfallProps) {
+  const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
   const host = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<{ key: string; point: HostPoint } | null>(null);
+  /*
+   * The tooltip stays mounted once it has been shown, and `visible` carries the
+   * hover state instead.
+   *
+   * Unmounting it on mouse-out took the `AnimatePresence` boundary with it, so the
+   * exit animation it declares could never run — the tooltip vanished on the frame
+   * the pointer left. Retaining the last hover keeps a position to fade out from.
+   * Declared here, above the empty-state return, so the hooks run unconditionally.
+   */
+  const [restingHover, setRestingHover] = useState(hover);
+  useEffect(() => {
+    if (hover !== null) setRestingHover(hover);
+  }, [hover]);
 
   const layout = useMemo(() => {
     const base = Number.isFinite(baseValue) ? baseValue : 0;
@@ -169,19 +186,33 @@ export function ShapWaterfall({
       hi = Math.max(hi, row.start, row.end);
     }
 
-    const span = Math.max(0, (hi - lo) * WATERFALL_SCALE_FACTOR);
     const plotX0 = LABEL_COLUMN + GUTTER;
-    const viewWidth = Math.max(width, plotX0 + span + GUTTER + VALUE_COLUMN);
-    const area = viewWidth - plotX0 - GUTTER - VALUE_COLUMN;
-    // Centre the raw plot inside whatever room is left, then shift it so the
-    // leftmost bar edge lands on plotX0.
-    const offset = plotX0 + Math.max(0, (area - span) / 2) - lo * WATERFALL_SCALE_FACTOR;
+    /*
+     * The plot is compressed to fit rather than the viewBox widened to hold it.
+     *
+     * Widening was the original behaviour, and it made the drawing wider than its
+     * host on a phone — where `w-full` then scaled the whole thing, type included,
+     * to 0.75 and put the labels at 6.8px. The label and value columns cannot
+     * shrink (they hold real words and real numbers), so the plot span is what
+     * gives: below `MIN_PLOT_SPAN` of room the viewBox does grow, because a
+     * two-pixel-wide waterfall is worse than a scaled one.
+     */
+    const fixedColumns = plotX0 + GUTTER + VALUE_COLUMN;
+    const viewWidth = Math.max(width, fixedColumns + MIN_PLOT_SPAN);
+    const area = viewWidth - fixedColumns;
+    const magnitude = Math.max(0, hi - lo);
+    const scale = magnitude > 0 ? Math.min(WATERFALL_SCALE_FACTOR, area / magnitude) : WATERFALL_SCALE_FACTOR;
+    const span = magnitude * scale;
+    // Centre the plot inside whatever room is left, then shift it so the leftmost
+    // bar edge lands on plotX0.
+    const offset = plotX0 + Math.max(0, (area - span) / 2) - lo * scale;
 
     return {
       rows,
       base,
       final,
       offset,
+      scale,
       viewWidth,
       viewHeight: HEADER + rows.length * WATERFALL_ROW_PITCH + FOOTER,
       baseP: Number.isFinite(baseProbability) ? (baseProbability as number) : logistic(base),
@@ -193,7 +224,7 @@ export function ShapWaterfall({
     };
   }, [baseValue, steps, finalValue, width, baseProbability, finalProbability]);
 
-  const { rows, offset, viewWidth, viewHeight } = layout;
+  const { rows, offset, scale, viewWidth, viewHeight } = layout;
 
   if (rows.length === 0) {
     return (
@@ -207,7 +238,7 @@ export function ShapWaterfall({
   // A parent may drive the hover (linked highlighting across panels); local hover
   // still works when it passes null, and only local hover can position a tooltip.
   const activeKey = hoveredKey ?? hover?.key ?? null;
-  const xView = (value: number): number => value * WATERFALL_SCALE_FACTOR + offset;
+  const xView = (value: number): number => value * scale + offset;
   const rowsTop = HEADER;
   const rowsBottom = HEADER + rows.length * WATERFALL_ROW_PITCH;
 
@@ -224,10 +255,14 @@ export function ShapWaterfall({
   const finalPct = fractionAsPercent(layout.finalP, 1);
   const hoveredRow = hover ? rows.find((row) => row.key === hover.key) : undefined;
   const tip = hover && hoveredRow ? { row: hoveredRow, point: hover.point } : null;
+  const shownHover = hover ?? restingHover;
+  const shownRowOrSegment = shownHover ? rows.find((r) => r.key === shownHover.key) : undefined;
+  const shownTip = shownHover && shownRowOrSegment ? { row: shownRowOrSegment, point: shownHover.point } : null;
 
   return (
     <div ref={host} className="relative">
       <svg
+        ref={chartRef}
         viewBox={`0 0 ${viewWidth} ${viewHeight}`}
         preserveAspectRatio="xMidYMid meet"
         className="h-auto w-full"
@@ -273,9 +308,12 @@ export function ShapWaterfall({
         >
           {finalPct}
         </text>
+        {/* 13px below the figure, matching the E[f(x)] pair above: at 10px the
+            two captions' line boxes touched and the glyphs printed into each
+            other's descenders. */}
         <text
           x={xView(layout.final)}
-          y={rowsBottom + 30}
+          y={rowsBottom + 33}
           textAnchor="middle"
           fontSize={9}
           fill={PARCHMENT_FAINT}
@@ -288,8 +326,8 @@ export function ShapWaterfall({
           const rowY = rowsTop + y;
           const active = activeKey === row.key;
           const dimmed = activeKey !== null && !active;
-          const barWidth = Math.abs(row.end - row.start) * WATERFALL_SCALE_FACTOR;
-          const barX = Math.min(row.start, row.end) * WATERFALL_SCALE_FACTOR;
+          const barWidth = Math.abs(row.end - row.start) * scale;
+          const barX = Math.min(row.start, row.end) * scale;
           const fill = row.direction === 'positive' ? SAGE : BURGUNDY;
 
           return (
@@ -363,10 +401,16 @@ export function ShapWaterfall({
                   height={WATERFALL_BAR_HEIGHT}
                   rx={WATERFALL_BAR_RADIUS}
                   fill={fill}
-                  initial={
-                    reduceMotion ? false : { width: 0, x: row.start * WATERFALL_SCALE_FACTOR }
-                  }
-                  animate={{ width: barWidth, x: barX }}
+                  /*
+                    A driver whose contribution rounds to zero is not animated.
+                    The spring solver, integrating from 0 towards a target of 0,
+                    emits values like -1.78e-15, and SVG rejects a negative `width`
+                    with a console error — which the E2E suite treats as a failure,
+                    correctly: it fires only for particular data, so it is exactly
+                    the kind of defect that reaches a user and not a developer.
+                  */
+                  initial={reduceMotion || barWidth <= 0 ? false : { width: 0, x: row.start * scale }}
+                  animate={{ width: Math.max(0, barWidth), x: barX }}
                   transition={
                     reduceMotion
                       ? { duration: 0 }
@@ -403,16 +447,16 @@ export function ShapWaterfall({
         })}
       </svg>
 
-      {tip ? (
+      {shownTip ? (
         <DriverTooltip
-          label={tip.row.label}
-          narrative={tip.row.narrative}
-          share={tip.row.share}
-          state={tip.row.state}
-          x={tip.point.x}
-          y={tip.point.y}
-          anchor={tooltipAnchor(tip.point.x, tip.point.hostWidth)}
-          visible
+          label={shownTip.row.label}
+          narrative={shownTip.row.narrative}
+          share={shownTip.row.share}
+          state={shownTip.row.state}
+          x={shownTip.point.x}
+          y={shownTip.point.y}
+          anchor={tooltipAnchor(shownTip.point.x, shownTip.point.hostWidth)}
+          visible={tip !== null}
         />
       ) : null}
     </div>

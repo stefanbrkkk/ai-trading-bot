@@ -6,6 +6,7 @@ import { TopBar } from '@/components/chrome/TopBar';
 import { SideNav } from '@/components/chrome/SideNav';
 import { StatusStrip } from '@/components/chrome/StatusStrip';
 import { GlobalDisclaimer } from '@/components/chrome/GlobalDisclaimer';
+import { ScrollAffordance } from '@/components/chrome/ScrollAffordance';
 
 export const metadata: Metadata = {
   title: 'Aurelius — Quantitative Signal Terminal',
@@ -42,6 +43,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             </div>
             <GlobalDisclaimer />
             <StatusStrip />
+            {/* Renders nothing; measures every scrolling region on the page. */}
+            <ScrollAffordance />
           </div>
         </TerminalProvider>
       </body>

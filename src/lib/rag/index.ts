@@ -138,7 +138,13 @@ async function chunksFromLedger(): Promise<RetrievableChunk[] | null> {
 }
 
 /** Generates the corpus in process and chunks it. */
-function chunksFromMemory(now: number): RetrievableChunk[] {
+/**
+ * Builds the retrievable index straight from the in-memory corpus, with no store.
+ *
+ * Exported for the scope tests, which have to measure the real retrieval scores
+ * against the real corpus — a floor calibrated against a stub would pin nothing.
+ */
+export function chunksFromMemory(now: number): RetrievableChunk[] {
   const chunks: RetrievableChunk[] = [];
   for (const document of buildCorpus({ now })) {
     for (const piece of chunkDocument(document)) {

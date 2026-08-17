@@ -22,9 +22,6 @@ import type { RegimeLabel, ScreenerFilter, Signal, SignalDirection } from '@/lib
 /** Which XAI domain tab is open on the signal detail view. */
 export type XaiTab = 'technical' | 'fundamental' | 'sentiment';
 
-/** Force plot ↔ waterfall morph state. 0 = force plot, 1 = waterfall. */
-export type MorphState = number;
-
 /**
  * Refresh cadence. The feasibility research specifies two modes: `day_trading`
  * streams tick data and book updates, while `long_run` degrades to daily polling
@@ -37,10 +34,7 @@ export interface TerminalState {
   activeAsset: string;
   convictionScore: number;
   signal: Signal | null;
-  /** True once the conviction card has been expanded into the XAI view. */
-  drilledDown: boolean;
   xaiTab: XaiTab;
-  morph: MorphState;
   /** Feature key the user is hovering, so the chart and table highlight together. */
   hoveredDriver: string | null;
   /** Which driver's narrative tooltip is open. */
@@ -77,9 +71,7 @@ export interface TerminalState {
   updateAsset: (symbol: string) => void;
   setSignal: (signal: Signal | null) => void;
   setConvictionScore: (score: number) => void;
-  setDrilledDown: (value: boolean) => void;
   setXaiTab: (tab: XaiTab) => void;
-  setMorph: (value: MorphState) => void;
   setHoveredDriver: (featureKey: string | null) => void;
   setOpenTooltip: (featureKey: string | null) => void;
   setScreenerFilter: (patch: Partial<ScreenerFilter>) => void;
@@ -119,9 +111,7 @@ export function createTerminalStore(initState: Partial<TerminalState> = {}) {
     activeAsset: initState.activeAsset ?? '',
     convictionScore: initState.convictionScore ?? 0,
     signal: initState.signal ?? null,
-    drilledDown: initState.drilledDown ?? false,
     xaiTab: initState.xaiTab ?? 'technical',
-    morph: initState.morph ?? 0,
     hoveredDriver: initState.hoveredDriver ?? null,
     openTooltip: initState.openTooltip ?? null,
     screenerFilter: initState.screenerFilter ?? DEFAULT_SCREENER_FILTER,
@@ -137,7 +127,7 @@ export function createTerminalStore(initState: Partial<TerminalState> = {}) {
           : // Changing symbol must clear the ticket: carrying a typed quantity
             // across symbols would let a mis-click route size intended for
             // another instrument.
-            { ...state, activeAsset: symbol, drilledDown: false, morph: 0, ticket: EMPTY_TICKET },
+            { ...state, activeAsset: symbol, ticket: EMPTY_TICKET },
       ),
     setSignal: (signal) =>
       set((state) =>
@@ -146,9 +136,7 @@ export function createTerminalStore(initState: Partial<TerminalState> = {}) {
           : { ...state, signal, convictionScore: signal?.conviction ?? state.convictionScore },
       ),
     setConvictionScore: (score) => set((state) => (state.convictionScore === score ? state : { ...state, convictionScore: score })),
-    setDrilledDown: (value) => set((state) => (state.drilledDown === value ? state : { ...state, drilledDown: value })),
     setXaiTab: (tab) => set((state) => (state.xaiTab === tab ? state : { ...state, xaiTab: tab })),
-    setMorph: (value) => set((state) => (state.morph === value ? state : { ...state, morph: value })),
     setHoveredDriver: (featureKey) =>
       set((state) => (state.hoveredDriver === featureKey ? state : { ...state, hoveredDriver: featureKey })),
     setOpenTooltip: (featureKey) =>
@@ -184,9 +172,7 @@ export const selectConviction = (s: TerminalState): number => s.convictionScore;
 export const selectSignal = (s: TerminalState): Signal | null => s.signal;
 export const selectDirection = (s: TerminalState): SignalDirection => s.signal?.direction ?? 'flat';
 export const selectRegime = (s: TerminalState): RegimeLabel | null => s.signal?.regime ?? null;
-export const selectDrilledDown = (s: TerminalState): boolean => s.drilledDown;
 export const selectXaiTab = (s: TerminalState): XaiTab => s.xaiTab;
-export const selectMorph = (s: TerminalState): number => s.morph;
 export const selectHoveredDriver = (s: TerminalState): string | null => s.hoveredDriver;
 export const selectOpenTooltip = (s: TerminalState): string | null => s.openTooltip;
 export const selectScreenerFilter = (s: TerminalState): ScreenerFilter => s.screenerFilter;

@@ -6,9 +6,15 @@
  * shape — `{ error: { code, message, detail? } }` — so the client never has to
  * guess how a failure is encoded.
  *
- * The kill switch is enforced here rather than in each route: Phase 5 §2 requires
- * that while it is engaged *all* incoming order requests are answered with HTTP
- * 503, and centralising it means a new mutating route cannot forget.
+ * The kill switch is deliberately **not** enforced here. Phase 5 §2 requires that
+ * while it is engaged every incoming *order* request is answered with 503, and
+ * this wrapper is applied to every route in the platform — including `/api/health`
+ * and `/api/admin/kill-switch`, the endpoint that releases the halt. Shedding
+ * centrally would mean a halt could not be lifted through the product that
+ * declared it. Enforcement therefore lives in the two endpoints that can lead to a
+ * broker — `/api/intent` and `/api/orders/submit` — and both format the refusal
+ * through `killSwitchShed` so they cannot answer a halt differently. The risk
+ * engine refuses a third time, fail-closed, from the ledger.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -86,7 +92,19 @@ export function handler<A extends unknown[]>(
         return fail(error.code, error.message, { status: error.status, detail: error.detail, correlation });
       }
       if (error instanceof AuthError) {
-        return fail('UNAUTHENTICATED', error.message, { status: error.status, correlation });
+        /*
+         * 401 and 403 are different answers and need different codes.
+         *
+         * Both mapped to `UNAUTHENTICATED`, so a signed-in trader hitting an admin
+         * route received 403 UNAUTHENTICATED — telling a client that has a valid
+         * session that it has no session. A client cannot distinguish "sign in"
+         * from "you may not do this" by code, which is the only field a client
+         * should have to branch on.
+         */
+        return fail(error.status === 403 ? 'FORBIDDEN' : 'UNAUTHENTICATED', error.message, {
+          status: error.status,
+          correlation,
+        });
       }
       if (error instanceof z.ZodError) {
         return fail('INVALID_REQUEST', 'The request body did not match the expected shape.', {

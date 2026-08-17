@@ -23,6 +23,7 @@ import { STRATEGY_IDS } from '@/lib/engine/strategies';
 import { SimulatorProvider } from '@/lib/market/provider';
 import { BENCHMARK_SYMBOL, TRADABLE_SYMBOLS, requireSpec, symbolMeta } from '@/lib/market/universe';
 import { buildRiskReversalHistory } from '@/lib/engine/dataset';
+import { referenceNow } from '@/lib/domain/clock';
 import type { ComputedFeatures } from '@/lib/engine/compute';
 import type { BacktestResult } from '@/lib/domain/types';
 
@@ -69,7 +70,7 @@ export const POST = handler(async (request: Request) => {
   }
   void history;
 
-  const now = Number(process.env.AURELIUS_NOW ?? Date.now());
+  const now = referenceNow(Date.now());
   const provider = new SimulatorProvider({ seed: process.env.AURELIUS_SEED ?? 20240117, now, years: 3 });
   const requested = (body.symbols ?? TRADABLE_SYMBOLS.slice(0, 8)).map((s) => s.toUpperCase());
   const benchmarkBars = provider.simulator.dailyBars(BENCHMARK_SYMBOL).bars;

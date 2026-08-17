@@ -29,6 +29,7 @@
 
 import type { KillSwitchState } from '@/lib/domain/types';
 import { KILL_SWITCH_HTTP_STATUS } from '@/lib/risk/limits';
+import { ERROR_COPY } from '@/lib/compliance/disclosures';
 import {
   InMemoryKillSwitchStore,
   type KillSwitchStatePort,
@@ -263,22 +264,42 @@ export class KillSwitch {
   httpStatusForRequest(): number {
     return this.current.engaged ? KILL_SWITCH_HTTP_STATUS : 0;
   }
+}
 
-  /**
-   * Route guard. Returns the 503 envelope while engaged so every handler sheds
-   * load identically instead of each inventing its own response.
-   */
-  guard(): { allowed: true } | { allowed: false; status: number; message: string; retryAfterSeconds: number } {
-    if (!this.current.engaged) return { allowed: true };
-    return {
-      allowed: false,
-      status: KILL_SWITCH_HTTP_STATUS,
-      message: SERVICE_UNAVAILABLE_MESSAGE,
-      // PLATFORM POLICY: a halt is cleared by a human decision, not by elapsed
-      // time, so the hint is a polling interval rather than a promise.
-      retryAfterSeconds: 30,
-    };
-  }
+/**
+ * PLATFORM POLICY. A halt is cleared by a human decision, not by elapsed time, so
+ * the `Retry-After` hint is a polling interval rather than a promise.
+ */
+export const KILL_SWITCH_RETRY_AFTER_SECONDS = 30;
+
+/**
+ * The shed envelope for a routing request, or `null` when routing is open.
+ *
+ * Takes the state as an argument rather than reading `this.current`, because the
+ * authoritative answer to "is the platform halted right now" is the ledger, not
+ * an in-process field: a second server process, or this one after a restart, has
+ * a `KillSwitch` instance that never saw the engagement. Both routing endpoints
+ * therefore read `killSwitchState()` and format the response through here, so the
+ * two cannot drift — which they had, one answering 503 and the other 422 for the
+ * same halt.
+ */
+export function killSwitchShed(state: Pick<KillSwitchState, 'engaged' | 'reason' | 'engagedAt'>): {
+  code: 'KILL_SWITCH_ENGAGED';
+  message: string;
+  status: number;
+  details: { reason: string | null; engagedAt: number | null; retryAfterSeconds: number };
+} | null {
+  if (!state.engaged) return null;
+  return {
+    code: 'KILL_SWITCH_ENGAGED',
+    message: ERROR_COPY.killSwitch,
+    status: KILL_SWITCH_HTTP_STATUS,
+    details: {
+      reason: state.reason,
+      engagedAt: state.engagedAt,
+      retryAfterSeconds: KILL_SWITCH_RETRY_AFTER_SECONDS,
+    },
+  };
 }
 
 /**

@@ -12,6 +12,9 @@ const config = [
       'playwright-report/**',
       'test-results/**',
       'coverage/**',
+      // Framework-generated and rewritten on every build; its triple-slash
+      // reference is Next's, not ours, and `npx eslint .` failed on it.
+      'next-env.d.ts',
       'info and research files for coders/**',
       '.data/**',
     ],

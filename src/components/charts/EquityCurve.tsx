@@ -48,6 +48,7 @@ import {
   signedFractionAsPercent,
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
+import { useChartWidth } from './useChartWidth';
 
 /** Mandated 70 / 30 split between the equity and drawdown panels. */
 const EQUITY_SHARE = 0.7;
@@ -234,7 +235,8 @@ function computeLayout(props: EquityCurveProps): Layout | null {
     }
   }
 
-  const labelCount = Math.min(DATE_LABELS, shown.length);
+  // Bounded by width: five 70px dates do not fit a 308px mobile chart.
+  const labelCount = Math.max(2, Math.min(DATE_LABELS, shown.length, Math.floor(f.innerWidth / 95)));
   const step = labelCount <= 1 ? 0 : (shown.length - 1) / (labelCount - 1);
   const seen = new Set<number>();
   const dateLabels: AxisLabel[] = [];
@@ -279,10 +281,11 @@ function computeLayout(props: EquityCurveProps): Layout | null {
 export function EquityCurve({
   points,
   maxDrawdownCeiling,
-  width = 920,
+  width: widthFallback = 920,
   height = 400,
   logScale = false,
 }: EquityCurveProps) {
+  const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
   const layout = useMemo(
     () => computeLayout({ points, maxDrawdownCeiling, width, height, logScale }),
@@ -351,6 +354,7 @@ export function EquityCurve({
       </div>
 
       <svg
+        ref={chartRef}
         viewBox={`0 0 ${width} ${height}`}
         width={width}
         height={height}

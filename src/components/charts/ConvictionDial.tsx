@@ -15,12 +15,20 @@
  * maxSegmentLength: 0.1 })` inside `useTransform`, exactly as the research
  * specifies.
  *
- * Geometry: r = 84, strokeWidth = 3, rotated −90° so the arc starts at twelve
- * o'clock. C = 2πr = 527.79, and the dash offset is C·(1 − score/100).
+ * Geometry: r = 84, strokeWidth = 3. `circlePath` already begins at twelve
+ * o'clock and runs clockwise, so the arc carries no rotation — an inherited
+ * `rotate(-90)` (correct for a `<circle>` with a dash offset, which starts at
+ * three) put the arc's head 90° away from the terminal tick that is supposed to
+ * mark it. C = 2πr = 527.79.
+ *
+ * The morph is built lazily. Flubber's mixer is expensive enough that creating it
+ * unconditionally cost 12.5s of blocked main thread on the five-dial publication
+ * list, so `MorphingArc` — the only code that touches Flubber — mounts on the
+ * first morph and not before. A dial that is never unspooled never loads it.
  */
 
-import { useEffect, useMemo, useRef } from 'react';
-import { motion, useMotionValue, useReducedMotion, useTransform, animate } from 'framer-motion';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { motion, useMotionValue, useReducedMotion, useTransform, animate, type MotionValue } from 'framer-motion';
 import { interpolate } from 'flubber';
 import {
   CONVICTION_CIRCUMFERENCE,
@@ -73,6 +81,9 @@ export function ConvictionDial({
   const displayed = useMotionValue(reduceMotion ? clamped : 0);
   const valueRef = useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
+    // With no readout rendered there is no node to write to, so the tween would
+    // schedule ~66 frames whose every result is discarded.
+    if (hideValue) return;
     if (reduceMotion) {
       if (valueRef.current) valueRef.current.textContent = clamped.toFixed(0);
       return;
@@ -87,7 +98,7 @@ export function ConvictionDial({
       },
     });
     return () => controls.stop();
-  }, [clamped, displayed, reduceMotion]);
+  }, [clamped, displayed, hideValue, reduceMotion]);
 
   const { ringPath, axisPath } = useMemo(
     () => ({
@@ -107,11 +118,15 @@ export function ConvictionDial({
     return () => controls.stop();
   }, [morph, morphValue, reduceMotion]);
 
-  const mixer = useMemo(
-    () => (a: string, b: string) => interpolate(a, b, { maxSegmentLength: MORPH_MAX_SEGMENT_LENGTH }),
-    [],
-  );
-  const morphedPath = useTransform(morphValue, [0, 1], [ringPath, axisPath], { mixer });
+  /*
+   * Once a dial has morphed it keeps the Flubber path for the rest of its life —
+   * it has to, to animate back — but a dial that is only ever a ring never mounts
+   * it and never pays for it.
+   */
+  const [everMorphed, setEverMorphed] = useState(morph > 0);
+  useEffect(() => {
+    if (morph > 0) setEverMorphed(true);
+  }, [morph]);
   const captionOpacity = useTransform(morphValue, [0, 0.35], [1, 0]);
 
   return (
@@ -124,26 +139,35 @@ export function ConvictionDial({
         aria-label={`Conviction score ${clamped.toFixed(0)} out of 100`}
         className="overflow-visible"
       >
-        {/* Static track. */}
-        <motion.path
-          d={morphedPath}
-          fill="none"
-          stroke={OBSIDIAN_EDGE}
-          strokeWidth={CONVICTION_STROKE}
-          strokeLinecap="round"
-          transform={`rotate(-90 ${CENTRE} ${CENTRE})`}
-        />
-        {/* Animated progress arc, gold. */}
-        <motion.path
-          d={morphedPath}
-          fill="none"
-          stroke={GOLD}
-          strokeWidth={CONVICTION_STROKE}
-          strokeLinecap="round"
-          transform={`rotate(-90 ${CENTRE} ${CENTRE})`}
-          style={{ pathLength: progress }}
-          pathLength={1}
-        />
+        {everMorphed ? (
+          <MorphingArc
+            morphValue={morphValue}
+            ringPath={ringPath}
+            axisPath={axisPath}
+            progress={progress}
+          />
+        ) : (
+          <>
+            {/* Static track. */}
+            <path
+              d={ringPath}
+              fill="none"
+              stroke={OBSIDIAN_EDGE}
+              strokeWidth={CONVICTION_STROKE}
+              strokeLinecap="round"
+            />
+            {/* Animated progress arc, gold. */}
+            <motion.path
+              d={ringPath}
+              fill="none"
+              stroke={GOLD}
+              strokeWidth={CONVICTION_STROKE}
+              strokeLinecap="round"
+              style={{ pathLength: progress }}
+              pathLength={1}
+            />
+          </>
+        )}
         {/* Terminal tick at the arc's head, so the exact stopping point reads. */}
         <motion.circle
           cx={CENTRE}
@@ -167,6 +191,49 @@ export function ConvictionDial({
         </motion.div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The Flubber-backed arc. Split out so the mixer is constructed on mount, and the
+ * module's only `interpolate` call sits behind a component that a page which never
+ * morphs never renders.
+ */
+function MorphingArc({
+  morphValue,
+  ringPath,
+  axisPath,
+  progress,
+}: {
+  morphValue: MotionValue<number>;
+  ringPath: string;
+  axisPath: string;
+  progress: MotionValue<number>;
+}) {
+  const mixer = useMemo(
+    () => (a: string, b: string) => interpolate(a, b, { maxSegmentLength: MORPH_MAX_SEGMENT_LENGTH }),
+    [],
+  );
+  const morphedPath = useTransform(morphValue, [0, 1], [ringPath, axisPath], { mixer });
+  return (
+    <>
+      <motion.path
+        d={morphedPath}
+        fill="none"
+        stroke={OBSIDIAN_EDGE}
+        strokeWidth={CONVICTION_STROKE}
+        strokeLinecap="round"
+      />
+      <motion.path
+        d={morphedPath}
+        fill="none"
+        stroke={GOLD}
+        strokeWidth={CONVICTION_STROKE}
+        strokeLinecap="round"
+        style={{ pathLength: progress }}
+        pathLength={1}
+      />
+    </>
   );
 }
 

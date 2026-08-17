@@ -67,7 +67,14 @@ export {
 export type { RateLimitDecision, RateLimiterOptions } from '@/lib/risk/rateLimit';
 
 // Kill switch — Control 6.
-export { KillSwitch, getKillSwitch, isKillSwitchEngaged, setKillSwitch } from '@/lib/risk/killSwitch';
+export {
+  KILL_SWITCH_RETRY_AFTER_SECONDS,
+  KillSwitch,
+  getKillSwitch,
+  isKillSwitchEngaged,
+  killSwitchShed,
+  setKillSwitch,
+} from '@/lib/risk/killSwitch';
 export type {
   CancellationAttempt,
   KillSwitchDeps,

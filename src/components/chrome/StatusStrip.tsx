@@ -17,8 +17,15 @@ export function StatusStrip() {
 
   return (
     <footer className="sticky bottom-0 z-20 border-t border-obsidian-edge bg-vanta-deep/95 backdrop-blur-sm">
-      <div className="flex items-center justify-between gap-4 overflow-x-auto px-4 py-1.5 lg:px-6">
-        <div className="flex items-center gap-5">
+      <div className="flex items-center justify-between gap-4 px-4 py-1.5 lg:px-6">
+        {/*
+          The three fields wrap rather than scroll. At 390px they are 24px wider
+          than the viewport, and a status line that clips its last field —
+          "execution: manual o…" — misreports the one field that matters most.
+          Wrapping costs a second row on the narrowest phones; `main` already
+          reserves `pb-16`, so nothing is obscured either way.
+        */}
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-0.5">
           <Field label="Focus" value={activeAsset || 'none'} />
           <Field
             label="Cadence"

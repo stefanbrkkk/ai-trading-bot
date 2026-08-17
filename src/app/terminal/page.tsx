@@ -131,7 +131,7 @@ export default function TerminalPage() {
           publication.data ? (
             <div className="text-right font-mono text-2xs uppercase tracking-institutional text-parchment-faint">
               <p>{nyDate(publication.data.publishedAt)}</p>
-              <p className="mt-1 text-parchment-dim">{nyTime(publication.data.publishedAt)} ET</p>
+              <p className="mt-1 text-parchment-dim">{nyTime(publication.data.publishedAt)}</p>
               <p className="mt-1">{publication.data.modelVersion}</p>
             </div>
           ) : null

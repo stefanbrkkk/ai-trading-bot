@@ -11,9 +11,13 @@ subsystems consistent.
    `unknown` plus a narrowing guard.
 2. **No new dependencies.** The installed set is exactly: `next@15.5.23`,
    `react@19.2`, `zustand@5`, `framer-motion@12`, `flubber@0.4.2`, `zod@3.25`,
-   `node-sql-parser@5.4`, and dev-only `vitest@3.2`, `@playwright/test`,
-   `tailwindcss@3.4`, `eslint`. Node built-ins are fine (`node:crypto`,
-   `node:sqlite`, `node:fs`). Nothing else may be added.
+   and dev-only `vitest@3.2`, `@playwright/test`, `tailwindcss@3.4`, `eslint`.
+   Node built-ins are fine (`node:crypto`, `node:sqlite`, `node:fs`). Nothing
+   else may be added. (`node-sql-parser@5.4` was provisioned for the SQL
+   validator's AST layer and then never imported — the validator tokenises and
+   checks a relation/column allowlist instead, which is what ships and what the
+   tests cover. An unimported dependency is a claim about the defence that is not
+   true, so it was removed.)
 3. **Zero required configuration.** Every subsystem must work with a completely
    empty `.env`. API keys are optional switches, never preconditions. When a key
    is absent, fall back to a deterministic in-process implementation — never

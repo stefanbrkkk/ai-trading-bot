@@ -250,17 +250,36 @@ describe('risk engine — click provenance', () => {
     ).toBe('UNTRUSTED_CLICK');
   });
 
+  /*
+   * A token that does not match the order gets its own code.
+   *
+   * These three asserted `UNTRUSTED_CLICK`, which the engine also returns for a
+   * missing token, an untrusted gesture and a bad signature — so the UI could not
+   * tell "you authorised a different order" from "we do not believe you clicked".
+   * The remedies differ, so the codes do.
+   */
   it('rejects a token bound to a different quantity', () => {
     // The token authorises 100; the order asks for 200.
-    expect(reject(intent({ quantity: 200 }), context())).toBe('UNTRUSTED_CLICK');
+    expect(reject(intent({ quantity: 200 }), context())).toBe('INTENT_TOKEN_MISMATCH');
   });
 
   it('rejects a token bound to a different symbol', () => {
-    expect(reject(intent({ symbol: 'MSFT' }), context())).toBe('UNTRUSTED_CLICK');
+    expect(reject(intent({ symbol: 'MSFT' }), context())).toBe('INTENT_TOKEN_MISMATCH');
   });
 
   it('rejects a token bound to a different side', () => {
-    expect(reject(intent({ side: 'sell' }), context())).toBe('UNTRUSTED_CLICK');
+    expect(reject(intent({ side: 'sell' }), context())).toBe('INTENT_TOKEN_MISMATCH');
+  });
+
+  it('distinguishes a spent token from an unverified click', () => {
+    expect(
+      reject(
+        intent(),
+        context({
+          intentToken: { valid: false, failure: 'REPLAYED', payload: null, mismatchedField: null, ageMs: 10 },
+        }),
+      ),
+    ).toBe('INTENT_TOKEN_SPENT');
   });
 });
 

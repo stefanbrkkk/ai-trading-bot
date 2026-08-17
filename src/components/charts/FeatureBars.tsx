@@ -19,6 +19,7 @@
 import { useMemo, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { WATERFALL_STAGGER, linearScale } from '@/lib/ui/svg';
+import { useChartWidth } from './useChartWidth';
 import {
   BURGUNDY,
   GOLD,
@@ -50,17 +51,34 @@ export interface FeatureBarsProps {
   hoveredKey?: string | null;
   /** Overrides the viewBox height; rows stay at the mandated 20px pitch. */
   height?: number;
+  /** Server-render fallback width; the rendered width is measured. */
+  width?: number;
 }
 
 const ROW_PITCH = 20;
 const BAR_HEIGHT = 8;
+/** Server-render fallback; the rendered width is measured — see `useChartWidth`. */
 const VIEW_WIDTH = 280;
-const LABEL_COLUMN = 104;
 const VALUE_COLUMN = 44;
 const GUTTER = 8;
-const LABEL_CHARS = 17;
+/** Roughly the advance width of the 9px mono face, for sizing the label column. */
+const LABEL_CHAR_PX = 5.4;
+const MIN_LABEL_COLUMN = 104;
+const MAX_LABEL_COLUMN = 300;
 
-export function FeatureBars({ items, max, onHover, hoveredKey, height }: FeatureBarsProps) {
+/**
+ * The label column takes a share of the width rather than a fixed 104px.
+ *
+ * Fixed, it truncated every driver to 17 characters — "Sector relative…" —
+ * whatever the panel width, so the full-width instance on the symbol page spent
+ * 1,100px on the bars and still could not name them.
+ */
+function labelColumnFor(width: number): number {
+  return Math.round(Math.min(MAX_LABEL_COLUMN, Math.max(MIN_LABEL_COLUMN, width * 0.3)));
+}
+
+export function FeatureBars({ items, max, onHover, hoveredKey, height, width: widthFallback = VIEW_WIDTH }: FeatureBarsProps) {
+  const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
   const [localKey, setLocalKey] = useState<string | null>(null);
 
@@ -71,10 +89,12 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height }: Feature
     // A supplied max of 0, an all-zero list, or a single all-equal datum would
     // otherwise divide by zero and write NaN into a width attribute.
     const ceiling = Number.isFinite(max) && (max as number) > 0 ? (max as number) : peak > 0 ? peak : 1;
-    const trackX0 = LABEL_COLUMN + GUTTER;
-    const trackWidth = Math.max(1, VIEW_WIDTH - trackX0 - VALUE_COLUMN - GUTTER);
+    const labelColumn = labelColumnFor(width);
+    const trackX0 = labelColumn + GUTTER;
+    const trackWidth = Math.max(1, width - trackX0 - VALUE_COLUMN - GUTTER);
     return {
       rows,
+      labelColumn,
       trackX0,
       trackWidth,
       centreX: trackX0 + trackWidth / 2,
@@ -83,9 +103,9 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height }: Feature
       /** Half-track scale for signed rows, measured out from the centre line. */
       half: linearScale([0, ceiling], [0, trackWidth / 2]),
     };
-  }, [items, max]);
+  }, [items, max, width]);
 
-  const { rows, trackX0, trackWidth, centreX } = layout;
+  const { rows, labelColumn, trackX0, trackWidth, centreX } = layout;
   const viewHeight = Math.max(ROW_PITCH, height ?? rows.length * ROW_PITCH);
 
   if (rows.length === 0) {
@@ -93,14 +113,15 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height }: Feature
     // inside a fixed panel slot and must not change the panel's height.
     return (
       <svg
-        viewBox={`0 0 ${VIEW_WIDTH} ${Math.max(ROW_PITCH * 2, height ?? ROW_PITCH * 2)}`}
+        ref={chartRef}
+        viewBox={`0 0 ${width} ${Math.max(ROW_PITCH * 2, height ?? ROW_PITCH * 2)}`}
         preserveAspectRatio="xMidYMid meet"
         className="h-auto w-full"
         role="img"
         aria-label="No driver shares available"
       >
         <text
-          x={VIEW_WIDTH / 2}
+          x={width / 2}
           y={ROW_PITCH}
           textAnchor="middle"
           dominantBaseline="central"
@@ -118,7 +139,8 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height }: Feature
 
   return (
     <svg
-      viewBox={`0 0 ${VIEW_WIDTH} ${viewHeight}`}
+      ref={chartRef}
+      viewBox={`0 0 ${width} ${viewHeight}`}
       preserveAspectRatio="xMidYMid meet"
       className="h-auto w-full"
       role="img"
@@ -188,17 +210,17 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height }: Feature
           >
             {row.hint ? <title>{row.hint}</title> : null}
 
-            <rect x={0} y={y} width={VIEW_WIDTH} height={ROW_PITCH} fill="transparent" />
+            <rect x={0} y={y} width={width} height={ROW_PITCH} fill="transparent" />
 
             <text
-              x={LABEL_COLUMN}
+              x={labelColumn}
               y={y + ROW_PITCH / 2}
               textAnchor="end"
               dominantBaseline="central"
               fontSize={9}
               fill={active ? PARCHMENT : PARCHMENT_FAINT}
             >
-              {truncate(row.label, LABEL_CHARS)}
+              {truncate(row.label, Math.max(12, Math.floor(labelColumn / LABEL_CHAR_PX)))}
             </text>
 
             {/* Empty track, so a small share still reads as small rather than absent. */}
@@ -220,8 +242,9 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height }: Feature
               width={clamped}
               height={BAR_HEIGHT}
               fill={fill}
-              initial={reduceMotion ? false : { width: 0, x: restX }}
-              animate={{ width: clamped, x: barX }}
+              // Same zero-target guard as ShapWaterfall — see the note there.
+              initial={reduceMotion || clamped <= 0 ? false : { width: 0, x: restX }}
+              animate={{ width: Math.max(0, clamped), x: barX }}
               transition={
                 reduceMotion
                   ? { duration: 0 }
@@ -230,7 +253,7 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height }: Feature
             />
 
             <text
-              x={VIEW_WIDTH - 4}
+              x={width - 4}
               y={y + ROW_PITCH / 2}
               textAnchor="end"
               dominantBaseline="central"

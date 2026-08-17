@@ -117,7 +117,16 @@ export function limitPriceTolerance(referencePrice: number): number {
     }
   }
   // Unreachable: the final band is unbounded. Kept so the function is total.
-  return PRICE_TOLERANCE_BANDS[PRICE_TOLERANCE_BANDS.length - 1].clearlyErroneousDeviation;
+  /*
+     * The multiplier belongs here too. This fallback is reached when `price` is
+     * NaN — the loop's comparisons are all false — and it returned the raw FINRA
+     * band, 3% rather than the 6% every other path applies, so an unpriceable
+     * order was judged against a stricter collar than a priced one.
+     */
+  return (
+    PRICE_TOLERANCE_BANDS[PRICE_TOLERANCE_BANDS.length - 1].clearlyErroneousDeviation *
+    ORDER_ENTRY_COLLAR_MULTIPLIER
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -284,11 +293,24 @@ export const RISK_LIMIT_DESCRIPTORS: readonly RiskLimitDescriptor[] = [
   },
   {
     code: 'LIMIT_PRICE_TOLERANCE',
-    label: 'Limit-price collar versus NBBO',
-    value: PRICE_TOLERANCE_BANDS[0].clearlyErroneousDeviation * ORDER_ENTRY_COLLAR_MULTIPLIER * 100,
+    /*
+     * The published figure is the *tightest* tier, not the widest.
+     *
+     * The collar is tiered by reference price — 20% under $25, 10% to $50, 6%
+     * above — and publishing the first band's 20% meant /control advertised a
+     * tolerance four times looser than the one actually enforced on a $142 stock,
+     * whose own rejection message reads "outside the 6% tolerance band". Where a
+     * control varies, the number a user is shown has to be the one that binds
+     * first; the tiering is stated in full in the rationale.
+     */
+    label: 'Limit-price collar versus NBBO (tightest tier)',
+    value:
+      PRICE_TOLERANCE_BANDS[PRICE_TOLERANCE_BANDS.length - 1].clearlyErroneousDeviation *
+      ORDER_ENTRY_COLLAR_MULTIPLIER *
+      100,
     unit: 'percent',
     rationale:
-      'Tiered against the reference price: 20% under $25, 10% to $50, 6% above. Only the aggressive side is collared — a buy priced above the offer, a sell priced below the bid. Bands are twice the FINRA Rule 11892 clearly-erroneous guidelines so that deliberately aggressive orders still route.',
+      'Tiered against the reference price: 20% under $25, 10% to $50, 6% above — the 6% tier is published here because it is the one that binds for most of the universe. Only the aggressive side is collared — a buy priced above the offer, a sell priced below the bid. Bands are twice the FINRA Rule 11892 clearly-erroneous guidelines so that deliberately aggressive orders still route.',
     regulatoryBasis: 'SEC Rule 15c3-5(c)(1)(i) — Control 3, order price parameters; FINRA Rule 11892',
   },
   {

@@ -65,7 +65,16 @@ export function SideNav() {
       aria-label="Primary"
       className="shrink-0 border-b border-obsidian-edge bg-vanta-deep lg:w-[196px] lg:border-b-0 lg:border-r"
     >
-      <div className="flex gap-6 overflow-x-auto px-4 py-3 lg:flex-col lg:gap-5 lg:overflow-visible lg:px-4 lg:py-6">
+      {/*
+        Below `lg` this is a horizontal strip that shows about four of the ten
+        destinations. `data-scroll-x` opts it into the edge fade so the rest are
+        discoverable; the fade is measured, so it disappears above `lg` where the
+        nav is a static column.
+      */}
+      <div
+        data-scroll-x
+        className="flex gap-6 overflow-x-auto px-4 py-3 lg:flex-col lg:gap-5 lg:overflow-visible lg:px-4 lg:py-6"
+      >
         {GROUPS.map((group) => (
           <div key={group.label} className="shrink-0">
             <p className="eyebrow mb-2 hidden lg:block">{group.label}</p>

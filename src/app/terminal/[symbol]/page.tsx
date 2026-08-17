@@ -36,11 +36,17 @@ import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
 import {
   AttentionStrip,
   ConvictionDial,
+  DecayCurve,
   FeatureBars,
   LatencyBar,
+  PriceChart,
+  SabrSmile,
   ShapForcePlot,
   ShapWaterfall,
+  ZOscillator,
 } from '@/components/charts';
+import type { SignalLevels } from '@/components/charts';
+import type { AggregatedStream } from '@/lib/quant/decay';
 import {
   Badge,
   Button,
@@ -114,6 +120,37 @@ interface AgentInference {
   attention: number[] | null;
 }
 
+/**
+ * `/chart/[symbol]`. Declared against the engine's `ChartSeries` shape; every field
+ * is required because the engine always emits it — `smile` is nullable rather than
+ * optional, which is the difference between "this name has no listed options" and
+ * "this response is from an older build".
+ */
+interface ChartSeriesResponse {
+  symbol: string;
+  daily: { time: number; open: number; high: number; low: number; close: number; volume: number }[];
+  intraday: { time: number; open: number; high: number; low: number; close: number; volume: number }[];
+  hourly: { time: number; open: number; high: number; low: number; close: number; volume: number }[];
+  kalmanBand: { time: number; level: number; upper: number; lower: number }[];
+  bollinger: { time: number; upper: number; middle: number; lower: number }[];
+  ouBand: { upper: number; lower: number; mid: number };
+  ouZ: { time: number; z: number }[];
+  smile: {
+    tau: number;
+    forward: number;
+    curve: { strike: number; logMoneyness: number; vol: number }[];
+    quotes: { strike: number; vol: number }[];
+    strike25Call: number;
+    strike25Put: number;
+    vol25Call: number;
+    vol25Put: number;
+    volAtm: number;
+    riskReversal: number;
+    rmse: number;
+  } | null;
+  vwap: number;
+}
+
 interface SignalResponse {
   assetIdentifier: string;
   timestamp: number;
@@ -125,7 +162,15 @@ interface SignalResponse {
   expectedReturn: number;
   expectedReturnLow: number;
   expectedReturnHigh: number;
-  levels: { entryLow: number; entryHigh: number; invalidation: number; target1: number; target2: number };
+  /*
+   * Imported rather than re-declared. The local declaration here read
+   * `{ entryLow, entryHigh, … }` while the engine has always emitted
+   * `entryZoneLow`/`entryZoneHigh`, so the entry-zone row rendered `price(undefined)`
+   * — an em-dash — on every symbol page, and TypeScript could not see it because
+   * the lie was in the type that described the response rather than in the code
+   * reading it. One shared shape is what makes that mismatch a compile error.
+   */
+  levels: SignalLevels;
   regime: RegimeLabel;
   strategy: string | null;
   strategiesFired: string[];
@@ -179,6 +224,10 @@ interface SignalResponse {
       rSquared: number;
       meanReverting: boolean;
     };
+    /** Calibrated smile parameters; null for a name with no listed options. */
+    sabr: { alpha: number; beta: number; rho: number; nu: number; rmse: number; converged: boolean } | null;
+    /** Decay-weighted alt-data aggregates, one per stream present for this name. */
+    altStreams: AggregatedStream[];
   };
 }
 
@@ -221,6 +270,13 @@ export default function SymbolPage() {
   const symbol = (params.symbol ?? '').toUpperCase();
 
   const signal = useApi<SignalResponse>(symbol.length > 0 ? `/signals/${symbol}` : null);
+  /**
+   * The series are a separate request on purpose: 180 bars plus four overlay
+   * series is an order of magnitude more payload than the signal, and the
+   * attribution below renders without it. Fetching them together would make the
+   * whole page wait for the part of it that is heaviest.
+   */
+  const series = useApi<ChartSeriesResponse>(symbol.length > 0 ? `/chart/${symbol}` : null);
 
   /**
    * One hover key shared by the waterfall, the force plot and the driver table.
@@ -281,13 +337,56 @@ export default function SymbolPage() {
                 }
               />
 
+              {/* ── Price, with the bands the signal was derived from ─── */}
+              <Panel className="mb-5">
+                <PanelHeader
+                  eyebrow="Price"
+                  title="180 sessions, with the model's own bands"
+                  detail="The Kalman innovation band and the Bollinger band are computed by the engine, not the browser, so the band drawn here is the band the signal was derived from rather than a second estimate that happens to look similar."
+                  action={
+                    series.data ? (
+                      <div className="text-right font-mono text-2xs uppercase tracking-institutional text-parchment-faint">
+                        <p>{integer(series.data.daily.length)} sessions</p>
+                        <p className="mt-1">VWAP {price(series.data.vwap)}</p>
+                      </div>
+                    ) : null
+                  }
+                />
+                <AsyncSlot state={series} label="Loading series" lines={6}>
+                  {(chart) => (
+                    <div className="mt-4">
+                      <PriceChart
+                        bars={chart.daily}
+                        kalmanBand={chart.kalmanBand}
+                        bollinger={chart.bollinger}
+                        levels={data.levels}
+                        vwap={chart.vwap}
+                        showVolume
+                      />
+                    </div>
+                  )}
+                </AsyncSlot>
+              </Panel>
+
               <div className="grid grid-cols-1 gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
                 {/* ── Conviction and levels ─────────────────────────────── */}
                 <div className="space-y-5">
                   <Panel>
                     <PanelHeader eyebrow="Conviction" title="Composite score" />
                     <div className="mt-4 flex justify-center">
-                      <ConvictionDial score={data.convictionScore} size={220} caption={`${data.horizonDays}-day horizon`} />
+                      {/*
+                        Switching to the force plot unspools the ring into a
+                        horizontal axis — the mandated through-line saying that the
+                        composite score *is* the row of contributions below it.
+                        Driven by the same state as the toggle, so the two can
+                        never disagree about which view is showing.
+                      */}
+                      <ConvictionDial
+                        score={data.convictionScore}
+                        size={220}
+                        caption={`${data.horizonDays}-day horizon`}
+                        morph={view === 'force' ? 1 : 0}
+                      />
                     </div>
                     <dl className="mt-5 space-y-0.5">
                       <DataRow label="Probability" value={fractionAsPercent(data.predictionProbability)} />
@@ -311,7 +410,7 @@ export default function SymbolPage() {
                     <dl className="mt-3 space-y-0.5">
                       <DataRow
                         label="Entry zone"
-                        value={`${price(data.levels.entryLow)} — ${price(data.levels.entryHigh)}`}
+                        value={`${price(data.levels.entryZoneLow)} — ${price(data.levels.entryZoneHigh)}`}
                       />
                       <DataRow label="Invalidation" value={price(data.levels.invalidation)} />
                       <DataRow label="Target 1" value={price(data.levels.target1)} />
@@ -413,51 +512,49 @@ export default function SymbolPage() {
                         detail="Each sentence is produced by a fixed mapping from the feature's discretised state, so the same state always yields the same wording."
                       />
                     </div>
-                    <div className="scroll-x mt-4">
-                      <TableShell>
-                        <thead>
-                          <tr>
-                            <Th>Feature</Th>
-                            <Th align="right">Value</Th>
-                            <Th align="right">Share</Th>
-                            <Th>Impact</Th>
-                            <Th>Interpretation</Th>
+                    <TableShell className="mt-4">
+                      <thead>
+                        <tr>
+                          <Th>Feature</Th>
+                          <Th align="right">Value</Th>
+                          <Th align="right">Share</Th>
+                          <Th>Impact</Th>
+                          <Th>Interpretation</Th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {contributions.map((c) => (
+                          <tr
+                            key={c.featureId}
+                            onMouseEnter={() => setHovered(c.featureId)}
+                            onMouseLeave={() => setHovered(null)}
+                            className={hovered === c.featureId ? 'bg-obsidian-light/60' : undefined}
+                          >
+                            <Td>
+                              <span className="text-parchment">{c.featureDisplayName}</span>
+                              <span className="ml-2 font-mono text-2xs text-parchment-faint">
+                                {DOMAIN_LABELS[c.domain]}
+                              </span>
+                            </Td>
+                            <Td align="right" numeric>
+                              {formatFeatureValue(c.featureValueRaw, c.unit)}
+                            </Td>
+                            <Td align="right" numeric>
+                              {percent(c.contributionPercentage, 1)}
+                            </Td>
+                            <Td>
+                              <Meter
+                                value={c.contributionPercentage / 100}
+                                tone={c.impactDirection === 'positive' ? 'sage' : 'burgundy'}
+                              />
+                            </Td>
+                            <Td>
+                              <span className="text-parchment-dim">{c.semanticTranslation}</span>
+                            </Td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {contributions.map((c) => (
-                            <tr
-                              key={c.featureId}
-                              onMouseEnter={() => setHovered(c.featureId)}
-                              onMouseLeave={() => setHovered(null)}
-                              className={hovered === c.featureId ? 'bg-obsidian-light/60' : undefined}
-                            >
-                              <Td>
-                                <span className="text-parchment">{c.featureDisplayName}</span>
-                                <span className="ml-2 font-mono text-2xs text-parchment-faint">
-                                  {DOMAIN_LABELS[c.domain]}
-                                </span>
-                              </Td>
-                              <Td align="right" numeric>
-                                {formatFeatureValue(c.featureValueRaw, c.unit)}
-                              </Td>
-                              <Td align="right" numeric>
-                                {percent(c.contributionPercentage, 1)}
-                              </Td>
-                              <Td>
-                                <Meter
-                                  value={c.contributionPercentage / 100}
-                                  tone={c.impactDirection === 'positive' ? 'sage' : 'burgundy'}
-                                />
-                              </Td>
-                              <Td>
-                                <span className="text-parchment-dim">{c.semanticTranslation}</span>
-                              </Td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </TableShell>
-                    </div>
+                        ))}
+                      </tbody>
+                    </TableShell>
                   </Panel>
 
                   {/* ── Counter-thesis ─────────────────────────────────── */}
@@ -608,7 +705,88 @@ export default function SymbolPage() {
                         carry no information. They are shown because suppressing them would hide the diagnosis.
                       </Notice>
                     ) : null}
+                    {/*
+                      The oscillator is the spread standardised by the same fitted σ
+                      as the table above, so the ±2σ lines it draws are the exact
+                      thresholds the mean-reversion strategy fires on.
+                    */}
+                    {series.data && series.data.ouZ.length > 1 ? (
+                      <div className="mt-4">
+                        <ZOscillator
+                          values={series.data.ouZ}
+                          label="OU spread vs benchmark"
+                          currentLabel="Z_OU"
+                        />
+                      </div>
+                    ) : null}
                   </Panel>
+
+                  {/*
+                    Options panel. Rendered only for a name with a converged fit:
+                    an empty smile axis on a non-optionable symbol would imply the
+                    surface exists and is flat.
+                  */}
+                  {series.data?.smile ? (
+                    <Panel>
+                      <PanelHeader
+                        eyebrow="Volatility surface"
+                        title={`SABR smile, ${integer(series.data.smile.tau * 365)}-day tenor`}
+                        detail="Hagan (2002) lognormal expansion, fitted by Nelder–Mead against the listed call surface. The dots are the quotes it was calibrated to."
+                      />
+                      <div className="mt-4">
+                        <SabrSmile
+                          curve={series.data.smile.curve}
+                          marketQuotes={series.data.smile.quotes}
+                          forward={series.data.smile.forward}
+                          strike25Call={series.data.smile.strike25Call}
+                          strike25Put={series.data.smile.strike25Put}
+                          vol25Call={series.data.smile.vol25Call}
+                          vol25Put={series.data.smile.vol25Put}
+                          volAtm={series.data.smile.volAtm}
+                          riskReversal={series.data.smile.riskReversal}
+                        />
+                      </div>
+                      <dl className="mt-3 space-y-0.5">
+                        <DataRow label="α (level)" value={ratio(data.artefacts.sabr?.alpha ?? 0, 4)} />
+                        <DataRow label="ρ (spot/vol correlation)" value={ratio(data.artefacts.sabr?.rho ?? 0, 3)} />
+                        <DataRow label="ν (vol of vol)" value={ratio(data.artefacts.sabr?.nu ?? 0, 3)} />
+                        <DataRow
+                          label="Fit RMSE"
+                          value={ratio(series.data.smile.rmse, 5)}
+                          hint="Root mean squared vol error against the quotes the fit was calibrated to."
+                        />
+                      </dl>
+                    </Panel>
+                  ) : null}
+
+                  {/*
+                    Alt-data decay. The half-lives are the platform's published
+                    profiles, and the marker on each curve is where this symbol's
+                    most recent event currently sits — so the panel shows both the
+                    rule and its present effect.
+                  */}
+                  {data.artefacts.altStreams.length > 0 ? (
+                    <Panel>
+                      <PanelHeader
+                        eyebrow="Alt data"
+                        title="How fast each stream stops counting"
+                        detail="Every alt-data stream is weighted by an exponential decay with a published half-life. A Form 4 still carries weight two months on; Reddit chatter is spent within the hour."
+                      />
+                      <div className="mt-4">
+                        <DecayCurve
+                          profiles={data.artefacts.altStreams.map((stream) => ({
+                            stream: stream.stream,
+                            label: stream.label,
+                            halfLifeMs: stream.halfLifeMs,
+                            plateauMs: stream.plateauMs,
+                            shape: stream.shape,
+                            authority: stream.authority,
+                            ...(Number.isFinite(stream.freshnessMs) ? { currentAgeMs: stream.freshnessMs } : {}),
+                          }))}
+                        />
+                      </div>
+                    </Panel>
+                  ) : null}
 
                   <Panel>
                     <PanelHeader

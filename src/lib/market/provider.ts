@@ -29,7 +29,21 @@ import type {
   Timeframe,
 } from '@/lib/domain/types';
 
-export type ProviderName = 'simulator' | 'alpaca' | 'polygon' | 'finnhub';
+export type ProviderName = 'simulator' | 'alpaca' | 'polygon';
+
+/**
+ * The names `AURELIUS_MARKET_PROVIDER` accepts.
+ *
+ * `finnhub` used to sit in the union above with no implementation behind it, which
+ * made the status surface lie: an unrecognised name fell into the
+ * "requested but its API keys are absent" branch, so `finnhub` — and every typo —
+ * was reported as a provider that would work once a key was supplied.
+ */
+export const MARKET_PROVIDER_NAMES: readonly ProviderName[] = ['simulator', 'alpaca', 'polygon'];
+
+function isProviderName(value: string): value is ProviderName {
+  return MARKET_PROVIDER_NAMES.some((name) => name === value);
+}
 
 export interface MarketDataProvider {
   readonly name: ProviderName;
@@ -457,10 +471,15 @@ export function marketProviderStatus(): ProviderStatus {
     'degradedFeeds' in provider ? [...(provider as { degradedFeeds: readonly string[] }).degradedFeeds] : [];
   let reason: string;
   if (provider.name === 'simulator') {
-    reason =
-      requested === 'simulator'
-        ? 'Deterministic in-process simulator (default). No API keys required.'
-        : `Provider "${requested}" was requested but its API keys are absent, so the deterministic simulator is serving.`;
+    if (requested === 'simulator') {
+      reason = 'Deterministic in-process simulator (default). No API keys required.';
+    } else if (!isProviderName(requested)) {
+      reason =
+        `AURELIUS_MARKET_PROVIDER="${requested}" is not one of ${MARKET_PROVIDER_NAMES.join(', ')}, ` +
+        'so the deterministic simulator is serving.';
+    } else {
+      reason = `Provider "${requested}" was requested but its API keys are absent, so the deterministic simulator is serving.`;
+    }
   } else {
     reason = `Live ${provider.name} feed. These feeds fall back to the simulator: ${degraded.join(', ')}.`;
   }

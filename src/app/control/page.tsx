@@ -180,37 +180,35 @@ export default function ControlPage() {
                 action={<Badge tone="neutral">read-only</Badge>}
               />
             </div>
-            <div className="scroll-x mt-4">
-              <TableShell>
-                <thead>
-                  <tr>
-                    <Th>Limit</Th>
-                    <Th align="right">Threshold</Th>
-                    <Th>Why it exists</Th>
-                    <Th>Regulatory basis</Th>
+            <TableShell className="mt-4">
+              <thead>
+                <tr>
+                  <Th>Limit</Th>
+                  <Th align="right">Threshold</Th>
+                  <Th>Why it exists</Th>
+                  <Th>Regulatory basis</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.limits.map((limit) => (
+                  <tr key={limit.code}>
+                    <Td>
+                      <span className="text-parchment">{limit.label}</span>
+                      <span className="ml-2 font-mono text-2xs text-parchment-ghost">{limit.code}</span>
+                    </Td>
+                    <Td align="right" numeric className="text-gold">
+                      {formatLimit(limit.value, limit.unit)}
+                    </Td>
+                    <Td>
+                      <span className="text-2xs leading-snug text-parchment-dim">{limit.rationale}</span>
+                    </Td>
+                    <Td>
+                      <span className="text-2xs leading-snug text-parchment-faint">{limit.regulatoryBasis}</span>
+                    </Td>
                   </tr>
-                </thead>
-                <tbody>
-                  {data.limits.map((limit) => (
-                    <tr key={limit.code}>
-                      <Td>
-                        <span className="text-parchment">{limit.label}</span>
-                        <span className="ml-2 font-mono text-2xs text-parchment-ghost">{limit.code}</span>
-                      </Td>
-                      <Td align="right" numeric className="text-gold">
-                        {formatLimit(limit.value, limit.unit)}
-                      </Td>
-                      <Td>
-                        <span className="text-2xs leading-snug text-parchment-dim">{limit.rationale}</span>
-                      </Td>
-                      <Td>
-                        <span className="text-2xs leading-snug text-parchment-faint">{limit.regulatoryBasis}</span>
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </TableShell>
-            </div>
+                ))}
+              </tbody>
+            </TableShell>
           </Panel>
         )}
       </AsyncSlot>
@@ -243,7 +241,7 @@ export default function ControlPage() {
                   footnote={
                     data.rejectionsByCode[0] === undefined
                       ? 'Nothing rejected'
-                      : `${integer(data.rejectionsByCode[0].count)} occurrence(s)`
+                      : `${integer(data.rejectionsByCode[0].count)} ${data.rejectionsByCode[0].count === 1 ? 'occurrence' : 'occurrences'}`
                   }
                 />
               </StatGrid>
@@ -256,52 +254,50 @@ export default function ControlPage() {
                     detail="A rejected order leaves no other trace, so this is the record of why you were stopped."
                   />
                 </div>
-                <div className="scroll-x mt-4">
-                  <TableShell>
-                    <thead>
-                      <tr>
-                        <Th>Evaluated</Th>
-                        <Th>Symbol</Th>
-                        <Th align="center">Outcome</Th>
-                        <Th>Code</Th>
-                        <Th>Message</Th>
-                        <Th align="right">Elapsed</Th>
+                <TableShell className="mt-4">
+                  <thead>
+                    <tr>
+                      <Th>Evaluated</Th>
+                      <Th>Symbol</Th>
+                      <Th align="center">Outcome</Th>
+                      <Th>Code</Th>
+                      <Th>Message</Th>
+                      <Th align="right">Elapsed</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.decisions.map((record) => (
+                      <tr key={record.id}>
+                        <Td>
+                          <span className="font-mono text-2xs text-parchment-faint">
+                            {nyDateTime(record.decision.evaluatedAt)}
+                          </span>
+                        </Td>
+                        <Td>
+                          <span className="font-mono text-parchment">{record.symbol}</span>
+                        </Td>
+                        <Td align="center">
+                          <Badge tone={record.decision.approved ? 'sage' : 'burgundy'}>
+                            {record.decision.approved ? 'approved' : 'rejected'}
+                          </Badge>
+                        </Td>
+                        <Td>
+                          <span className="font-mono text-2xs text-parchment-dim">
+                            {record.decision.rejection?.code ?? '—'}
+                          </span>
+                        </Td>
+                        <Td>
+                          <span className="text-2xs leading-snug text-parchment-dim">
+                            {record.decision.rejection?.message ?? 'All pre-trade controls passed.'}
+                          </span>
+                        </Td>
+                        <Td align="right" numeric>
+                          {duration(record.decision.elapsedMs)}
+                        </Td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {data.decisions.map((record) => (
-                        <tr key={record.id}>
-                          <Td>
-                            <span className="font-mono text-2xs text-parchment-faint">
-                              {nyDateTime(record.decision.evaluatedAt)}
-                            </span>
-                          </Td>
-                          <Td>
-                            <span className="font-mono text-parchment">{record.symbol}</span>
-                          </Td>
-                          <Td align="center">
-                            <Badge tone={record.decision.approved ? 'sage' : 'burgundy'}>
-                              {record.decision.approved ? 'approved' : 'rejected'}
-                            </Badge>
-                          </Td>
-                          <Td>
-                            <span className="font-mono text-2xs text-parchment-dim">
-                              {record.decision.rejection?.code ?? '—'}
-                            </span>
-                          </Td>
-                          <Td>
-                            <span className="text-2xs leading-snug text-parchment-dim">
-                              {record.decision.rejection?.message ?? 'All pre-trade controls passed.'}
-                            </span>
-                          </Td>
-                          <Td align="right" numeric>
-                            {duration(record.decision.elapsedMs)}
-                          </Td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </TableShell>
-                </div>
+                    ))}
+                  </tbody>
+                </TableShell>
               </Panel>
 
               {data.rejectionsByCode.length > 0 ? (

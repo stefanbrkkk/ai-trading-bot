@@ -45,6 +45,8 @@ export const AUTHORITY: Record<RagSourceType, number> = {
   news: 0.45,
   social_x: 0.2,
   reddit: 0.18,
+  // First-party and authoritative about this platform, and about nothing else.
+  platform_statement: 0.9,
 };
 
 /** Display labels for the citation chips. */
@@ -59,6 +61,7 @@ export const SOURCE_LABELS: Record<RagSourceType, string> = {
   news: 'Newswire',
   social_x: 'X / social',
   reddit: 'Retail forum',
+  platform_statement: 'Platform statement',
 };
 
 export interface RagDocument {
@@ -450,10 +453,10 @@ function marketDocuments(at: number): RagDocument[] {
     {
       id: 'platform-regulatory-status',
       title: 'Platform regulatory status',
-      sourceType: 'sec_8k',
+      sourceType: 'platform_statement',
       symbol: null,
       section: 'Publisher status and scope of service',
-      authority: AUTHORITY.sec_8k,
+      authority: AUTHORITY.platform_statement,
       publishedAt: at - 30 * DAY_MS,
       url: null,
       body: [

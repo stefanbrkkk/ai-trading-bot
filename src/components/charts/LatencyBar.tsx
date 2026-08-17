@@ -32,6 +32,7 @@ import {
   fractionAsPercent,
 } from '@/lib/ui/format';
 import { Badge, EmptyState } from '@/components/ui/primitives';
+import { useChartWidth } from './useChartWidth';
 
 const BAR_H = 28;
 const AXIS_TEXT = 9;
@@ -78,10 +79,11 @@ interface Layout {
   budgetAnchor: 'middle' | 'end';
   overrunMs: number;
   totalX: number;
+  totalOnUpperLine: boolean;
 }
 
 function computeLayout(props: LatencyBarProps): Layout | null {
-  const { stages, totalMs, budgetMs, width = 760, height = 78 } = props;
+  const { stages, totalMs, budgetMs, width = 760, height = 92 } = props;
 
   const itemised = (Array.isArray(stages) ? stages : []).filter(
     (s) => !!s && typeof s.stage === 'string' && Number.isFinite(s.ms) && s.ms >= 0,
@@ -104,7 +106,15 @@ function computeLayout(props: LatencyBarProps): Layout | null {
   const axisMax = Math.max(total, budget ?? 0) * 1.08;
   if (!(axisMax > 0)) return null;
 
-  const f = frame(width, height, { top: 22, right: 16, bottom: 22, left: 16 });
+  /*
+   * 36px of headroom, because two captions sit above the bar.
+   *
+   * The bar starts at `f.y0`, so with a 22px top margin the second caption line
+   * (`barY - 22`) landed on y = 0 and was clipped out of the viewBox — which is
+   * why moving the total up there did not separate it from the budget label, it
+   * just hid it. The margin now holds both lines.
+   */
+  const f = frame(width, height, { top: 36, right: 16, bottom: 22, left: 16 });
   if (f.innerWidth <= 0 || f.innerHeight <= 0) return null;
 
   const x = linearScale([0, axisMax], [f.x0, f.x1]);
@@ -150,10 +160,21 @@ function computeLayout(props: LatencyBarProps): Layout | null {
     budgetAnchor: budgetX !== null && budgetX > f.x1 - 56 ? 'end' : 'middle',
     overrunMs: budget !== null && total > budget ? total - budget : 0,
     totalX: x(total),
+    /*
+     * The total sits on its own line whenever a budget line is drawn.
+     *
+     * Sharing one baseline, a run near its budget — 113ms against 150ms — printed
+     * the two strings through each other. Deciding by estimated text width was
+     * fragile at the narrow end; two fixed lines cannot collide at any width, and
+     * the ordering (total above, budget below, against the bar) reads as the
+     * measurement above its reference.
+     */
+    totalOnUpperLine: budgetX !== null,
   };
 }
 
-export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width = 760, height = 78 }: LatencyBarProps) {
+export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width: widthFallback = 760, height = 92 }: LatencyBarProps) {
+  const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
   const layout = useMemo(
     () => computeLayout({ stages, totalMs, budgetMs, withinBudget, width, height }),
@@ -169,7 +190,7 @@ export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width = 76
     );
   }
 
-  const { f, barY, segments, total, budget, budgetX, budgetAnchor, overrunMs, totalX } = layout;
+  const { f, barY, segments, total, budget, budgetX, budgetAnchor, overrunMs, totalX, totalOnUpperLine } = layout;
 
   return (
     <div>
@@ -184,6 +205,7 @@ export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width = 76
       </div>
 
       <svg
+        ref={chartRef}
         viewBox={`0 0 ${width} ${height}`}
         width={width}
         height={height}
@@ -283,7 +305,7 @@ export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width = 76
         {/* ── Total, read off the bar's own end ────────────────────────────── */}
         <text
           x={Math.min(totalX, f.x1)}
-          y={barY - 11}
+          y={barY - (totalOnUpperLine ? 22 : 11)}
           textAnchor={totalX > f.x1 - 56 ? 'end' : 'start'}
           fontSize={AXIS_TEXT}
           fill={PARCHMENT_FAINT}

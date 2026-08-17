@@ -70,33 +70,19 @@ const config: Config = {
       letterSpacing: {
         institutional: '0.14em',
       },
-      transitionTimingFunction: {
-        vault: 'cubic-bezier(0.16, 1, 0.3, 1)',
-      },
-      keyframes: {
-        'tick-flash-up': {
-          '0%': { backgroundColor: 'rgba(95, 113, 97, 0.28)' },
-          '100%': { backgroundColor: 'transparent' },
-        },
-        'tick-flash-down': {
-          '0%': { backgroundColor: 'rgba(140, 58, 58, 0.28)' },
-          '100%': { backgroundColor: 'transparent' },
-        },
-        'sheen-sweep': {
-          '0%': { transform: 'translateX(-120%)' },
-          '100%': { transform: 'translateX(220%)' },
-        },
-        'pulse-faint': {
-          '0%, 100%': { opacity: '0.35' },
-          '50%': { opacity: '1' },
-        },
-      },
-      animation: {
-        'tick-up': 'tick-flash-up 520ms ease-out',
-        'tick-down': 'tick-flash-down 520ms ease-out',
-        sheen: 'sheen-sweep 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite',
-        'pulse-faint': 'pulse-faint 2.6s ease-in-out infinite',
-      },
+      /*
+       * There are deliberately no keyframe animations here.
+       *
+       * A price tick-flash, a loading sheen and a pulsing "live" dot were defined
+       * and never used, and on reading them back they contradict the posture the
+       * rest of the codebase states out loud: `Skeleton` documents "no shimmer — a
+       * shimmer is a nudge", and the nav documents "no badges, no counters, no
+       * 'new' markers — digital engagement practices are prohibited". An
+       * always-animating element on a page of published statistics is an
+       * attention-capture device, so the utilities are gone rather than sitting
+       * unused waiting to be switched on. Motion here is transitional and
+       * finite — Framer Motion, on state change.
+       */
     },
   },
   plugins: [],

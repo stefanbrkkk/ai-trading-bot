@@ -25,12 +25,23 @@ import {
 import { BENCHMARK_SYMBOL, TRADABLE_SYMBOLS, requireSpec } from '@/lib/market/universe';
 import { isoDate, sessionOpen } from '@/lib/market/calendar';
 import { resample } from '@/lib/quant/indicators';
+import { ouZScore } from '@/lib/quant/ou';
+import { sabrSmileCurve } from '@/lib/quant/sabr';
 import type { Bar, ScreenerFilter, ScreenerRow, Signal } from '@/lib/domain/types';
 
 /** Results are memoised per 5-minute bucket — the engine's own tick resolution. */
 const BUCKET_MS = 5 * 60_000;
-/** How many symbols the universe sweep will process in one request. */
-export const UNIVERSE_SWEEP_LIMIT = 64;
+/**
+ * How many symbols the universe sweep will process in one request.
+ *
+ * This is a runaway guard, not a budget: it has to stay at or above the tradable
+ * count, or the sweep silently truncates. At 64 it dropped the last three names
+ * in the universe (SMCI, RIOT, BYND) from the screener and from the terminal's
+ * ranking, while `/terminal/SMCI` and an order ticket for it still worked — so
+ * the platform both did and did not cover the same symbol depending on the route.
+ * `tests/universe.test.ts` fails if the universe ever grows past it again.
+ */
+export const UNIVERSE_SWEEP_LIMIT = 128;
 
 export interface EngineOptions {
   /** Evaluation instant. Defaults to the provider's reference clock. */
@@ -410,6 +421,48 @@ export async function getPublication(options: EngineOptions = {}): Promise<Publi
 //  Chart data
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Standardises the OU spread window and aligns it to the daily bars.
+ *
+ * The window is the last ≤180 spread observations and `daily` is the last ≤180
+ * bars, but the two are trimmed independently upstream, so the shorter one governs
+ * and both are read from the tail.
+ */
+function ouZSeries(artefacts: ComputedFeatures['artefacts'], daily: readonly Bar[]): { time: number; z: number }[] {
+  const window = artefacts.ouSpreadWindow;
+  const n = Math.min(window.length, daily.length);
+  if (n === 0) return [];
+  const spreadTail = window.slice(window.length - n);
+  const barTail = daily.slice(daily.length - n);
+  return spreadTail.map((value, i) => ({
+    time: (barTail[i] as Bar).time,
+    z: ouZScore(artefacts.ou, value),
+  }));
+}
+
+/** The published smile, or null when there is nothing calibrated to publish. */
+function smileFor(artefacts: ComputedFeatures['artefacts'], now: number): ChartSeries['smile'] {
+  const params = artefacts.sabr;
+  const skew = artefacts.skew;
+  if (params === null || skew === null || !params.converged) return null;
+  const tau = params.dte / 365;
+  const forward = params.forward;
+  void now;
+  return {
+    tau,
+    forward,
+    curve: sabrSmileCurve(forward, tau, params),
+    quotes: params.quotes,
+    strike25Call: skew.strike25Call,
+    strike25Put: skew.strike25Put,
+    vol25Call: skew.vol25Call,
+    vol25Put: skew.vol25Put,
+    volAtm: skew.volAtm,
+    riskReversal: (skew.vol25Call - skew.vol25Put) * 100,
+    rmse: params.rmse,
+  };
+}
+
 export interface ChartSeries {
   symbol: string;
   daily: Bar[];
@@ -421,6 +474,35 @@ export interface ChartSeries {
   bollinger: { time: number; upper: number; middle: number; lower: number }[];
   /** OU band on the benchmark-relative spread, in price terms. */
   ouBand: { upper: number; lower: number; mid: number };
+  /**
+   * The OU spread standardised by the fitted equilibrium σ, aligned to the tail of
+   * `daily`. This is the series the ±2σ entry rule is written against, so the
+   * oscillator the terminal draws and the threshold the strategy fires on are the
+   * same numbers.
+   */
+  ouZ: { time: number; z: number }[];
+  /**
+   * The calibrated SABR smile, or `null` when the name has no listed options or
+   * the fit did not converge. Generated here rather than in the browser: the curve
+   * is `sabrImpliedVol` evaluated across strikes, and a second evaluation in the
+   * client would be a second implementation of the model that agrees with the
+   * published RR₂₅ only by coincidence.
+   */
+  smile: {
+    tau: number;
+    forward: number;
+    curve: { strike: number; logMoneyness: number; vol: number }[];
+    /** The OPRA-style call quotes the fit was calibrated against. */
+    quotes: { strike: number; vol: number }[];
+    strike25Call: number;
+    strike25Put: number;
+    vol25Call: number;
+    vol25Put: number;
+    volAtm: number;
+    /** RR₂₅ in vol points, matching the `rr25_30d` convention. */
+    riskReversal: number;
+    rmse: number;
+  } | null;
   vwap: number;
 }
 
@@ -454,6 +536,8 @@ export async function getChartSeries(symbol: string, options: EngineOptions = {}
       lower: artefacts.bollingerLower,
     })),
     ouBand: artefacts.ouBand,
+    ouZ: ouZSeries(artefacts, daily),
+    smile: smileFor(artefacts, result.features.now),
     vwap: artefacts.vwapValue,
   };
 }
