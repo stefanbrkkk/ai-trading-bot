@@ -449,7 +449,7 @@ export default function ResearchPage() {
                       {stats.sourceLabels[source.sourceType]}
                     </span>
                     <Meter value={source.authority} tone="gold" className="flex-1" />
-                    <span className="tabular w-24 shrink-0 text-right font-mono text-2xs text-parchment-faint">
+                    <span className="tabular w-20 shrink-0 text-right font-mono text-2xs text-parchment-faint sm:w-24">
                       {integer(source.documents)} docs · {source.authority.toFixed(2)}
                     </span>
                   </div>

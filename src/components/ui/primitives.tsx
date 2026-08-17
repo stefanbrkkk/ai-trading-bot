@@ -227,9 +227,18 @@ export function DataRow({
      * `text-right`, which keeps a wrapped value aligned to the same edge as a
      * single-line one.
      */
-    <div className={cx('hairline flex items-baseline justify-between gap-4 py-2', className)} title={hint}>
+    <div
+      className={cx('hairline flex flex-wrap items-baseline justify-between gap-x-4 py-2', className)}
+      title={hint}
+    >
       <span className="text-[0.8125rem] text-parchment-dim">{label}</span>
-      <span className="tabular text-right text-[0.8125rem] text-parchment">{value}</span>
+      {/*
+        `flex-wrap` is the escape valve. Neither span shrinks past min-content, so
+        on a 320px phone a long label beside a long value could still add up to
+        more than the card — 13px of page-level horizontal scroll on /terminal.
+        Wrapping drops the value to its own line instead, still right-aligned.
+      */}
+      <span className="tabular ml-auto text-right text-[0.8125rem] text-parchment">{value}</span>
     </div>
   );
 }
