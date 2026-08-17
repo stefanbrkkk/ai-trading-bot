@@ -36,6 +36,7 @@ import {
 import { useApi } from '@/lib/ui/api';
 import { duration, fractionAsPercent, integer, nyDateTime, percent, ratio } from '@/lib/ui/format';
 import type { FeatureGroup } from '@/lib/domain/types';
+import { AGENT_DISCRIMINATION_FLOOR } from '@/lib/engine/model';
 
 interface AgentSpec {
   name: string;
@@ -71,6 +72,7 @@ interface ModelCardResponse {
       validationAccuracy: number;
       auc: number;
       brier: number;
+      discrimination?: { lstm: number; bilstm: number; tft: number };
       lstmValidLoss: number;
       bilstmValidLoss: number;
       tftValidLoss: number;
@@ -276,6 +278,9 @@ export default function TransparencyPage() {
                       <Th align="right">Inputs</Th>
                       <Th align="right">Hidden</Th>
                       <Th align="right">Valid loss</Th>
+                      <Th align="right" title="Standard deviation of the agent's probability across the validation split. Near zero means the agent returns the same number whatever it is shown.">
+                        Spread
+                      </Th>
                       <Th align="right">Edge</Th>
                     </tr>
                   </thead>
@@ -288,6 +293,7 @@ export default function TransparencyPage() {
                             ? t.bilstmValidLoss
                             : t.tftValidLoss;
                       const edge = data.fusion.agentEdge[`${agent.timeframeMinutes}m`];
+                      const spread = t.discrimination?.[agent.architecture] ?? 0;
                       return (
                         <tr key={agent.name}>
                           <Td>{agent.name}</Td>
@@ -308,6 +314,19 @@ export default function TransparencyPage() {
                           </Td>
                           <Td align="right" numeric>
                             {ratio(loss, 4)}
+                          </Td>
+                          {/*
+                            Published because an agent that has collapsed to a
+                            constant still reports an ordinary loss — a fixed
+                            prediction on a balanced set is unremarkable by that
+                            measure — and only the spread shows it. An agent below
+                            the floor is given no weight by the router, so the
+                            reader can see which agents are actually voting.
+                          */}
+                          <Td align="right" numeric>
+                            <span className={spread < AGENT_DISCRIMINATION_FLOOR ? 'text-burgundy-bright' : undefined}>
+                              {ratio(spread, 4)}
+                            </span>
                           </Td>
                           <Td align="right" numeric>
                             {edge === undefined ? '—' : ratio(edge, 3)}

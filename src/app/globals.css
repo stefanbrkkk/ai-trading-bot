@@ -29,11 +29,27 @@
   --sage: #5f7161;
   --sage-bright: #83a086;
   --burgundy: #8c3a3a;
-  --burgundy-bright: #b25a5a;
+  /*
+   * The three quietest text tokens were raised to clear WCAG AA against the
+   * plinth they are actually drawn on (#1c1c1c), not against pure black.
+   * Measured before: burgundy-bright 3.65:1, parchment-faint 3.77:1,
+   * parchment-ghost 1.86:1 — and the last carried real content, the feature codes
+   * on /transparency, the limit codes on /control and the actor columns on
+   * /admin. A negative number no one can read is the worst one to lose.
+   *
+   *   burgundy-bright  #b25a5a -> #c47474   3.65 -> 4.95
+   *   parchment-faint  #7a766d -> #948f84   3.77 -> 5.29
+   *   parchment-ghost  #4a4842 -> #8a857a   1.86 -> 4.64
+   *
+   * Ghost clears AA too rather than staying decorative, because it was never used
+   * decoratively: the header tagline, the footer strapline and all 89 SQL column
+   * names on /transparency are drawn in it.
+   */
+  --burgundy-bright: #c47474;
   --parchment: #ede8dc;
   --parchment-dim: #b8b2a5;
-  --parchment-faint: #7a766d;
-  --parchment-ghost: #4a4842;
+  --parchment-faint: #948f84;
+  --parchment-ghost: #8a857a;
 
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-display: 'Playfair Display', Georgia, Cambria, serif;
@@ -165,12 +181,33 @@ textarea::placeholder {
   color: var(--parchment-ghost);
 }
 
+/*
+ * `outline: none` here beat the global `:focus-visible` rule on specificity, so
+ * every text field, select and textarea in the product had its focus ring
+ * replaced by a 1px gold wash measuring 2.8:1 — under the 3:1 WCAG asks of a
+ * focus indicator, and invisible against the field's own border. The ring is back
+ * and the wash stays as the secondary cue.
+ */
 input:focus,
 select:focus,
 textarea:focus {
-  border-color: #8e7526;
-  outline: none;
+  border-color: var(--gold);
   box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.35);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 1px;
+}
+
+/* The clickwrap checkbox is a legal consent gate; its focus state has to be the
+   most visible in the product, not the least. */
+input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-color: var(--gold);
 }
 
 /* Numeric inputs must never carry spinners — the compliance rules require the
@@ -372,11 +409,20 @@ select:focus {
   );
 }
 
-/* The same regions are made focusable so they can be scrolled with the arrow
-   keys; a focusable element that shows no focus is worse than one that is not. */
+/*
+ * The same regions are made focusable so they can be scrolled with the arrow
+ * keys, and the fade is dropped while they are focused.
+ *
+ * A mask clips everything the element paints, the outline included, so a focused
+ * scroll region drew a focus ring that was invisible at exactly the two edges the
+ * mask covers — a keyboard user could not see where they were. The fade is a
+ * hint; the focus indicator is a requirement, so the hint yields.
+ */
 [data-scroll-x-focusable]:focus-visible {
-  outline: 1px solid rgb(212 175 55 / 0.5);
-  outline-offset: 2px;
+  outline: 2px solid rgb(212 175 55 / 0.9);
+  outline-offset: -2px;
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 /* ── Motion ─────────────────────────────────────────────────────────────── */

@@ -9,10 +9,10 @@
  *     four of its ten destinations and the screener shows six of its twenty-four
  *     columns, with nothing on screen to say the rest exist. Overlay scrollbars
  *     are invisible until you already know to swipe.
- *  2. A `div` with `overflow-x: auto` and no focusable descendant cannot be
- *     scrolled from the keyboard at all (WCAG 2.1.1). Most of these regions are
- *     tables of plain text, so for a keyboard user the hidden columns are not
- *     merely undiscoverable, they are unreachable.
+ *  2. A `div` with `overflow-x: auto` cannot be scrolled from the keyboard at all
+ *     (WCAG 2.1.1). Tabbing through a table's row links does not help either:
+ *     they all sit in the first column, so the horizontal offset never moves and
+ *     the hidden columns are not merely undiscoverable, they are unreachable.
  *
  * This runs as an enhancement rather than as a prop on each of the twenty-odd
  * call sites: the regions are rendered by seven different pages, several of them
@@ -37,8 +37,6 @@ const SELECTOR = '.scroll-x, [data-scroll-x]';
 
 /** Scroll offsets are fractional under browser zoom; 2px of slack avoids a fade that flickers at rest. */
 const EDGE_SLACK_PX = 2;
-
-const FOCUSABLE = 'a, button, input, select, textarea, summary, [tabindex]';
 
 export function ScrollAffordance() {
   useEffect(() => {
@@ -70,7 +68,16 @@ export function ScrollAffordance() {
       const atEnd = el.scrollLeft >= hidden - EDGE_SLACK_PX;
       el.dataset.fade = atStart ? 'right' : atEnd ? 'left' : 'both';
 
-      if (!el.hasAttribute('tabindex') && el.querySelector(FOCUSABLE) === null) {
+      /*
+       * Focusable whenever it overflows, even when it contains links.
+       *
+       * The original guard skipped any region with a focusable descendant, on the
+       * reasoning that tabbing through its children scrolls it. That holds
+       * vertically and fails horizontally: the screener's 67 row links all sit in
+       * the first column, so at 390px a keyboard user could press Tab 45 times
+       * and never move `scrollLeft` off zero — 832px of columns unreachable.
+       */
+      if (!el.hasAttribute('tabindex')) {
         el.tabIndex = 0;
         el.dataset.scrollXFocusable = 'true';
       }

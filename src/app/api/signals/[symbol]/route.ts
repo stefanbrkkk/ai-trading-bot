@@ -50,12 +50,21 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
     byDomain[domainForFeature(driver.featureKey, driver.group)].push(driver);
   }
 
-  const total = signal.drivers.reduce((a, d) => a + Math.abs(d.shap), 0);
+  /*
+   * The published share is the driver's own `share`, not a second one computed
+   * here.
+   *
+   * Recomputing `|φ| / Σ|φ|` over `signal.drivers` used a different denominator
+   * from the engine's — the engine's share is taken over the full attribution,
+   * this sum only over the drivers that survived ranking — so the same row showed
+   * "31.9%" in its SHARE cell and "a 19% headwind" in the sentence beside it, and
+   * the thesis above quoted a third figure. One number, published once.
+   */
   const contributions = signal.drivers.map((d) => ({
     featureId: d.featureKey,
     featureDisplayName: d.label,
     featureValueRaw: d.value,
-    contributionPercentage: total === 0 ? 0 : (Math.abs(d.shap) / total) * 100,
+    contributionPercentage: Math.max(0, Math.min(100, d.share * 100)),
     impactDirection: d.direction,
     semanticTranslation: d.narrative,
     state: d.state,

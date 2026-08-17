@@ -99,6 +99,11 @@ export const modelBundleSchema = z.object({
   gbdt: gbdtSchema,
   background: z.object({ rows: z.array(z.array(z.number())), weights: z.array(z.number()), kSelected: z.number() }),
   agents: z.object({ lstm: weightsSchema, bilstm: weightsSchema, tft: weightsSchema }),
+  /**
+   * Per-agent logit offsets fitted after training. Defaulted so a bundle written
+   * before calibration existed still loads, uncalibrated, rather than failing.
+   */
+  calibration: z.object({ lstm: z.number(), bilstm: z.number(), tft: z.number() }).default({ lstm: 0, bilstm: 0, tft: 0 }),
   training: z.object({
     samples: z.number(),
     validationSamples: z.number(),
@@ -112,6 +117,9 @@ export const modelBundleSchema = z.object({
     lstmValidLoss: z.number().nullable(),
     bilstmValidLoss: z.number().nullable(),
     tftValidLoss: z.number().nullable(),
+    discrimination: z
+      .object({ lstm: z.number(), bilstm: z.number(), tft: z.number() })
+      .default({ lstm: 0, bilstm: 0, tft: 0 }),
     elapsedMs: z.number(),
   }),
 });
@@ -131,6 +139,8 @@ export interface TrainingMetrics {
   lstmValidLoss: number | null;
   bilstmValidLoss: number | null;
   tftValidLoss: number | null;
+  /** Std-dev of each agent's predicted probability over the validation split. */
+  discrimination: { lstm: number; bilstm: number; tft: number };
   elapsedMs: number;
 }
 
@@ -229,6 +239,11 @@ export class ModelBundle {
         bilstm: serialiseParams(this.bilstm.params()),
         tft: serialiseParams(this.tft.params()),
       },
+      calibration: {
+        lstm: this.lstm.calibrationOffset,
+        bilstm: this.bilstm.calibrationOffset,
+        tft: this.tft.calibrationOffset,
+      },
       training: this.training,
     };
   }
@@ -247,6 +262,12 @@ export class ModelBundle {
     if (!loaded) {
       throw new Error('ModelBundle.deserialise: agent weight shapes do not match the current architecture');
     }
+
+    // The offsets are inference-time state, not parameters, so they ride
+    // alongside the weights rather than inside them.
+    lstm.calibrationOffset = parsed.calibration.lstm;
+    bilstm.calibrationOffset = parsed.calibration.bilstm;
+    tft.calibrationOffset = parsed.calibration.tft;
 
     return new ModelBundle({
       version: parsed.version,
@@ -407,7 +428,42 @@ export function trainModelBundle(dataset: TrainingDataset, options: TrainOptions
     { returnTargets: trainReturns, quantileWeight: 0.6 },
   );
 
+  /*
+   * Calibrate each agent onto the base rate before anything reads it.
+   *
+   * All three came out of training with a mean predicted probability near 0.75
+   * against a 49.5% base rate — validation losses worse than a coin flip — so the
+   * router's aggregate was positive for every symbol and all 67 tradable names
+   * published as long. The offset is one number per agent, fitted on the held-out
+   * split; it moves the distribution without touching the relative ordering the
+   * network learned, which is the part that carries whatever signal there is.
+   */
+  const calibrationRate = trainY.reduce((a, b) => a + b, 0) / Math.max(1, trainY.length);
+  const validLogits = (agent: { predict(s: readonly number[][]): { logit: number } }): number[] =>
+    validSamples.map((sample) => agent.predict(sample.sequence).logit);
+  lstm.calibrate(validLogits(lstm), calibrationRate);
+  bilstm.calibrate(validLogits(bilstm), calibrationRate);
+  tft.calibrate(validLogits(tft), calibrationRate);
+
   // ── Diagnostics ──────────────────────────────────────────────────────────
+  /*
+   * How much each agent's output actually moves with its input.
+   *
+   * The 60m TFT was returning 0.7711 for every symbol in the universe — a spread
+   * of 7.6e-4 across validation sequences, against 0.35 for the LSTM — so it was
+   * contributing a constant positive bias to the router's aggregate and every one
+   * of the 67 names came out long. A collapsed agent is not a neutral one: it
+   * votes, with conviction, for whatever its bias happens to be.
+   *
+   * The spread is measured here, published on the model card, and read by the
+   * router, which gives an agent that does not discriminate no weight.
+   */
+  const discrimination = {
+    lstm: probabilitySpread(lstm, validSamples),
+    bilstm: probabilitySpread(bilstm, validSamples),
+    tft: probabilitySpread(tft, validSamples),
+  };
+
   const trainProbs = trainX.map((row) => predictProbability(gbdt, row));
   const validProbs = validX.map((row) => predictProbability(gbdt, row));
   const accuracy = classificationAccuracy(trainProbs, trainY);
@@ -428,6 +484,7 @@ export function trainModelBundle(dataset: TrainingDataset, options: TrainOptions
     lstmValidLoss: lstmReport.bestValidLoss,
     bilstmValidLoss: bilstmReport.bestValidLoss,
     tftValidLoss: tftReport.bestValidLoss,
+    discrimination,
     elapsedMs: Date.now() - started,
   };
 
@@ -513,6 +570,33 @@ export function reliabilityCurve(
     count: b.count,
   }));
 }
+
+/**
+ * Standard deviation of an agent's predicted probability across a sample set.
+ *
+ * The measure of whether an agent is reading its input at all. A model that has
+ * collapsed to its bias scores ~0 here however good its loss looks, because a
+ * constant prediction on a balanced set is a perfectly ordinary loss.
+ */
+export function probabilitySpread(
+  agent: { predict(sequence: readonly number[][]): { probability: number } },
+  samples: readonly SequenceSample[],
+): number {
+  if (samples.length < 2) return 0;
+  const probabilities = samples.map((sample) => agent.predict(sample.sequence).probability);
+  const mean = probabilities.reduce((a, b) => a + b, 0) / probabilities.length;
+  const variance =
+    probabilities.reduce((a, p) => a + (p - mean) * (p - mean), 0) / (probabilities.length - 1);
+  return Math.sqrt(Math.max(0, variance));
+}
+
+/**
+ * Below this an agent is treated as carrying no directional information.
+ *
+ * A probability that moves by less than a percentage point across the whole
+ * validation set is a constant with noise on it.
+ */
+export const AGENT_DISCRIMINATION_FLOOR = 0.01;
 
 /** Expected calibration error over the reliability curve. */
 export function expectedCalibrationError(

@@ -30,7 +30,7 @@
  * handler mints on the physical click; the submission then presents the token.
  */
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 import type { OrderSide, OrderType } from '@/lib/domain/types';
 import { INTENT_TOKEN_FUTURE_SKEW_MS, INTENT_TOKEN_TTL_MS } from '@/lib/risk/limits';
@@ -60,19 +60,31 @@ export interface IntentTokenPayload {
 export const INTENT_TOKEN_SECRET_ENV = 'AURELIUS_SESSION_SECRET';
 
 /**
- * Deterministic development fallback. It is a fixed, published string on purpose
- * — it must never be mistaken for a secret. It exists so the whole order path is
- * exercisable locally; a deployment that routes to a live broker sets
- * AURELIUS_SESSION_SECRET, and `usingFallbackSecret()` lets an operational
- * surface show which of the two is in force.
+ * Per-process fallback secret, generated once and never written down.
+ *
+ * The fallback used to be a fixed, published constant, on the reasoning that a
+ * value which cannot be mistaken for a secret is safer than one that might be.
+ * That reasoning is wrong here, and the audit demonstrated why: the platform is
+ * built to run with an empty `.env`, so the published constant is the *default*
+ * signing key, and the whole HMAC — `version|userId|symbol|side|quantity|…` — can
+ * be reproduced offline from the repository. Anyone able to reach
+ * `/api/orders/submit` could mint a token that verifies, which defeats the single
+ * control the entire no-discretion posture rests on: that every routed order
+ * carries proof of a physical Execute click.
+ *
+ * 32 random bytes per process keeps the empty-`.env` path working — mint and
+ * verify happen in the same process — while making the key unguessable. Tokens do
+ * not survive a restart, which is correct for a single-use credential with a
+ * 60-second lifetime, and `usingFallbackSecret()` still reports that no durable
+ * secret is configured so an operator can see it before going live.
  */
-const DEV_FALLBACK_SECRET = 'aurelius-dev-intent-secret-do-not-use-in-production';
+const EPHEMERAL_SECRET = randomBytes(32).toString('base64url');
 
 function resolveSecret(explicit?: string): string {
   if (explicit !== undefined && explicit.length > 0) return explicit;
   const fromEnv = process.env[INTENT_TOKEN_SECRET_ENV];
   if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
-  return DEV_FALLBACK_SECRET;
+  return EPHEMERAL_SECRET;
 }
 
 /** True when the deterministic development secret is in force. */

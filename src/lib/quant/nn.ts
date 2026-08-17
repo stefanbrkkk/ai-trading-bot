@@ -438,7 +438,59 @@ export interface AgentOutput {
 
 // ── 5m LSTM agent ───────────────────────────────────────────────────────────
 
+/**
+ * Finds the additive logit offset that puts the mean predicted probability on a
+ * target rate.
+ *
+ * `mean(sigmoid(z + b))` is continuous and strictly increasing in `b`, so fifty
+ * bisection steps on a bracket of ±20 logits resolve it to well past the
+ * precision anything downstream can use.
+ */
+export function fitLogitOffset(logits: readonly number[], targetRate: number): number {
+  if (logits.length === 0) return 0;
+  const target = Math.min(Math.max(targetRate, 1e-6), 1 - 1e-6);
+  const meanProbability = (b: number): number =>
+    logits.reduce((acc, z) => acc + 1 / (1 + Math.exp(-(z + b))), 0) / logits.length;
+  let lo = -20;
+  let hi = 20;
+  if (meanProbability(lo) > target) return lo;
+  if (meanProbability(hi) < target) return hi;
+  for (let i = 0; i < 50; i += 1) {
+    const mid = (lo + hi) / 2;
+    if (meanProbability(mid) < target) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 export class LstmAgent {
+  /**
+   * Additive logit offset applied at inference.
+   *
+   * The agents came out of training badly miscalibrated — mean predicted
+   * probability around 0.75 against a base rate of 0.495, with validation losses
+   * worse than a coin flip — so every symbol in the universe read "long" simply
+   * because every agent's output sat above 0.5 before it had considered anything.
+   * A single offset fitted on the validation split moves the whole distribution
+   * onto the base rate without touching what the network learned about the
+   * *relative* ordering of symbols, which is the part that carries the signal.
+   *
+   * Zero until `calibrate()` is called, so an uncalibrated agent behaves exactly
+   * as it did before.
+   */
+  calibrationOffset = 0;
+
+  /**
+   * Fits the offset so the mean predicted probability matches `targetRate`.
+   *
+   * Bisection on a monotone function of one variable: no gradients, no
+   * dependencies, and it cannot diverge.
+   */
+  calibrate(logits: readonly number[], targetRate: number): number {
+    this.calibrationOffset = fitLogitOffset(logits, targetRate);
+    return this.calibrationOffset;
+  }
+
   readonly spec: AgentSpec;
   private readonly cell: LstmCell;
   private readonly head: Dense;
@@ -476,7 +528,7 @@ export class LstmAgent {
   predict(sequence: readonly number[][]): AgentOutput {
     return noGrad(() => {
       const { logit, hidden } = this.forwardLogit(sequence);
-      const z = logit.data[0] as number;
+      const z = (logit.data[0] as number) + this.calibrationOffset;
       const p = 1 / (1 + Math.exp(-z));
       return {
         probability: p,
@@ -499,6 +551,33 @@ export class LstmAgent {
 // ── 15m BiLSTM agent ────────────────────────────────────────────────────────
 
 export class BiLstmAgent {
+  /**
+   * Additive logit offset applied at inference.
+   *
+   * The agents came out of training badly miscalibrated — mean predicted
+   * probability around 0.75 against a base rate of 0.495, with validation losses
+   * worse than a coin flip — so every symbol in the universe read "long" simply
+   * because every agent's output sat above 0.5 before it had considered anything.
+   * A single offset fitted on the validation split moves the whole distribution
+   * onto the base rate without touching what the network learned about the
+   * *relative* ordering of symbols, which is the part that carries the signal.
+   *
+   * Zero until `calibrate()` is called, so an uncalibrated agent behaves exactly
+   * as it did before.
+   */
+  calibrationOffset = 0;
+
+  /**
+   * Fits the offset so the mean predicted probability matches `targetRate`.
+   *
+   * Bisection on a monotone function of one variable: no gradients, no
+   * dependencies, and it cannot diverge.
+   */
+  calibrate(logits: readonly number[], targetRate: number): number {
+    this.calibrationOffset = fitLogitOffset(logits, targetRate);
+    return this.calibrationOffset;
+  }
+
   readonly spec: AgentSpec;
   private readonly forwardCell: LstmCell;
   private readonly backwardCell: LstmCell;
@@ -543,7 +622,7 @@ export class BiLstmAgent {
   predict(sequence: readonly number[][]): AgentOutput {
     return noGrad(() => {
       const { logit, hidden } = this.forwardLogit(sequence);
-      const z = logit.data[0] as number;
+      const z = (logit.data[0] as number) + this.calibrationOffset;
       return {
         probability: 1 / (1 + Math.exp(-z)),
         logit: z,
@@ -565,6 +644,33 @@ export class BiLstmAgent {
 // ── 60m Temporal Fusion Transformer agent ───────────────────────────────────
 
 export class TftAgent {
+  /**
+   * Additive logit offset applied at inference.
+   *
+   * The agents came out of training badly miscalibrated — mean predicted
+   * probability around 0.75 against a base rate of 0.495, with validation losses
+   * worse than a coin flip — so every symbol in the universe read "long" simply
+   * because every agent's output sat above 0.5 before it had considered anything.
+   * A single offset fitted on the validation split moves the whole distribution
+   * onto the base rate without touching what the network learned about the
+   * *relative* ordering of symbols, which is the part that carries the signal.
+   *
+   * Zero until `calibrate()` is called, so an uncalibrated agent behaves exactly
+   * as it did before.
+   */
+  calibrationOffset = 0;
+
+  /**
+   * Fits the offset so the mean predicted probability matches `targetRate`.
+   *
+   * Bisection on a monotone function of one variable: no gradients, no
+   * dependencies, and it cannot diverge.
+   */
+  calibrate(logits: readonly number[], targetRate: number): number {
+    this.calibrationOffset = fitLogitOffset(logits, targetRate);
+    return this.calibrationOffset;
+  }
+
   readonly spec: AgentSpec;
   private readonly vsn: VariableSelection;
   private readonly encoder: LstmCell;
@@ -707,7 +813,7 @@ export class TftAgent {
   predict(sequence: readonly number[][]): AgentOutput {
     return noGrad(() => {
       const out = this.forward(sequence);
-      const z = out.logit.data[0] as number;
+      const z = (out.logit.data[0] as number) + this.calibrationOffset;
       const q = out.quantiles.toArray();
       return {
         probability: 1 / (1 + Math.exp(-z)),

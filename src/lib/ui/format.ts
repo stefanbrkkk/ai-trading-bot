@@ -212,14 +212,14 @@ export function directionalClass(value: number, options: { neutralBand?: number 
 export const SAGE = '#5F7161';
 export const SAGE_BRIGHT = '#83A086';
 export const BURGUNDY = '#8C3A3A';
-export const BURGUNDY_BRIGHT = '#B25A5A';
+export const BURGUNDY_BRIGHT = '#C47474';
 export const GOLD = '#D4AF37';
 export const GOLD_BRIGHT = '#E8C860';
 export const CHAMPAGNE = '#F7E7CE';
 export const PARCHMENT = '#EDE8DC';
 export const PARCHMENT_DIM = '#B8B2A5';
-export const PARCHMENT_FAINT = '#7A766D';
-export const PARCHMENT_GHOST = '#4A4842';
+export const PARCHMENT_FAINT = '#948F84';
+export const PARCHMENT_GHOST = '#8A857A';
 export const OBSIDIAN_EDGE = '#343435';
 export const CHARCOAL = '#141414';
 export const VANTA = '#0A0A0A';

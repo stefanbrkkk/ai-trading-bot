@@ -49,6 +49,7 @@ import {
 import { localAccuracyError } from '@/lib/quant/shap';
 import { rogersSatchellVolatility, closes, last, resample } from '@/lib/quant/indicators';
 import { clamp } from '@/lib/quant/stats';
+import { AGENT_DISCRIMINATION_FLOOR } from './model';
 import type {
   AgentInference,
   AltDataEvent,
@@ -231,10 +232,34 @@ export function runPipeline(
   latency.mark('agents');
 
   // ── 5. Route ─────────────────────────────────────────────────────────────
+  /*
+   * An agent that does not discriminate carries no conviction into the router.
+   *
+   * `discrimination` is the standard deviation of each agent's probability across
+   * the validation split, measured at training time. The 60m TFT scored 7.6e-4 —
+   * it returned 0.7711 for every symbol in the universe — and because that
+   * constant sits well above a coin flip it voted "long, with conviction" on
+   * everything, which is how all 67 tradable names came out long at once.
+   *
+   * Zeroing its conviction is not a correction of its opinion; it is a refusal to
+   * treat a constant as an opinion. The router's own guard handles the case where
+   * every agent collapses, and /transparency publishes the figures.
+   */
+  const discrimination = model.training.discrimination;
+  const agentWeight = (spread: number): number => (spread >= AGENT_DISCRIMINATION_FLOOR ? 1 : 0);
   const router = routeSignals({
-    agent5m: { direction: toDirection(lstmOut.probability), conviction: toConviction(lstmOut.probability) },
-    agent15m: { direction: toDirection(bilstmOut.probability), conviction: toConviction(bilstmOut.probability) },
-    agent60m: { direction: toDirection(tftOut.probability), conviction: toConviction(tftOut.probability) },
+    agent5m: {
+      direction: toDirection(lstmOut.probability),
+      conviction: toConviction(lstmOut.probability) * agentWeight(discrimination.lstm),
+    },
+    agent15m: {
+      direction: toDirection(bilstmOut.probability),
+      conviction: toConviction(bilstmOut.probability) * agentWeight(discrimination.bilstm),
+    },
+    agent60m: {
+      direction: toDirection(tftOut.probability),
+      conviction: toConviction(tftOut.probability) * agentWeight(discrimination.tft),
+    },
     vpinToxicity,
     rsVolatility: rsVol,
     inhibitLong: inhibition.inhibitLong,

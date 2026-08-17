@@ -84,6 +84,18 @@ function directionTone(direction: SignalDirection): 'sage' | 'burgundy' | 'ghost
   return direction === 'long' ? 'sage' : direction === 'short' ? 'burgundy' : 'ghost';
 }
 
+/**
+ * Keeps the conviction filter inside the range the API accepts.
+ *
+ * An empty string is left alone — it means "no filter", not zero.
+ */
+function clampConviction(raw: string): string {
+  if (raw.trim().length === 0) return '';
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return '';
+  return String(Math.max(0, Math.min(100, value)));
+}
+
 export default function ScreenerPage() {
   const [sector, setSector] = useState('');
   const [regime, setRegime] = useState('');
@@ -182,7 +194,14 @@ export default function ScreenerPage() {
               min={0}
               max={100}
               value={minConviction}
-              onChange={(e) => setMinConviction(e.target.value)}
+              /*
+                Clamped on entry, because `min`/`max` on a number input are
+                advisory: typing 999 sent `minConviction=999`, the API answered
+                422, `useApi` kept the previous data, and the page went on showing
+                a stale row set with a console error and nothing on screen to say
+                the filter had not been applied.
+              */
+              onChange={(e) => setMinConviction(clampConviction(e.target.value))}
             />
           </Field>
           <Field label="Sort by">

@@ -27,6 +27,17 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en">
       <body>
         {/*
+          Skip link. Every page put eleven navigation stops before its first piece
+          of content, so a keyboard or screen-reader user traversed the whole nav
+          on each of the sixteen routes. Visually hidden until focused.
+        */}
+        <a
+          href="#main"
+          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:border focus:border-gold focus:bg-vanta-deep focus:px-4 focus:py-2 focus:font-mono focus:text-2xs focus:uppercase focus:tracking-institutional focus:text-gold"
+        >
+          Skip to content
+        </a>
+        {/*
           The store is created inside this client provider, once per mount. It is
           never a module-scope singleton: on a Node server a global store is
           shared across concurrent requests and one user's positions would leak

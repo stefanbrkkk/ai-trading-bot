@@ -202,6 +202,17 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height, width: wi
               onHover?.(null);
             }}
             onKeyDown={(event) => {
+              /*
+                A `role="button"` has to answer Enter and Space. Handling only
+                Escape meant Space fell through to its default and scrolled the
+                page 875px instead of selecting the driver under the cursor.
+              */
+              if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+                event.preventDefault();
+                setLocalKey(row.key);
+                onHover?.(row.key);
+                return;
+              }
               if (event.key === 'Escape') {
                 setLocalKey(null);
                 onHover?.(null);

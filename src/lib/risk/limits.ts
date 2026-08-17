@@ -146,6 +146,19 @@ export const RATE_LIMIT_WINDOW_MS = 1_000;
 /** Research value: throttled order messages are answered with 429. */
 export const RATE_LIMIT_HTTP_STATUS = 429;
 
+/**
+ * Credential attempts allowed per client address per minute.
+ *
+ * InvestGPT (10/s), retrieval (6/s) and order routing (5/s) were all limited and
+ * the two endpoints that take a password were not, so `/api/auth/signin` served
+ * unlimited wrong-password attempts with no counter, delay or lockout, and
+ * `/api/auth/signup` — which necessarily distinguishes "this address is taken" —
+ * could be walked to enumerate the user table. Ten a minute leaves a person who
+ * has forgotten their password entirely unaffected.
+ */
+export const CREDENTIAL_ATTEMPTS_PER_MINUTE = 10;
+export const CREDENTIAL_WINDOW_MS = 60_000;
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  15c3-5 Control 6 — global kill switch
 // ─────────────────────────────────────────────────────────────────────────────

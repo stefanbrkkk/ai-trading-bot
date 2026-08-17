@@ -381,7 +381,29 @@ export async function getPublication(options: EngineOptions = {}): Promise<Publi
   const now = referenceNow(provider, options);
   const publicationDate = isoDate(sessionOpen(now));
 
-  const cached = loadArtefact<Publication>(`publication-${publicationDate}`);
+  /*
+   * A published list is immutable for its date — that is the Lowe v. SEC posture,
+   * one ranking identical for every subscriber — but it is immutable *for the
+   * model that produced it*. The cached artefact was being returned regardless of
+   * which ensemble was loaded, so after a retrain /terminal served a ranking with
+   * SCHW at 52.5 while /terminal/SCHW computed 33.6 from the model actually in
+   * force. A stale publication is not a stable one; it is a different model's
+   * answer presented as this one's.
+   */
+  /*
+   * The artefact key carries the model's build time.
+   *
+   * A published list is immutable for its date — that is the Lowe v. SEC posture,
+   * one ranking identical for every subscriber — but it is immutable *for the
+   * model that produced it*. Keyed on the date alone, the cached list was returned
+   * whichever ensemble was loaded, so after a retrain /terminal served SCHW at
+   * 52.5 while /terminal/SCHW computed 33.6 from the model actually in force. The
+   * version string does not move between retrains, so `createdAt` is what
+   * distinguishes them; a list from a superseded ensemble is simply not found.
+   */
+  const modelStamp = tryLoadModelBundle()?.createdAt ?? 0;
+  const artefactKey = `publication-${publicationDate}-${modelStamp}`;
+  const cached = loadArtefact<Publication>(artefactKey);
   if (cached) return cached;
 
   const snapshot = await getUniverseSnapshot(options);
@@ -413,7 +435,7 @@ export async function getPublication(options: EngineOptions = {}): Promise<Publi
     neutralityNotice: NEUTRALITY_NOTICE,
     modelVersion: snapshot.modelVersion,
   };
-  saveArtefact(`publication-${publicationDate}`, publication);
+  saveArtefact(artefactKey, publication);
   return publication;
 }
 

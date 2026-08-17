@@ -38,15 +38,15 @@ const config: Config = {
         },
         burgundy: {
           DEFAULT: '#8C3A3A',
-          bright: '#B25A5A',
+          bright: '#C47474',
           dim: '#5A2525',
           wash: 'rgba(140, 58, 58, 0.12)',
         },
         parchment: {
           DEFAULT: '#EDE8DC',
           dim: '#B8B2A5',
-          faint: '#7A766D',
-          ghost: '#4A4842',
+          faint: '#948F84',
+          ghost: '#8A857A',
         },
         slate: {
           ink: '#141415',
