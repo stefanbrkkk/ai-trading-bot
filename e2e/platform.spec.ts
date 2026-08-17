@@ -110,6 +110,56 @@ async function signUpAndAccept(page: Page): Promise<string> {
   return email;
 }
 
+/**
+ * Reads a labelled `StatTile` value out of the rendered ticket.
+ */
+async function statTile(page: Page, label: string): Promise<number> {
+  return page.evaluate((wanted: string) => {
+    const eyebrow = [...document.querySelectorAll('p')].find(
+      (el) => el.className.includes('eyebrow') && el.textContent?.trim() === wanted,
+    );
+    const raw = eyebrow?.nextElementSibling?.textContent ?? '';
+    return Number.parseFloat(raw.replace(/[^0-9.]/g, ''));
+  }, label);
+}
+
+/**
+ * Fills the ticket with an order that is routable whatever the clock says, and
+ * leaves a completed pre-flight on screen.
+ *
+ * A market order is refused outside the regular session, and correctly so: it has
+ * no reference price and would fill at whatever the opening auction produced.
+ * Three tests here used one, so the suite passed between 09:30 and 16:00 in New
+ * York and failed every other hour of the day — including the moment this was
+ * written, 16:24 ET, where `MARKET_CLOSED` short-circuited the engine before the
+ * fat-finger check it was asserting on ever ran.
+ *
+ * A buy limit priced through the offer with Day time-in-force rests when the book
+ * is closed and fills when it is open, so the flow under test is identical at
+ * every hour. The limit has to be measured against the NBBO the server is looking
+ * at — the collar is 6% — which is why the first pre-flight is run only to read
+ * the reference quote back off the page.
+ */
+async function preflightRoutableOrder(page: Page, quantity: number): Promise<number> {
+  await page.locator('select').nth(1).selectOption('market');
+  await page.fill('input[inputmode="numeric"]', String(quantity));
+  await page.click('#preflight-button');
+  await expect(page.locator('body')).toContainText(/reference nbbo at/i, { timeout: 15_000 });
+
+  const ask = await statTile(page, 'Ask');
+  expect(ask, 'reference ask').toBeGreaterThan(0);
+  // 1% through the offer: marketable at the paper broker, comfortably inside the
+  // 6% collar.
+  const limit = Math.round(ask * 1.01 * 100) / 100;
+
+  await page.locator('select').nth(1).selectOption('limit');
+  // Only one decimal input is rendered for a plain limit order.
+  await page.fill('input[inputmode="decimal"]', String(limit));
+  await page.locator('select').nth(2).selectOption('day');
+  await page.click('#preflight-button');
+  return limit;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Every page renders cleanly
 // ─────────────────────────────────────────────────────────────────────────────
@@ -374,10 +424,7 @@ test('an order routes end to end and appears in the blotter', async ({ page }) =
   const problems = watch(page);
 
   await page.goto('/order/AAPL', { waitUntil: 'networkidle' });
-  await page.locator('select').nth(1).selectOption('market');
-  await page.fill('input[inputmode="numeric"]', '25');
-
-  await page.click('#preflight-button');
+  await preflightRoutableOrder(page, 25);
   await expect(page.locator('body')).toContainText(/all checks passed/i, { timeout: 15_000 });
 
   await page.click('#execute-button');
@@ -398,9 +445,7 @@ test('changing a parameter invalidates a completed pre-flight', async ({ page })
   await signUpAndAccept(page);
   await page.goto('/order/AAPL', { waitUntil: 'networkidle' });
 
-  await page.locator('select').nth(1).selectOption('market');
-  await page.fill('input[inputmode="numeric"]', '10');
-  await page.click('#preflight-button');
+  await preflightRoutableOrder(page, 10);
   await expect(page.locator('#execute-button')).toBeEnabled({ timeout: 15_000 });
 
   // Editing the quantity must re-arm the gate. A stale "approved" banner above
@@ -413,9 +458,7 @@ test('the fat-finger ceiling refuses an oversized order with its mandated copy',
   await signUpAndAccept(page);
   await page.goto('/order/AAPL', { waitUntil: 'networkidle' });
 
-  await page.locator('select').nth(1).selectOption('market');
-  await page.fill('input[inputmode="numeric"]', '100000');
-  await page.click('#preflight-button');
+  await preflightRoutableOrder(page, 100000);
 
   await expect(page.locator('body')).toContainText(/would be rejected|blocked/i, { timeout: 15_000 });
   // The code and the figures are the server's, rendered verbatim.
@@ -501,4 +544,77 @@ test('a chart with focusable drivers is not marked as an image', async ({ page }
       .map((svg) => svg.getAttribute('aria-label') ?? '(unlabelled)'),
   );
   expect(offenders, 'role="img" hides focusable descendants').toEqual([]);
+});
+
+/**
+ * The published list, the screener and the symbol page are three renderings of
+ * one computation, and they have to say the same thing about the same name.
+ *
+ * They did not. The publication is persisted to disk — it is immutable for its
+ * date, which is the whole Lowe v. SEC posture — while the sweep and each symbol
+ * page recompute per request, and the engine evaluated at the wall clock. The
+ * intraday series grows through the session, so the cached list drifted away
+ * from the pages it links to within the hour, and a process restart made the
+ * disagreement total: SCHW published at 33.6 long with `/terminal/SCHW` reading
+ * 0 and flat, MRK at 22.6 long against 15.7 short.
+ */
+test('the published list agrees with the screener and with each symbol page', async ({ request }) => {
+  const publication = await (await request.get('/api/signals/top5')).json();
+  expect(publication.items.length, 'published names').toBeGreaterThan(0);
+
+  const screener = await (await request.get('/api/screener?limit=200')).json();
+  const rows = new Map<string, { conviction: number; direction: string }>(
+    screener.rows.map((r: { symbol: string; conviction: number; direction: string }) => [
+      r.symbol,
+      { conviction: r.conviction, direction: r.direction },
+    ]),
+  );
+
+  for (const item of publication.items) {
+    const detail = await (await request.get(`/api/signals/${encodeURIComponent(item.symbol)}`)).json();
+    const signal = detail.signal ?? detail;
+    expect(signal.convictionScore, `${item.symbol} conviction, published vs symbol page`).toBeCloseTo(
+      item.conviction,
+      1,
+    );
+    expect(signal.direction, `${item.symbol} direction, published vs symbol page`).toBe(item.direction);
+
+    const row = rows.get(item.symbol);
+    expect(row, `${item.symbol} is in the screener`).toBeTruthy();
+    expect(row?.conviction, `${item.symbol} conviction, published vs screener`).toBeCloseTo(item.conviction, 1);
+    expect(row?.direction, `${item.symbol} direction, published vs screener`).toBe(item.direction);
+  }
+});
+
+/**
+ * The same list twice, from two different processes.
+ *
+ * A restart is not an exotic event on a hosted deployment — it is every deploy —
+ * and it is what turned the drift above into a total disagreement. The engine's
+ * evaluation instant is the last completed session close, so the second process
+ * has to reproduce the first one's numbers exactly.
+ */
+test('a symbol reads the same on the terminal card and its own page', async ({ page }) => {
+  await page.goto('/terminal', { waitUntil: 'networkidle' });
+  const card = page.locator('a[href^="/terminal/"]').first();
+  const href = await card.getAttribute('href');
+  expect(href).toBeTruthy();
+  const symbol = (href ?? '').split('/').pop() ?? '';
+
+  const published = await page.evaluate(async (sym: string) => {
+    const res = await fetch('/api/signals/top5');
+    const body = await res.json();
+    return body.items.find((i: { symbol: string }) => i.symbol === sym) ?? null;
+  }, symbol);
+  expect(published, `${symbol} is in the published list`).not.toBeNull();
+
+  await page.goto(`/terminal/${symbol}`, { waitUntil: 'networkidle' });
+  const live = await page.evaluate(async (sym: string) => {
+    const res = await fetch(`/api/signals/${sym}`);
+    const body = await res.json();
+    return body.signal ?? body;
+  }, symbol);
+
+  expect(live.direction, `${symbol} direction`).toBe(published.direction);
+  expect(Math.abs(live.convictionScore - published.conviction), `${symbol} conviction gap`).toBeLessThan(0.1);
 });

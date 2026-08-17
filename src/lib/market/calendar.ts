@@ -178,6 +178,20 @@ export function previousTradingDay(utcMs: number): number {
   return cursor;
 }
 
+/**
+ * The close of the most recent session that has finished at `utcMs`.
+ *
+ * Today's close if the session is over, otherwise the previous trading day's.
+ * This is the platform's evaluation instant: it is a function of the calendar
+ * rather than of the wall clock, so every process evaluating "now" on a given
+ * day agrees, which is what lets a cached daily publication and a
+ * recomputed-per-request symbol page carry the same number.
+ */
+export function lastCompletedSessionClose(utcMs: number): number {
+  if (isTradingDay(utcMs) && utcMs >= sessionClose(utcMs)) return sessionClose(utcMs);
+  return sessionClose(previousTradingDay(utcMs));
+}
+
 /** Ascending list of session-open instants in [start, end]. */
 export function tradingDaysBetween(start: number, end: number): number[] {
   const out: number[] = [];

@@ -23,7 +23,7 @@ import {
   resolveMarketProvider,
 } from '@/lib/market/provider';
 import { BENCHMARK_SYMBOL, TRADABLE_SYMBOLS, requireSpec } from '@/lib/market/universe';
-import { isoDate, sessionOpen } from '@/lib/market/calendar';
+import { isoDate, lastCompletedSessionClose, sessionOpen } from '@/lib/market/calendar';
 import { resample } from '@/lib/quant/indicators';
 import { ouZScore } from '@/lib/quant/ou';
 import { sabrSmileCurve } from '@/lib/quant/sabr';
@@ -70,10 +70,34 @@ export function clearEngineCache(): void {
   profitFactorCache = undefined;
 }
 
+/**
+ * The instant every part of the engine evaluates at.
+ *
+ * It is the last completed session's close, not the wall clock, and that is a
+ * correctness requirement rather than a preference. The daily publication is
+ * persisted to disk — it has to be, it is immutable for its date, one ranking
+ * identical for every subscriber — while the screener sweep and each symbol page
+ * recompute per request. Evaluated at the wall clock those two disagree, because
+ * the intraday series grows through the session: measured across one afternoon,
+ * the cached list published SCHW at 33.6 long, MRK at 22.6 long and DE at 22.3
+ * long, while `/terminal/SCHW` read 0 and flat, MRK read 15.7 *short* and DE
+ * 12.6 short. Five cards, none of whose own detail pages agreed with them. A
+ * process restart made it total: an entirely different five names.
+ *
+ * Snapping to the session close removes the disagreement at the source rather
+ * than papering over it with a vintage label. The instant is a function of the
+ * calendar, so any process, on any machine, at any hour of the day, recomputes
+ * byte-identical output and the cached artefact is never stale. It is also the
+ * cadence the product already publishes on every page — end of day, five-day
+ * horizon — so the terminal now computes what its own status strip says it does.
+ *
+ * `options.now` still overrides, which is what the backtester and the seed use
+ * to evaluate at a historical instant.
+ */
 function referenceNow(provider: MarketDataProvider, options: EngineOptions): number {
   if (options.now !== undefined) return options.now;
-  if (provider instanceof SimulatorProvider) return provider.referenceNow;
-  return Date.now();
+  const wall = provider instanceof SimulatorProvider ? provider.referenceNow : Date.now();
+  return lastCompletedSessionClose(wall);
 }
 
 export interface EngineReadiness {
@@ -382,27 +406,26 @@ export async function getPublication(options: EngineOptions = {}): Promise<Publi
   const publicationDate = isoDate(sessionOpen(now));
 
   /*
-   * A published list is immutable for its date — that is the Lowe v. SEC posture,
-   * one ranking identical for every subscriber — but it is immutable *for the
-   * model that produced it*. The cached artefact was being returned regardless of
-   * which ensemble was loaded, so after a retrain /terminal served a ranking with
-   * SCHW at 52.5 while /terminal/SCHW computed 33.6 from the model actually in
-   * force. A stale publication is not a stable one; it is a different model's
-   * answer presented as this one's.
-   */
-  /*
-   * The artefact key carries the model's build time.
+   * The key names everything the list depends on: the evaluation instant and the
+   * model's build time.
    *
    * A published list is immutable for its date — that is the Lowe v. SEC posture,
    * one ranking identical for every subscriber — but it is immutable *for the
-   * model that produced it*. Keyed on the date alone, the cached list was returned
-   * whichever ensemble was loaded, so after a retrain /terminal served SCHW at
-   * 52.5 while /terminal/SCHW computed 33.6 from the model actually in force. The
-   * version string does not move between retrains, so `createdAt` is what
-   * distinguishes them; a list from a superseded ensemble is simply not found.
+   * inputs that produced it*, and a cache key that omits one of them serves a
+   * stale answer under a new one. Both omissions have happened here. Keyed on the
+   * date alone it was returned whichever ensemble was loaded, so after a retrain
+   * /terminal served SCHW at 52.5 while /terminal/SCHW computed 33.6 from the
+   * model actually in force; the version string does not move between retrains,
+   * so `createdAt` is what distinguishes them. Then, keyed on date and model, a
+   * list computed under the previous evaluation rule survived the change to this
+   * one and published DUK at 24.5 against a symbol page reading 23.3.
+   *
+   * `now` is a function of the calendar, so including it costs nothing in cache
+   * hits within a day and invalidates automatically if the rule that derives it
+   * ever changes again.
    */
   const modelStamp = tryLoadModelBundle()?.createdAt ?? 0;
-  const artefactKey = `publication-${publicationDate}-${modelStamp}`;
+  const artefactKey = `publication-${publicationDate}-${now}-${modelStamp}`;
   const cached = loadArtefact<Publication>(artefactKey);
   if (cached) return cached;
 
