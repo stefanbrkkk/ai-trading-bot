@@ -1,0 +1,248 @@
+'use client';
+
+/**
+ * Compact driver-share bars for dense panels.
+ *
+ * This is the reduced form of the waterfall: where the waterfall spends 48px a row
+ * to give a touch target for the drill-down, this spends 20px because it lives in
+ * a sidebar column next to a dozen other blocks and is read, not interrogated.
+ * No axis is drawn — as with `Meter`, each row is a single proportion, so a bar is
+ * the honest encoding and an axis would be decoration.
+ *
+ * Signed rows are the only place the sign matters, and they follow the mandated
+ * force-plot convention exactly: sage right of the centre line for a supporting
+ * driver, burgundy left for an opposing one. Unsigned rows are magnitudes with no
+ * direction (attention weights, variable-selection weights, agent shares), so
+ * they run from the left in gold.
+ */
+
+import { useMemo, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { WATERFALL_STAGGER, linearScale } from '@/lib/ui/svg';
+import {
+  BURGUNDY,
+  GOLD,
+  OBSIDIAN_EDGE,
+  PARCHMENT,
+  PARCHMENT_FAINT,
+  SAGE,
+  fractionAsPercent,
+  signedFractionAsPercent,
+  truncate,
+} from '@/lib/ui/format';
+
+export interface FeatureBarItem {
+  key: string;
+  label: string;
+  /** A share or weight in [0, 1] — or [−1, 1] when `signed`. */
+  value: number;
+  /** Renders from the centre line with a directional colour. */
+  signed?: boolean;
+  /** Native `<title>` text, for the rows too dense to caption. */
+  hint?: string;
+}
+
+export interface FeatureBarsProps {
+  items: FeatureBarItem[];
+  /** Scale maximum. Defaults to the largest magnitude present. */
+  max?: number;
+  onHover?: (key: string | null) => void;
+  hoveredKey?: string | null;
+  /** Overrides the viewBox height; rows stay at the mandated 20px pitch. */
+  height?: number;
+}
+
+const ROW_PITCH = 20;
+const BAR_HEIGHT = 8;
+const VIEW_WIDTH = 280;
+const LABEL_COLUMN = 104;
+const VALUE_COLUMN = 44;
+const GUTTER = 8;
+const LABEL_CHARS = 17;
+
+export function FeatureBars({ items, max, onHover, hoveredKey, height }: FeatureBarsProps) {
+  const reduceMotion = useReducedMotion();
+  const [localKey, setLocalKey] = useState<string | null>(null);
+
+  const layout = useMemo(() => {
+    const rows = items.filter((item) => Number.isFinite(item.value));
+    let peak = 0;
+    for (const row of rows) peak = Math.max(peak, Math.abs(row.value));
+    // A supplied max of 0, an all-zero list, or a single all-equal datum would
+    // otherwise divide by zero and write NaN into a width attribute.
+    const ceiling = Number.isFinite(max) && (max as number) > 0 ? (max as number) : peak > 0 ? peak : 1;
+    const trackX0 = LABEL_COLUMN + GUTTER;
+    const trackWidth = Math.max(1, VIEW_WIDTH - trackX0 - VALUE_COLUMN - GUTTER);
+    return {
+      rows,
+      trackX0,
+      trackWidth,
+      centreX: trackX0 + trackWidth / 2,
+      /** Full-track scale for unsigned rows. */
+      full: linearScale([0, ceiling], [0, trackWidth]),
+      /** Half-track scale for signed rows, measured out from the centre line. */
+      half: linearScale([0, ceiling], [0, trackWidth / 2]),
+    };
+  }, [items, max]);
+
+  const { rows, trackX0, trackWidth, centreX } = layout;
+  const viewHeight = Math.max(ROW_PITCH, height ?? rows.length * ROW_PITCH);
+
+  if (rows.length === 0) {
+    // Quiet empty frame rather than an `EmptyState` block: this component sits
+    // inside a fixed panel slot and must not change the panel's height.
+    return (
+      <svg
+        viewBox={`0 0 ${VIEW_WIDTH} ${Math.max(ROW_PITCH * 2, height ?? ROW_PITCH * 2)}`}
+        preserveAspectRatio="xMidYMid meet"
+        className="h-auto w-full"
+        role="img"
+        aria-label="No driver shares available"
+      >
+        <text
+          x={VIEW_WIDTH / 2}
+          y={ROW_PITCH}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={9}
+          fill={PARCHMENT_FAINT}
+        >
+          no drivers
+        </text>
+      </svg>
+    );
+  }
+
+  const activeKey = hoveredKey ?? localKey;
+  const hasSigned = rows.some((row) => row.signed);
+
+  return (
+    <svg
+      viewBox={`0 0 ${VIEW_WIDTH} ${viewHeight}`}
+      preserveAspectRatio="xMidYMid meet"
+      className="h-auto w-full"
+      role="img"
+      aria-label={`${rows.length} driver shares`}
+      onMouseLeave={() => {
+        setLocalKey(null);
+        onHover?.(null);
+      }}
+    >
+      {/* Centre line, only when something is actually measured from it. */}
+      {hasSigned ? (
+        <line
+          x1={centreX}
+          x2={centreX}
+          y1={0}
+          y2={rows.length * ROW_PITCH}
+          stroke={OBSIDIAN_EDGE}
+          strokeWidth={1}
+          strokeOpacity={0.45}
+          aria-hidden
+        />
+      ) : null}
+
+      {rows.map((row, index) => {
+        const y = index * ROW_PITCH;
+        const active = activeKey === row.key;
+        const dimmed = activeKey !== null && !active;
+        const signed = row.signed === true;
+        const positive = row.value >= 0;
+
+        const barWidth = signed
+          ? layout.half(Math.abs(row.value))
+          : layout.full(Math.max(0, row.value));
+        const clamped = Math.max(0, Math.min(signed ? trackWidth / 2 : trackWidth, barWidth));
+        const barX = signed ? (positive ? centreX : centreX - clamped) : trackX0;
+        const restX = signed ? centreX : trackX0;
+        const fill = signed ? (positive ? SAGE : BURGUNDY) : GOLD;
+
+        return (
+          <g
+            key={`${row.key}-${index}`}
+            role="button"
+            tabIndex={0}
+            aria-label={`${row.label}: ${
+              signed ? signedFractionAsPercent(row.value, 0) : fractionAsPercent(row.value, 0)
+            }${row.hint ? `. ${row.hint}` : ''}`}
+            className="cursor-default outline-none transition-opacity duration-150"
+            opacity={dimmed ? 0.45 : 1}
+            onMouseEnter={() => {
+              setLocalKey(row.key);
+              onHover?.(row.key);
+            }}
+            onFocus={() => {
+              setLocalKey(row.key);
+              onHover?.(row.key);
+            }}
+            onBlur={() => {
+              setLocalKey(null);
+              onHover?.(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                setLocalKey(null);
+                onHover?.(null);
+              }
+            }}
+          >
+            {row.hint ? <title>{row.hint}</title> : null}
+
+            <rect x={0} y={y} width={VIEW_WIDTH} height={ROW_PITCH} fill="transparent" />
+
+            <text
+              x={LABEL_COLUMN}
+              y={y + ROW_PITCH / 2}
+              textAnchor="end"
+              dominantBaseline="central"
+              fontSize={9}
+              fill={active ? PARCHMENT : PARCHMENT_FAINT}
+            >
+              {truncate(row.label, LABEL_CHARS)}
+            </text>
+
+            {/* Empty track, so a small share still reads as small rather than absent. */}
+            <rect
+              x={trackX0}
+              y={y + (ROW_PITCH - BAR_HEIGHT) / 2}
+              width={trackWidth}
+              height={BAR_HEIGHT}
+              fill={OBSIDIAN_EDGE}
+              fillOpacity={0.35}
+              aria-hidden
+            />
+
+            {/* `x` is a Framer Motion transform, not the SVG attribute — see the
+                note in ShapWaterfall. A signed bar's left edge moves as it grows,
+                so both are animated together. */}
+            <motion.rect
+              y={y + (ROW_PITCH - BAR_HEIGHT) / 2}
+              width={clamped}
+              height={BAR_HEIGHT}
+              fill={fill}
+              initial={reduceMotion ? false : { width: 0, x: restX }}
+              animate={{ width: clamped, x: barX }}
+              transition={
+                reduceMotion
+                  ? { duration: 0 }
+                  : { duration: 0.45, ease: [0.16, 1, 0.3, 1], delay: index * WATERFALL_STAGGER }
+              }
+            />
+
+            <text
+              x={VIEW_WIDTH - 4}
+              y={y + ROW_PITCH / 2}
+              textAnchor="end"
+              dominantBaseline="central"
+              fontSize={9}
+              fill={active ? PARCHMENT : PARCHMENT_FAINT}
+              className="tabular"
+            >
+              {signed ? signedFractionAsPercent(row.value, 0) : fractionAsPercent(row.value, 0)}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}

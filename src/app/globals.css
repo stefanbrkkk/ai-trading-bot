@@ -1,0 +1,317 @@
+@import url('/fonts/fonts.css');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Project Aurelius — "Old Money" design system.
+ *
+ * Palette, typography and depth treatment are mandated verbatim by
+ * MASTER_AURELIUS_SPECIFICATION §4.1 and the XAI research's design section:
+ * Vanta Black grounds, deep-charcoal and obsidian surfaces, Metallic Gold
+ * reserved for the conviction score and primary interaction, sage for positive
+ * SHAP drivers and burgundy for negative. Saturated retail neon is banned;
+ * shadows are wide and blurred to imply physical space rather than digital
+ * layering.
+ */
+
+:root {
+  --vanta: #0a0a0a;
+  --vanta-deep: #050505;
+  --charcoal: #141414;
+  --obsidian: #1c1c1c;
+  --obsidian-light: #232324;
+  --obsidian-edge: #343435;
+  --gold: #d4af37;
+  --gold-bright: #e8c860;
+  --champagne: #f7e7ce;
+  --sage: #5f7161;
+  --sage-bright: #83a086;
+  --burgundy: #8c3a3a;
+  --burgundy-bright: #b25a5a;
+  --parchment: #ede8dc;
+  --parchment-dim: #b8b2a5;
+  --parchment-faint: #7a766d;
+  --parchment-ghost: #4a4842;
+
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: 'Playfair Display', Georgia, Cambria, serif;
+  --font-sans: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  color-scheme: dark;
+}
+
+* {
+  border-color: var(--obsidian-edge);
+}
+
+html {
+  background-color: var(--vanta-deep);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--vanta);
+  color: var(--parchment);
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+}
+
+/* Tabular figures everywhere numbers align in a column. */
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'zero' 1;
+}
+
+.display {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* Institutional small-caps label used above every data block. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--parchment-faint);
+}
+
+/* ── Surfaces ───────────────────────────────────────────────────────────── */
+
+.plinth {
+  background: linear-gradient(180deg, var(--obsidian) 0%, var(--charcoal) 100%);
+  border: 1px solid var(--obsidian-edge);
+  box-shadow:
+    0 24px 64px -24px rgba(0, 0, 0, 0.9),
+    0 2px 8px -4px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.035);
+}
+
+.plinth-flat {
+  background-color: var(--charcoal);
+  border: 1px solid var(--obsidian-edge);
+}
+
+/* Glassmorphism tooltip: dark charcoal, 1px border, backdrop blur (XAI §Phase 4). */
+.glass {
+  background-color: rgba(20, 20, 20, 0.92);
+  border: 1px solid var(--obsidian-edge);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  box-shadow: 0 20px 48px -20px rgba(0, 0, 0, 0.95);
+}
+
+.gilt-edge {
+  box-shadow:
+    0 0 0 1px rgba(212, 175, 55, 0.28),
+    0 16px 48px -16px rgba(212, 175, 55, 0.16);
+}
+
+/* Hairline rule used between dense data rows. */
+.hairline {
+  border-bottom: 1px solid rgba(52, 52, 53, 0.6);
+}
+
+/* ── Scrollbars ─────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--vanta-deep);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--obsidian-light);
+  border: 2px solid var(--vanta-deep);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--obsidian-edge);
+}
+
+/* ── Focus ──────────────────────────────────────────────────────────────── */
+
+:focus-visible {
+  outline: 1px solid var(--gold);
+  outline-offset: 2px;
+}
+
+/* ── Form controls ──────────────────────────────────────────────────────── */
+
+input,
+select,
+textarea {
+  background-color: var(--vanta-deep);
+  border: 1px solid var(--obsidian-edge);
+  color: var(--parchment);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--parchment-ghost);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--gold-dim, #8e7526);
+  outline: none;
+  box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.35);
+}
+
+/* Numeric inputs must never carry spinners — the compliance rules require the
+   user to type the quantity, and a spinner is a nudge toward a value. */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+input[type='number'] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+/*
+ * Capital-allocation and threshold sliders. Custom track and thumb in Metallic
+ * Gold (Phase 4 §4). No default browser styling anywhere.
+ */
+input[type='range'] {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  height: 22px;
+  width: 100%;
+  border: none;
+  padding: 0;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--gold) 0%,
+    var(--gold) var(--range-progress, 0%),
+    var(--obsidian-edge) var(--range-progress, 0%),
+    var(--obsidian-edge) 100%
+  );
+}
+
+input[type='range']::-moz-range-track {
+  height: 2px;
+  background: var(--obsidian-edge);
+}
+
+input[type='range']::-moz-range-progress {
+  height: 2px;
+  background: var(--gold);
+}
+
+input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 14px;
+  width: 14px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: var(--vanta);
+  border: 1px solid var(--gold);
+  box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.14);
+  cursor: grab;
+}
+
+input[type='range']::-moz-range-thumb {
+  height: 14px;
+  width: 14px;
+  border-radius: 50%;
+  background: var(--vanta);
+  border: 1px solid var(--gold);
+  cursor: grab;
+}
+
+input[type='range']:active::-webkit-slider-thumb {
+  cursor: grabbing;
+  box-shadow: 0 0 0 5px rgba(212, 175, 55, 0.2);
+}
+
+/* Checkbox: square, gold check, and visibly disabled until the clickwrap
+   scroll requirement is satisfied. */
+input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 18px;
+  width: 18px;
+  min-width: 18px;
+  border: 1px solid var(--obsidian-edge);
+  background-color: var(--vanta-deep);
+  cursor: pointer;
+  position: relative;
+}
+
+input[type='checkbox']:checked {
+  border-color: var(--gold);
+}
+
+input[type='checkbox']:checked::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 5px;
+  height: 10px;
+  border-right: 2px solid var(--gold);
+  border-bottom: 2px solid var(--gold);
+  transform: rotate(40deg);
+}
+
+input[type='checkbox']:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+/* ── Charts ─────────────────────────────────────────────────────────────── */
+
+svg text {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Wide charts and tables scroll inside their own container; the page body must
+   never scroll horizontally. */
+.scroll-x {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+/* ── Motion ─────────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Selection uses the champagne accent rather than a system blue. */
+::selection {
+  background-color: rgba(247, 231, 206, 0.22);
+  color: var(--parchment);
+}
