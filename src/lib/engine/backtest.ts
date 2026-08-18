@@ -364,16 +364,35 @@ export function computeMetrics(
   const grossWin = sum(wins.map((t) => t.netPnl));
   const grossLoss = Math.abs(sum(losses.map((t) => t.netPnl)));
 
+  /*
+   * Every rate statistic is computed over the traded window, not over the whole
+   * curve.
+   *
+   * The curve is emitted from the first bar the engine has data for, which on
+   * the seeded fixture is a year before `config.startTime`. Those 260 leading
+   * bars are flat by construction — 259 of the 260 daily returns are exactly
+   * zero — but the benchmark moves through them, so the published
+   * benchmarkReturn was +9.80% for a period in which the strategy held nothing.
+   * Against the benchmark measured over the window the strategy actually traded
+   * (−5.06%) the sign of relative performance reverses: the page reported a
+   * strategy losing to its benchmark when it beat it.
+   *
+   * The flat prefix also drags volatility, Sharpe, alpha and beta towards zero
+   * by padding the sample with non-observations.
+   */
+  const tradedFrom = equityCurve.findIndex((p) => p.time >= config.startTime);
+  const traded: readonly EquityPoint[] = tradedFrom <= 0 ? equityCurve : equityCurve.slice(tradedFrom);
+
   const equity = equityCurve.map((p) => p.equity);
   const dailyReturns: number[] = [];
-  for (let i = 1; i < equity.length; i += 1) {
-    const prev = equity[i - 1] as number;
-    dailyReturns.push(prev <= 0 ? 0 : ((equity[i] as number) - prev) / prev);
+  for (let i = 1; i < traded.length; i += 1) {
+    const prev = (traded[i - 1] as EquityPoint).equity;
+    dailyReturns.push(prev <= 0 ? 0 : ((traded[i] as EquityPoint).equity - prev) / prev);
   }
   const benchmarkReturns: number[] = [];
-  for (let i = 1; i < equityCurve.length; i += 1) {
-    const prev = (equityCurve[i - 1] as EquityPoint).benchmark;
-    benchmarkReturns.push(prev <= 0 ? 0 : ((equityCurve[i] as EquityPoint).benchmark - prev) / prev);
+  for (let i = 1; i < traded.length; i += 1) {
+    const prev = (traded[i - 1] as EquityPoint).benchmark;
+    benchmarkReturns.push(prev <= 0 ? 0 : ((traded[i] as EquityPoint).benchmark - prev) / prev);
   }
 
   const totalReturn =
@@ -385,8 +404,21 @@ export function computeMetrics(
   const meanDaily = mean(dailyReturns);
   const sharpe = volatility < EPS ? 0 : (meanDaily * TRADING_DAYS_PER_YEAR) / volatility;
 
-  const downside = dailyReturns.filter((r) => r < 0);
-  const downsideDeviation = Math.sqrt(mean(downside.map((r) => r * r))) * Math.sqrt(TRADING_DAYS_PER_YEAR);
+  /*
+   * Downside deviation is the semideviation over the FULL sample, not the mean
+   * over the losing days alone.
+   *
+   * Averaging only the negatives divides a subset's sum by that subset's count,
+   * which turns a partial-moment into an average loss and inflates it by roughly
+   * sqrt(n/k). Measured on the seeded fixture: 42 negative days out of 753 gave a
+   * downside deviation of 0.1151 against a volatility of 0.0384 — three times the
+   * standard deviation of the same series, which is arithmetically impossible for
+   * a quantity restricted to a subset of it. Because Sortino divides by it, the
+   * page then reported |Sortino| 0.103 < |Sharpe| 0.308, the reverse of the
+   * relationship the two ratios must have.
+   */
+  const downsideSquares = dailyReturns.map((r) => Math.min(0, r) ** 2);
+  const downsideDeviation = Math.sqrt(mean(downsideSquares)) * Math.sqrt(TRADING_DAYS_PER_YEAR);
   const sortino = downsideDeviation < EPS ? 0 : (meanDaily * TRADING_DAYS_PER_YEAR) / downsideDeviation;
 
   const drawdowns = equityCurve.map((p) => p.drawdown);
@@ -427,11 +459,11 @@ export function computeMetrics(
   const streaks = computeStreaks(trades);
 
   // Benchmark-relative.
+  const benchmarkOpen = (traded[0] as EquityPoint | undefined)?.benchmark ?? config.initialCapital;
   const benchmarkReturn =
-    equityCurve.length === 0
+    traded.length === 0 || benchmarkOpen <= 0
       ? 0
-      : ((last(equityCurve.map((p) => p.benchmark), config.initialCapital) - config.initialCapital) /
-          Math.max(config.initialCapital, EPS));
+      : (last(traded.map((p) => p.benchmark), benchmarkOpen) - benchmarkOpen) / benchmarkOpen;
   const { alpha, beta } = regress(dailyReturns, benchmarkReturns);
   const activeReturns = dailyReturns.map((r, i) => r - (benchmarkReturns[i] ?? 0));
   const trackingError = stdev(activeReturns) * Math.sqrt(TRADING_DAYS_PER_YEAR);

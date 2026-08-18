@@ -38,7 +38,7 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
     return pendingSetup('ENGINE_NOT_READY', error instanceof Error ? error.message : 'Engine unavailable.');
   }
 
-  const { signal, features, router, strategies } = result;
+  const { signal, features, router, strategies, explanation } = result;
 
   // Group the drivers into the three mandated domain arrays.
   const byDomain: Record<'technical' | 'fundamental' | 'sentiment', typeof signal.drivers> = {
@@ -95,17 +95,20 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
     latency: signal.latency,
     xaiBreakdown: byDomain,
     contributions,
-    waterfall: shapWaterfall(
-      {
-        values: signal.drivers.map((d) => d.shap),
-        baseValue: 0,
-        rawPrediction: signal.drivers.reduce((a, d) => a + d.shap, 0),
-        probability: signal.probability,
-        featureNames: signal.drivers.map((d) => d.label),
-        featureValues: signal.drivers.map((d) => d.value),
-      },
-      8,
-    ),
+    /*
+     * The engine's own explanation, not a reconstruction of it.
+     *
+     * This used to be rebuilt from the twelve translated drivers with
+     * `baseValue: 0` — a different object with the same shape. It began at
+     * sigmoid(0) = 50% under a label reading "E[f(x)] over the K-Means
+     * background", it ended at the sum of twelve values instead of at f(x), and
+     * the gap between that end point and the published probability measured up
+     * to 4.4 percentage points, directly beneath a footer certifying the
+     * attribution exact to 3.3e-16. Passing the real explanation makes the chart
+     * the thing the page says it is: `shapWaterfall` folds everything outside the
+     * top eight into a labelled remainder, so the bars still sum to f(x).
+     */
+    waterfall: shapWaterfall(explanation, 8),
     agents: signal.agents,
     router: {
       action: router.action,

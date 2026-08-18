@@ -33,7 +33,7 @@ import type {
   Position,
   Quote,
 } from '@/lib/domain/types';
-import { isoDate } from '@/lib/market/calendar';
+import { isMarketOpen, isoDate } from '@/lib/market/calendar';
 import { createRng } from '@/lib/quant/rng';
 import { clamp } from '@/lib/quant/stats';
 import { MAINTENANCE_MARGIN_RATE } from '@/lib/risk/limits';
@@ -228,7 +228,21 @@ export class PaperBroker implements BrokerAdapter {
       );
     }
 
-    const plan = this.planFill(request, quote);
+    /*
+     * Nothing fills outside the regular session.
+     *
+     * The risk engine already permits a resting Day order when the book is
+     * closed, and records exactly that: "Regular session is closed; the order
+     * will rest until the next session." The broker then filled it anyway,
+     * immediately, against a quote the simulator freezes overnight — so the
+     * audit ledger said one thing and the blotter another, and every overnight
+     * fill was against a stale price nobody could have traded at. An order
+     * accepted out of hours rests as `submitted`, which is the status the engine
+     * promised and the one the open-order cap already counts.
+     */
+    const plan = isMarketOpen(now)
+      ? this.planFill(request, quote)
+      : { quantity: 0, price: 0, slippageBps: 0, triggered: false };
     const account = this.loadOrSeed(request.account, ctx.userId, now);
 
     if (plan.quantity > 0) {

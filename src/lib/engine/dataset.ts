@@ -47,7 +47,19 @@ export interface DatasetOptions {
 export interface SymbolFeatureHistory {
   symbol: string;
   /** Ascending by time. */
-  entries: { time: number; features: ComputedFeatures; forwardReturn: number; label: number }[];
+  entries: {
+    time: number;
+    /**
+     * When the label became knowable — the close `horizonDays` sessions after
+     * `time`. Carried so the trainer can purge samples whose label reaches into
+     * the validation window; without it the split is out-of-time in its features
+     * and in-time in its outcomes.
+     */
+    labelTime: number;
+    features: ComputedFeatures;
+    forwardReturn: number;
+    label: number;
+  }[];
 }
 
 export interface DatasetResult extends TrainingDataset {
@@ -87,7 +99,7 @@ export async function buildTrainingDataset(
   const y: number[] = [];
   const forwardReturn: number[] = [];
   const sequences: number[][][] = [];
-  const meta: { symbol: string; time: number }[] = [];
+  const meta: { symbol: string; time: number; labelTime: number }[] = [];
 
   // Sample instants are evenly spaced across the usable range so the training
   // set spans every regime the simulator produced rather than clustering.
@@ -159,7 +171,8 @@ export async function buildTrainingDataset(
       const relative = symbolReturn - benchReturn;
       const label = relative > 0 ? 1 : 0;
 
-      history.entries.push({ time: evaluateAt, features, forwardReturn: relative, label });
+      const labelTime = sessions[future] as number;
+      history.entries.push({ time: evaluateAt, labelTime, features, forwardReturn: relative, label });
       processed += 1;
       options.onProgress?.(processed, symbols.length * samplesPerSymbol, symbol);
     }
@@ -173,7 +186,7 @@ export async function buildTrainingDataset(
       y.push(entry.label);
       forwardReturn.push(clamp(entry.forwardReturn, -0.4, 0.4));
       sequences.push(sequence);
-      meta.push({ symbol, time: entry.time });
+      meta.push({ symbol, time: entry.time, labelTime: entry.labelTime });
     }
 
     histories.push(history);
@@ -189,7 +202,7 @@ export async function buildTrainingDataset(
     y: order.map((o) => y[o.i] as number),
     forwardReturn: order.map((o) => forwardReturn[o.i] as number),
     sequences: order.map((o) => sequences[o.i] as number[][]),
-    meta: order.map((o) => meta[o.i] as { symbol: string; time: number }),
+    meta: order.map((o) => meta[o.i] as { symbol: string; time: number; labelTime: number }),
     histories,
     elapsedMs,
     costs: {

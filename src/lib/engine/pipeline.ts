@@ -46,7 +46,7 @@ import {
   evaluateStrategies,
   resolveStrategyConflicts,
 } from './strategies';
-import { localAccuracyError } from '@/lib/quant/shap';
+import { type ShapExplanation, localAccuracyError } from '@/lib/quant/shap';
 import { rogersSatchellVolatility, closes, last, resample } from '@/lib/quant/indicators';
 import { clamp } from '@/lib/quant/stats';
 import { AGENT_DISCRIMINATION_FLOOR } from './model';
@@ -92,6 +92,18 @@ export interface PipelineResult {
   router: RouterDecision;
   strategies: StrategyEvaluation[];
   drivers: TranslatedDriver[];
+  /**
+   * The exact TreeSHAP decomposition, all 89 values, with the ensemble's own
+   * `baseValue` and `rawPrediction`.
+   *
+   * Published because the API was rebuilding a waterfall from the twelve
+   * *translated* drivers with `baseValue: 0`, which is a different object: it
+   * starts at a 50% base the page labels "E[f(x)] over the K-Means background",
+   * it ends at the sum of twelve values rather than at f(x), and the gap between
+   * that end point and the published probability measured up to 4.4 points —
+   * under a footer certifying the attribution exact to 3.3e-16.
+   */
+  explanation: ShapExplanation;
   clock: ReturnType<HierarchicalStateClock['snapshot']>;
 }
 
@@ -397,7 +409,7 @@ export function runPipeline(
     modelVersion: model.version,
   };
 
-  return { signal, features, router, strategies, drivers, clock: clock.snapshot() };
+  return { signal, features, router, strategies, drivers, explanation, clock: clock.snapshot() };
 }
 
 function toAgentInference(

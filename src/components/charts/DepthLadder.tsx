@@ -38,6 +38,7 @@ import {
 import { MLOFI_LEVELS, spreadBps, type BookLevel, type OrderBookSnapshot } from '@/lib/quant/orderflow';
 import { EmptyState } from '@/components/ui/primitives';
 import { useChartWidth } from './useChartWidth';
+import { CHART_SHOWN, CHART_STILL, CHART_VIEWPORT } from './reveal';
 
 /** Width of the centre price column — two 8-character tabular prices at 10px. */
 const CENTRE_WIDTH = 132;
@@ -101,8 +102,10 @@ function DepthBar({
         fill={fill}
         fillOpacity={fillOpacity}
         style={BAR_GROW_LEFT}
-        initial={animated && length >= MIN_ANIMATED_BAR_WIDTH ? { scaleX: 0 } : false}
-        animate={{ scaleX: 1 }}
+        variants={{
+          [CHART_STILL]: { scaleX: animated && length >= MIN_ANIMATED_BAR_WIDTH ? 0 : 1 },
+          [CHART_SHOWN]: { scaleX: 1 },
+        }}
         // One uniform tween, no per-level stagger: the book updates continuously,
         // and a staggered delay would re-fire on every snapshot and leave the
         // ladder permanently shimmering instead of readable.
@@ -179,8 +182,11 @@ export function DepthLadder({ book, levels, height, mlofiLoadings, width: widthF
   const animated = !reduceMotion;
 
   return (
-    <svg
+    <motion.svg
       ref={chartRef}
+      initial={reduceMotion ? CHART_SHOWN : CHART_STILL}
+      whileInView={CHART_SHOWN}
+      viewport={CHART_VIEWPORT}
       viewBox={`0 0 ${width} ${viewHeight}`}
       width={width}
       height={viewHeight}
@@ -346,6 +352,6 @@ export function DepthLadder({ book, levels, height, mlofiLoadings, width: widthF
           </g>
         );
       })}
-    </svg>
+    </motion.svg>
   );
 }

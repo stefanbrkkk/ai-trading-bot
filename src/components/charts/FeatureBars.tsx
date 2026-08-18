@@ -20,6 +20,7 @@ import { useMemo, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { BAR_GROW_LEFT, BAR_GROW_RIGHT, MIN_ANIMATED_BAR_WIDTH, WATERFALL_STAGGER, linearScale } from '@/lib/ui/svg';
 import { useChartWidth } from './useChartWidth';
+import { CHART_SHOWN, CHART_STILL, CHART_VIEWPORT } from './reveal';
 import {
   BURGUNDY,
   GOLD,
@@ -138,8 +139,11 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height, width: wi
   const hasSigned = rows.some((row) => row.signed);
 
   return (
-    <svg
+    <motion.svg
       ref={chartRef}
+      initial={reduceMotion ? CHART_SHOWN : CHART_STILL}
+      whileInView={CHART_SHOWN}
+      viewport={CHART_VIEWPORT}
       viewBox={`0 0 ${width} ${viewHeight}`}
       preserveAspectRatio="xMidYMid meet"
       className="h-auto w-full"
@@ -267,8 +271,10 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height, width: wi
               /* A signed bar grows outwards from the centre line, an unsigned one
                  from the track's left edge. See BAR_GROW_LEFT. */
               style={signed && !positive ? BAR_GROW_RIGHT : BAR_GROW_LEFT}
-              initial={reduceMotion || clamped < MIN_ANIMATED_BAR_WIDTH ? false : { scaleX: 0 }}
-              animate={{ scaleX: 1 }}
+              variants={{
+                [CHART_STILL]: { scaleX: clamped < MIN_ANIMATED_BAR_WIDTH ? 1 : 0 },
+                [CHART_SHOWN]: { scaleX: 1 },
+              }}
               transition={
                 reduceMotion || clamped < MIN_ANIMATED_BAR_WIDTH
                   ? { duration: 0 }
@@ -291,6 +297,6 @@ export function FeatureBars({ items, max, onHover, hoveredKey, height, width: wi
           </g>
         );
       })}
-    </svg>
+    </motion.svg>
   );
 }

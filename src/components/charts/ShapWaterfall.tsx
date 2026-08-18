@@ -51,6 +51,7 @@ import {
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
 import { useChartWidth } from './useChartWidth';
+import { CHART_SHOWN, CHART_STILL, CHART_VIEWPORT } from './reveal';
 import {
   DriverTooltip,
   elementPoint,
@@ -264,8 +265,11 @@ export function ShapWaterfall({
 
   return (
     <div ref={host} className="relative">
-      <svg
+      <motion.svg
         ref={chartRef}
+        initial={reduceMotion ? CHART_SHOWN : CHART_STILL}
+        whileInView={CHART_SHOWN}
+        viewport={CHART_VIEWPORT}
         viewBox={`0 0 ${viewWidth} ${viewHeight}`}
         preserveAspectRatio="xMidYMid meet"
         className="h-auto w-full"
@@ -425,8 +429,10 @@ export function ShapWaterfall({
                      unrolls to the right of the running total, a negative one to
                      the left. See BAR_GROW_LEFT for why this is a transform. */
                   style={row.end >= row.start ? BAR_GROW_LEFT : BAR_GROW_RIGHT}
-                  initial={reduceMotion || barWidth < MIN_ANIMATED_BAR_WIDTH ? false : { scaleX: 0 }}
-                  animate={{ scaleX: 1 }}
+                  variants={{
+                    [CHART_STILL]: { scaleX: barWidth < MIN_ANIMATED_BAR_WIDTH ? 1 : 0 },
+                    [CHART_SHOWN]: { scaleX: 1 },
+                  }}
                   transition={
                     reduceMotion || barWidth < MIN_ANIMATED_BAR_WIDTH
                       ? { duration: 0 }
@@ -462,7 +468,7 @@ export function ShapWaterfall({
             </g>
           );
         })}
-      </svg>
+      </motion.svg>
 
       {shownTip ? (
         <DriverTooltip
@@ -473,6 +479,7 @@ export function ShapWaterfall({
           x={shownTip.point.x}
           y={shownTip.point.y}
           anchor={tooltipAnchor(shownTip.point.x, shownTip.point.hostWidth)}
+          hostWidth={shownTip.point.hostWidth}
           visible={tip !== null}
         />
       ) : null}

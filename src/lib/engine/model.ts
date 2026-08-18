@@ -334,8 +334,12 @@ export interface TrainingDataset {
   forwardReturn: number[];
   /** Agent sequences, aligned to AGENT_FEATURE_KEYS × sequenceLength. */
   sequences: number[][][];
-  /** Metadata for diagnostics. */
-  meta: { symbol: string; time: number }[];
+  /**
+   * Per-sample metadata. `labelTime` is when the sample's outcome became
+   * knowable, and the trainer uses it to purge the boundary — see the embargo in
+   * `trainModelBundle`.
+   */
+  meta: { symbol: string; time: number; labelTime: number }[];
 }
 
 export interface TrainOptions {
@@ -361,12 +365,41 @@ export function trainModelBundle(dataset: TrainingDataset, options: TrainOptions
   // Chronological split — a random split would leak the future into training.
   const splitIndex = Math.max(20, Math.floor(n * (1 - validationFraction)));
 
-  const trainX = dataset.x.slice(0, splitIndex);
-  const trainY = dataset.y.slice(0, splitIndex);
+  /*
+   * Purge the boundary.
+   *
+   * A chronological split makes the validation set out-of-time in its *features*.
+   * It does not, on its own, make it out-of-time in its *outcomes*: a training
+   * sample taken five sessions before the boundary is labelled by a close that
+   * falls after it, so the model is fitted on information from inside the window
+   * it is then scored on. That is López de Prado's purging problem, and it
+   * inflates the out-of-sample figure — the one number on the model card that is
+   * supposed to be the honest one.
+   *
+   * Every training sample whose label was observed at or after the first
+   * validation instant is dropped. There is no embargo on the other side: the
+   * validation samples are scored, never fitted, so a validation feature window
+   * that overlaps training data costs nothing.
+   */
+  const firstValidationInstant = dataset.meta[splitIndex]?.time ?? Number.POSITIVE_INFINITY;
+  const trainIndices: number[] = [];
+  for (let i = 0; i < splitIndex; i += 1) {
+    const labelTime = dataset.meta[i]?.labelTime;
+    if (labelTime !== undefined && labelTime >= firstValidationInstant) continue;
+    trainIndices.push(i);
+  }
+  const purged = splitIndex - trainIndices.length;
+
+  const trainX = trainIndices.map((i) => dataset.x[i] as number[]);
+  const trainY = trainIndices.map((i) => dataset.y[i] as number);
   const validX = dataset.x.slice(splitIndex);
   const validY = dataset.y.slice(splitIndex);
 
-  report('gbdt', `training on ${trainX.length} samples, validating on ${validX.length}`);
+  report(
+    'gbdt',
+    `training on ${trainX.length} samples, validating on ${validX.length}` +
+      (purged > 0 ? ` (${purged} purged at the boundary)` : ''),
+  );
   const gbdt = trainGbdt(
     trainX,
     trainY,
@@ -401,13 +434,17 @@ export function trainModelBundle(dataset: TrainingDataset, options: TrainOptions
   const bg = buildShapBackground(backgroundSource, { kMin: 50, kMax: 100, random: rand });
 
   // ── Temporal agents ──────────────────────────────────────────────────────
-  const trainSamples: SequenceSample[] = dataset.sequences
-    .slice(0, splitIndex)
-    .map((sequence, i) => ({ sequence, target: dataset.y[i] as number }));
+  // Same purged index set as the tree model: an embargo applied to one component
+  // and not the other three would leave the ensemble's headline figure inflated
+  // by whichever component still saw across the boundary.
+  const trainSamples: SequenceSample[] = trainIndices.map((i) => ({
+    sequence: dataset.sequences[i] as number[][],
+    target: dataset.y[i] as number,
+  }));
   const validSamples: SequenceSample[] = dataset.sequences
     .slice(splitIndex)
     .map((sequence, i) => ({ sequence, target: dataset.y[splitIndex + i] as number }));
-  const trainReturns = dataset.forwardReturn.slice(0, splitIndex);
+  const trainReturns = trainIndices.map((i) => dataset.forwardReturn[i] as number);
 
   const sequenceLength = trainSamples[0]?.sequence.length ?? AGENT_SEQUENCE_LENGTH;
 

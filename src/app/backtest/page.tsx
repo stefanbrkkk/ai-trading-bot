@@ -278,7 +278,7 @@ export default function BacktestPage() {
               </Panel>
 
               {/* ── Equity and distribution ───────────────────────────── */}
-              <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+              <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
                 <Panel>
                   <PanelHeader
                     eyebrow="Equity"

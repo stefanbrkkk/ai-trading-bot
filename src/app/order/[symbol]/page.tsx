@@ -45,6 +45,7 @@ import {
   SELECT_CLASS,
   StatGrid,
   StatTile,
+  cx,
 } from '@/components/ui/primitives';
 import { ApiRequestError, clickProvenance, request, useApi, type MeResponse } from '@/lib/ui/api';
 import { duration, integer, money, price } from '@/lib/ui/format';
@@ -310,7 +311,19 @@ export default function OrderTicketPage() {
         </Notice>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+      {/*
+        The results column is reserved only once there is a result.
+        Reserved unconditionally, a 1024px viewport gave the ticket 384px and left
+        412px of the page blank next to it — every form control dropped from 451px
+        to 163px for a one-pixel viewport gain, before the user had done anything.
+        The aside appears when pre-flight produces something to put in it.
+      */}
+      <div
+        className={cx(
+          'grid grid-cols-1 gap-5',
+          preflight !== null ? 'xl:grid-cols-[minmax(0,1fr)_minmax(0,360px)]' : 'xl:grid-cols-1',
+        )}
+      >
         <div className="space-y-5">
           <Panel>
             <PanelHeader eyebrow="Parameters" title="You specify every field" />
@@ -588,10 +601,23 @@ export default function OrderTicketPage() {
                 full ladder belongs on the attribution page, where the book behind
                 the MLOFI feature actually is.
               */}
+              {/*
+                The caption used to say the notional was computed against the NBBO
+                when a priced order computes it against the user's own limit —
+                12 x 289.50 displayed as $3,474 beside "Reference NBBO at 288.90",
+                two figures that cannot both be right. It now names the price it
+                actually used, and states that the ceiling is tested against the
+                worse of that and the book.
+              */}
               <p className="text-[0.75rem] leading-relaxed text-parchment-faint">
-                Reference NBBO at {price(preflight.quote.last)}, spread{' '}
-                {price(preflight.quote.ask - preflight.quote.bid)}. The notional above is computed against this
-                reference and is what the fat-finger ceiling is tested against.
+                Notional priced at {price(preflight.notionalReferencePrice ?? preflight.quote.last)}
+                {preflight.notionalReferencePrice !== null &&
+                preflight.notionalReferencePrice !== preflight.quote.last
+                  ? ' (your limit)'
+                  : ' (last trade)'}
+                . NBBO {price(preflight.quote.bid)} / {price(preflight.quote.ask)}, spread{' '}
+                {price(preflight.quote.ask - preflight.quote.bid)}. The fat-finger ceiling is tested against the
+                worse of that price and the side of the book a marketable order would reach.
               </p>
             </Panel>
           ) : null}

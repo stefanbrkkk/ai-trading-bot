@@ -40,6 +40,7 @@ import {
 } from '@/lib/ui/format';
 import { Badge, EmptyState } from '@/components/ui/primitives';
 import { useChartWidth } from './useChartWidth';
+import { CHART_SHOWN, CHART_STILL, CHART_VIEWPORT } from './reveal';
 
 const BAR_H = 28;
 const AXIS_TEXT = 9;
@@ -211,8 +212,11 @@ export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width: wid
         </Badge>
       </div>
 
-      <svg
+      <motion.svg
         ref={chartRef}
+        initial={reduceMotion ? CHART_SHOWN : CHART_STILL}
+        whileInView={CHART_SHOWN}
+        viewport={CHART_VIEWPORT}
         viewBox={`0 0 ${width} ${height}`}
         width={width}
         height={height}
@@ -250,8 +254,10 @@ export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width: wid
                 height={BAR_H}
                 fill={segment.colour}
                 style={BAR_GROW_LEFT}
-                initial={reduceMotion || segment.w < MIN_ANIMATED_BAR_WIDTH ? false : { scaleX: 0 }}
-                animate={{ scaleX: 1 }}
+                variants={{
+                  [CHART_STILL]: { scaleX: segment.w < MIN_ANIMATED_BAR_WIDTH ? 1 : 0 },
+                  [CHART_SHOWN]: { scaleX: 1 },
+                }}
                 transition={
                   reduceMotion || segment.w < MIN_ANIMATED_BAR_WIDTH
                     ? { duration: 0 }
@@ -267,10 +273,10 @@ export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width: wid
                 height={BAR_H}
                 fill={BURGUNDY}
                 style={BAR_GROW_LEFT}
-                initial={
-                  reduceMotion || segment.overflow.w < MIN_ANIMATED_BAR_WIDTH ? false : { scaleX: 0 }
-                }
-                animate={{ scaleX: 1 }}
+                variants={{
+                  [CHART_STILL]: { scaleX: segment.overflow.w < MIN_ANIMATED_BAR_WIDTH ? 1 : 0 },
+                  [CHART_SHOWN]: { scaleX: 1 },
+                }}
                 transition={
                   reduceMotion || segment.overflow.w < MIN_ANIMATED_BAR_WIDTH
                     ? { duration: 0 }
@@ -337,7 +343,7 @@ export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width: wid
         <text x={f.x0} y={barY + BAR_H + 17} fontSize={AXIS_TEXT} fill={PARCHMENT_FAINT} className="tabular" aria-hidden>
           0
         </text>
-      </svg>
+      </motion.svg>
 
       {/* Per-stage legend. HTML, not SVG: it is a table of figures that has to wrap
           on a narrow viewport, and text in an SVG cannot. */}

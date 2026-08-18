@@ -358,7 +358,7 @@ export default function PortfolioPage() {
               <PanelHeader
                 eyebrow="Blotter"
                 title={`${integer(data.count)} order${data.count === 1 ? '' : 's'}`}
-                detail="Including rejections, with the control that stopped them."
+                detail="Routed orders and their risk decision. A refused order never becomes one — /control lists every rejection with the limit that stopped it.."
               />
             </div>
             <TableShell className="mt-4">

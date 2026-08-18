@@ -25,6 +25,7 @@ import { frame, linearScale, smoothPath, type ChartFrame, type Scale } from '@/l
 import { GOLD, OBSIDIAN_EDGE, PARCHMENT_DIM, PARCHMENT_FAINT, fractionAsPercent, integer, ratio } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
 import { useChartWidth } from './useChartWidth';
+import { CHART_SHOWN, CHART_STILL, CHART_VIEWPORT } from './reveal';
 
 const AXIS_TEXT = 9;
 /** 0.25 ticks on both axes, as specified. */
@@ -163,8 +164,11 @@ export function CalibrationPlot({ curve, brier, ece, width: widthFallback = 380,
         </span>
       </div>
 
-      <svg
+      <motion.svg
         ref={chartRef}
+        initial={reduceMotion ? CHART_SHOWN : CHART_STILL}
+        whileInView={CHART_SHOWN}
+        viewport={CHART_VIEWPORT}
         viewBox={`0 0 ${width} ${height}`}
         width={width}
         height={height}
@@ -261,8 +265,7 @@ export function CalibrationPlot({ curve, brier, ece, width: widthFallback = 380,
             stroke={GOLD}
             strokeWidth={1.25}
             strokeLinejoin="round"
-            initial={reduceMotion ? false : { pathLength: 0 }}
-            animate={{ pathLength: 1 }}
+            variants={{ [CHART_STILL]: { pathLength: 0 }, [CHART_SHOWN]: { pathLength: 1 } }}
             transition={{ duration: reduceMotion ? 0 : 0.9, ease: [0.16, 1, 0.3, 1] }}
             aria-hidden
           />
@@ -291,7 +294,7 @@ export function CalibrationPlot({ curve, brier, ece, width: widthFallback = 380,
             ) : null}
           </g>
         ) : null}
-      </svg>
+      </motion.svg>
 
       <p className="mt-2.5 text-[0.6875rem] leading-relaxed text-parchment-faint">
         Points <span className="text-parchment-dim">above</span> the diagonal mean the model is under-confident: the

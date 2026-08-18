@@ -27,6 +27,9 @@ export const TOOLTIP_WIDTH = 268;
 /** Distance from the anchor point to the nearest edge of the box. */
 const TOOLTIP_OFFSET = 12;
 
+/** Below this the box stops being readable, so it scrolls with the chart instead. */
+const MIN_TOOLTIP_WIDTH = 180;
+
 export interface DriverTooltipProps {
   /** Feature display name, already resolved server-side. */
   label: string;
@@ -41,6 +44,11 @@ export interface DriverTooltipProps {
   y: number;
   /** `right` flips the box to the left of the anchor, for near-edge drivers. */
   anchor?: 'left' | 'right';
+  /**
+   * Width of the chart the tooltip is drawn over. The box is clamped inside it,
+   * and narrowed when the host is narrower than the box.
+   */
+  hostWidth?: number;
   visible: boolean;
 }
 
@@ -52,6 +60,7 @@ export function DriverTooltip({
   x,
   y,
   anchor = 'left',
+  hostWidth = 0,
   visible,
 }: DriverTooltipProps) {
   const reduceMotion = useReducedMotion();
@@ -62,22 +71,43 @@ export function DriverTooltip({
   const top = Number.isFinite(y) ? y : 0;
   const pct = Number.isFinite(share) ? Math.max(0, Math.min(1, share)) : 0;
 
+  /*
+   * Clamped inside the host, and narrowed when the host is narrower than the box.
+   *
+   * The box was a fixed 268px positioned by its anchor alone. On a phone the
+   * chart's scrollport is 238–348px, so tapping any driver put 106–161px of the
+   * box off-screen — 40 to 60% of it — on the panel whose entire job is
+   * explaining the number above it. Clamping needs the host's width, which the
+   * pointer helpers already measure.
+   */
+  const room = hostWidth > 0 ? hostWidth : TOOLTIP_WIDTH + 2 * TOOLTIP_OFFSET;
+  const boxWidth = Math.max(MIN_TOOLTIP_WIDTH, Math.min(TOOLTIP_WIDTH, room - 2 * TOOLTIP_OFFSET));
+  const preferredLeft = anchor === 'right' ? left - TOOLTIP_OFFSET - boxWidth : left + TOOLTIP_OFFSET;
+  const maxLeft = Math.max(TOOLTIP_OFFSET, room - boxWidth - TOOLTIP_OFFSET);
+  const placedLeft = Math.max(TOOLTIP_OFFSET, Math.min(preferredLeft, maxLeft));
+
   return (
-    <div className="pointer-events-none absolute z-30" style={{ left, top }} aria-hidden>
-      <div
-        className={
-          anchor === 'right'
-            ? '-translate-x-full -translate-y-1/2'
-            : '-translate-y-1/2'
-        }
-        style={anchor === 'right' ? { paddingRight: TOOLTIP_OFFSET } : { paddingLeft: TOOLTIP_OFFSET }}
-      >
+    /*
+     * Moved with a transform, not with `left`/`top`.
+     *
+     * Offset properties are layout, so every pointer move re-laid out the box and
+     * Chrome counted each one as an unexpected shift: a 24-step hover sweep
+     * accumulated 0.171 of CLS, every entry attributed to this element, none of
+     * them flagged `hadRecentInput` because a mousemove does not set it. A
+     * transform runs on the compositor and emits nothing.
+     */
+    <div
+      className="pointer-events-none absolute left-0 top-0 z-30 will-change-transform"
+      style={{ transform: `translate3d(${placedLeft}px, ${top}px, 0)` }}
+      aria-hidden
+    >
+      <div className="-translate-y-1/2">
         <AnimatePresence>
           {visible ? (
             <motion.div
               role="tooltip"
               className="glass px-3.5 py-3"
-              style={{ width: TOOLTIP_WIDTH }}
+              style={{ width: boxWidth }}
               // Fade + rise, 160ms — long enough to read as physical, short
               // enough not to lag a pointer moving between adjacent bars.
               initial={reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 4 }}

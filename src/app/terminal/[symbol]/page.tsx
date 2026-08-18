@@ -29,7 +29,8 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState, type ComponentProps, type ReactNode } from 'react';
+import { motion } from 'framer-motion';
 import { useParams } from 'next/navigation';
 import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
 import {
@@ -45,6 +46,12 @@ import {
   ZOscillator,
 } from '@/components/charts';
 import type { SignalLevels } from '@/components/charts';
+import {
+  DriverHoverProvider,
+  HoverableRow,
+  useHoveredDriver,
+  useSetHoveredDriver,
+} from '@/components/charts/DriverHover';
 import type { AggregatedStream } from '@/lib/quant/decay';
 import {
   Badge,
@@ -265,6 +272,97 @@ const ARCHITECTURE_LABELS: Record<AgentInference['architecture'], string> = {
   tft: 'Temporal Fusion Transformer',
 };
 
+/*
+ * Three thin subscribers.
+ *
+ * Only a component can read a context, and reading it *here* rather than in the
+ * page is the whole point: a pointer move now re-renders one chart instead of
+ * the route. Each takes the props its chart takes minus the two the context
+ * supplies.
+ */
+type WithoutHover<T> = Omit<T, 'hoveredKey' | 'onHover'>;
+
+function HoveredShapWaterfall(props: WithoutHover<ComponentProps<typeof ShapWaterfall>>) {
+  return <ShapWaterfall {...props} hoveredKey={useHoveredDriver()} onHover={useSetHoveredDriver()} />;
+}
+
+function HoveredShapForcePlot(props: WithoutHover<ComponentProps<typeof ShapForcePlot>>) {
+  return <ShapForcePlot {...props} hoveredKey={useHoveredDriver()} onHover={useSetHoveredDriver()} />;
+}
+
+function HoveredFeatureBars(props: WithoutHover<ComponentProps<typeof FeatureBars>>) {
+  return <FeatureBars {...props} hoveredKey={useHoveredDriver()} onHover={useSetHoveredDriver()} />;
+}
+
+/**
+ * True once the browser has gone idle after first paint.
+ *
+ * The attribution toggle used to swap one chart for the other by unmounting.
+ * Mounting the force plot cold costs a 216–267 ms frame — a fresh SVG tree, a
+ * `ResizeObserver` measurement that forces a second render, and eleven Flubber
+ * path interpolators built from scratch — so the first press of "Force" dropped
+ * roughly sixteen frames on a control that should feel instant.
+ *
+ * Mounting both eagerly would move that cost onto the page load, which is the
+ * one moment it is least affordable. Mounting the second one at idle puts it
+ * where nothing is competing for the main thread: first paint is untouched, and
+ * by the time a pointer reaches the toggle the swap is a className change.
+ */
+function useIdleMount(): boolean {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    type IdleWindow = Window & {
+      requestIdleCallback?: (cb: () => void) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    const w = window as IdleWindow;
+    if (typeof w.requestIdleCallback === 'function') {
+      const handle = w.requestIdleCallback(() => setReady(true));
+      return () => w.cancelIdleCallback?.(handle);
+    }
+    // Safari has no requestIdleCallback; a timeout past the entrance animations
+    // is close enough, since the point is only "not during first paint".
+    const timer = window.setTimeout(() => setReady(true), 600);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return ready;
+}
+
+/**
+ * One of the two attribution views, held in the DOM whether or not it is shown.
+ *
+ * `h-0 overflow-hidden` rather than `hidden`: the chart measures itself off its
+ * own `getBoundingClientRect`, and a `display: none` subtree measures zero, so
+ * the pane would have to lay out from scratch on reveal — exactly the cost this
+ * is avoiding. Zero height keeps the width real and clips the drawing instead.
+ *
+ * `inert` is what makes it honest: both charts put `tabIndex={0}` on every
+ * driver, so a hidden-but-mounted pane would otherwise be eight invisible tab
+ * stops. `aria-hidden` alone does not stop focus.
+ */
+function AttributionPane({
+  active,
+  mounted,
+  children,
+}: {
+  active: boolean;
+  mounted: boolean;
+  children: ReactNode;
+}) {
+  if (!mounted) return null;
+  return (
+    <motion.div
+      className={active ? undefined : 'h-0 overflow-hidden'}
+      aria-hidden={!active}
+      inert={!active}
+      animate={{ opacity: active ? 1 : 0 }}
+      transition={{ duration: 0.18, ease: 'easeOut' }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
 export default function SymbolPage() {
   const params = useParams<{ symbol: string }>();
   const symbol = (params.symbol ?? '').toUpperCase();
@@ -284,8 +382,8 @@ export default function SymbolPage() {
    * highlight is cross-referencing: a driver is only meaningful once you can see
    * its bar, its segment and its sentence at the same time.
    */
-  const [hovered, setHovered] = useState<string | null>(null);
   const [view, setView] = useState<'waterfall' | 'force'>('waterfall');
+  const idleReady = useIdleMount();
 
   return (
     <PageShell wide>
@@ -317,8 +415,16 @@ export default function SymbolPage() {
             state: c.state,
           }));
 
+          /*
+           * The hover state lives in this provider, not in the page.
+           *
+           * `children` below is an element this render already created, so a
+           * pointer move re-renders only the three charts and the one table row
+           * that read the context — not the nine charts, twelve-row table and
+           * four stat grids that used to re-render on every mousemove.
+           */
           return (
-            <>
+            <DriverHoverProvider>
               <PageHeader
                 eyebrow={`${data.assetIdentifier} · ${REGIME_LABELS[data.regime]}`}
                 title={`${data.assetIdentifier} attribution`}
@@ -454,26 +560,23 @@ export default function SymbolPage() {
                       }
                     />
                     <div className="scroll-x mt-4">
-                      {view === 'waterfall' ? (
-                        <ShapWaterfall
+                      <AttributionPane active={view === 'waterfall'} mounted={idleReady || view === 'waterfall'}>
+                        <HoveredShapWaterfall
                           baseValue={data.waterfall.baseValue}
                           finalValue={data.waterfall.finalValue}
                           baseProbability={data.waterfall.baseProbability}
                           finalProbability={data.waterfall.finalProbability}
                           steps={steps}
-                          hoveredKey={hovered}
-                          onHover={setHovered}
                         />
-                      ) : (
-                        <ShapForcePlot
+                      </AttributionPane>
+                      <AttributionPane active={view === 'force'} mounted={idleReady || view === 'force'}>
+                        <HoveredShapForcePlot
                           baseValue={data.waterfall.baseValue}
                           baseProbability={data.waterfall.baseProbability}
                           finalProbability={data.waterfall.finalProbability}
                           contributions={forceContributions}
-                          hoveredKey={hovered}
-                          onHover={setHovered}
                         />
-                      )}
+                      </AttributionPane>
                     </div>
                     <Divider className="my-4" />
                     <StatGrid columns={3}>
@@ -532,12 +635,7 @@ export default function SymbolPage() {
                       </thead>
                       <tbody>
                         {contributions.map((c) => (
-                          <tr
-                            key={c.featureId}
-                            onMouseEnter={() => setHovered(c.featureId)}
-                            onMouseLeave={() => setHovered(null)}
-                            className={hovered === c.featureId ? 'bg-obsidian-light/60' : undefined}
-                          >
+                          <HoverableRow key={c.featureId} featureKey={c.featureId}>
                             <Td>
                               <span className="text-parchment">{c.featureDisplayName}</span>
                               <span className="ml-2 font-mono text-2xs text-parchment-faint">
@@ -559,7 +657,7 @@ export default function SymbolPage() {
                             <Td>
                               <span className="text-parchment-dim">{c.semanticTranslation}</span>
                             </Td>
-                          </tr>
+                          </HoverableRow>
                         ))}
                       </tbody>
                     </TableShell>
@@ -662,7 +760,11 @@ export default function SymbolPage() {
               </div>
 
               {/* ── Strategies, statistics and latency ─────────────────── */}
-              <div className="mt-5 grid gap-5 lg:grid-cols-3">
+              {/* Two-up at lg, three-up only once there is room for three 320px charts.
+                  At lg the content area is 764px, so three panels were 241px and every
+                  chart inside downscaled to 62% — 8px axis labels beside 12px ones
+                  elsewhere on the same page. */}
+              <div className="mt-5 grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
                 <Panel className="lg:col-span-2">
                   <PanelHeader
                     eyebrow="Strategy gates"
@@ -827,7 +929,7 @@ export default function SymbolPage() {
                   detail="Normalised to the cross-sectional ECDF, so a bar's length is the symbol's percentile against the universe rather than a raw magnitude."
                 />
                 <div className="scroll-x mt-4">
-                  <FeatureBars
+                  <HoveredFeatureBars
                     items={contributions.map((c) => ({
                       key: c.featureId,
                       label: c.featureDisplayName,
@@ -839,8 +941,6 @@ export default function SymbolPage() {
                       signed: true,
                       hint: c.semanticTranslation,
                     }))}
-                    hoveredKey={hovered}
-                    onHover={setHovered}
                   />
                 </div>
               </Panel>
@@ -849,7 +949,7 @@ export default function SymbolPage() {
                 Model {data.modelVersion} · attribution exact to {Math.abs(data.attributionResidual).toExponential(1)} ·
                 impersonal computation, not investment advice
               </p>
-            </>
+            </DriverHoverProvider>
           );
         }}
       </AsyncSlot>

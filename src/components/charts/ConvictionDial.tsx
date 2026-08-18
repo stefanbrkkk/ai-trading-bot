@@ -78,6 +78,8 @@ export function ConvictionDial({
     return () => controls.stop();
   }, [clamped, progress, reduceMotion]);
 
+  const tickRotation = useTransform(progress, (p) => `rotate(${p * 360} ${CENTRE} ${CENTRE})`);
+
   const displayed = useMotionValue(reduceMotion ? clamped : 0);
   const valueRef = useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
@@ -128,6 +130,13 @@ export function ConvictionDial({
     if (morph > 0) setEverMorphed(true);
   }, [morph]);
   const captionOpacity = useTransform(morphValue, [0, 0.35], [1, 0]);
+  /*
+   * Lifts the figure clear of the axis the ring unspools into. In px of the
+   * rendered box rather than a percentage, because the dial is drawn at 132px in
+   * a card and 220px on the symbol page and the axis is at the vertical centre of
+   * both.
+   */
+  const readoutLift = useTransform(morphValue, [0, 1], [0, -size * 0.22]);
 
   return (
     <div className="relative select-none" style={{ width: size, height: size }}>
@@ -168,26 +177,51 @@ export function ConvictionDial({
             />
           </>
         )}
-        {/* Terminal tick at the arc's head, so the exact stopping point reads. */}
+        {/*
+          Terminal tick at the arc's head, so the exact stopping point reads —
+          and it has to be at the arc's head *while it is drawing*, not at the
+          place the arc will eventually reach. Painted from the static final
+          angle it sat 170px around an empty track at the first frame and the two
+          only met after 1.1s, which reads as a bug rather than as a sweep.
+          Driving the rotation from the same motion value the arc's `pathLength`
+          uses makes the dot ride the head by construction.
+        */}
         <motion.circle
           cx={CENTRE}
           cy={CENTRE - CONVICTION_RADIUS}
           r={2.5}
           fill={GOLD_BRIGHT}
           style={{ opacity: captionOpacity }}
-          transform={`rotate(${(clamped / 100) * 360} ${CENTRE} ${CENTRE})`}
+          transform={tickRotation}
         />
       </svg>
 
+      {/*
+        The figure survives the morph; only the ring's caption fades.
+        Fading the whole readout left the panel headed "Composite score"
+        containing a 220px empty area and an unlabelled bar — the score erased
+        from the panel named after it. The number rises clear of the unspooled
+        axis instead, so both readings are available at once.
+      */}
       {!hideValue ? (
         <motion.div
           className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center"
-          style={{ opacity: captionOpacity }}
+          style={{ y: readoutLift }}
         >
-          <span className="display text-5xl leading-none text-gold" aria-hidden>
+          {/*
+            `tabular` because the figure is being rewritten sixty times a second.
+            With proportional digits the box moved 17px sideways and swung 35px
+            wide during a 600ms count-up — "1" measures 17px and "20" measures
+            52px — so the number visibly shuffled while it counted.
+          */}
+          <span className="tabular display text-5xl leading-none text-gold" aria-hidden>
             <span ref={valueRef}>{reduceMotion ? clamped.toFixed(0) : '0'}</span>
           </span>
-          {caption ? <span className="eyebrow mt-2.5">{caption}</span> : null}
+          {caption ? (
+            <motion.span className="eyebrow mt-2.5" style={{ opacity: captionOpacity }}>
+              {caption}
+            </motion.span>
+          ) : null}
         </motion.div>
       ) : null}
     </div>

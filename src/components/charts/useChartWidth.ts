@@ -33,8 +33,21 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-/** Narrowest width the charts are laid out for. Below this they scale down again. */
-export const MIN_CHART_WIDTH = 320;
+/**
+ * Narrowest width the charts are laid out for. Below this they scale down again.
+ *
+ * It was 320, and no phone ever reaches it: the chart host measures 238px inside
+ * a 320px viewport and 308px inside a 390px one, so `Math.max(320, measured)`
+ * pinned the viewBox above the host and the browser scaled the whole drawing
+ * down — 0.744 at 320px, which turns a declared 9px label into 6.7px. Every
+ * chart on every phone was rendering its axis text below the size it was
+ * designed at, on the page where the numbers are the product.
+ *
+ * At 240 the viewBox equals the host from 240px up, so the scale is exactly 1
+ * and a 9px label is 9px. `tests`/the chart-text sweep check that no label pair
+ * collides at the narrow end.
+ */
+export const MIN_CHART_WIDTH = 240;
 
 export function useChartWidth(fallback: number): {
   ref: React.RefObject<SVGSVGElement | null>;

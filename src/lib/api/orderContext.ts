@@ -14,12 +14,24 @@
 import { averageDailyVolume } from '@/lib/quant/indicators';
 import { resolveMarketProvider } from '@/lib/market/provider';
 import { requireSpec, symbolMeta } from '@/lib/market/universe';
-import { isMarketOpen } from '@/lib/market/calendar';
+import { isMarketOpen, sessionOpen } from '@/lib/market/calendar';
 import { getBroker } from '@/lib/broker';
 import { ADV_LOOKBACK_DAYS, type RiskEvaluationContext, verifyIntentToken } from '@/lib/risk';
-import { countOrdersSince, killSwitchState, listOrders } from '@/lib/db';
+import {
+  acceptedNotionalUsdSince,
+  idempotencyKeySeen,
+  killSwitchState,
+  listOrders,
+  recordIdempotencyKey,
+} from '@/lib/db';
 import { entitlement } from '@/lib/auth/session';
 import type { AccountSnapshot, ClickProvenance, OrderIntent, Quote, User } from '@/lib/domain/types';
+
+/**
+ * How far back a key is remembered. A day is longer than any legitimate retry
+ * window and short enough that the table stays small.
+ */
+const IDEMPOTENCY_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 export interface OrderContextInput {
   user: User;
@@ -113,8 +125,42 @@ export async function buildOrderContext(input: OrderContextInput): Promise<Order
     status: 'submitted',
   }).length;
 
-  const startOfDay = now - (now % 86_400_000);
-  void countOrdersSince(input.user.id, startOfDay);
+  /*
+   * The trading day, not the UTC day.
+   *
+   * The ceiling is published as an aggregate "for the session", and the session
+   * is a New York one — a UTC midnight boundary would reset a user's allowance
+   * at 20:00 ET, four hours into the after-hours window and eight hours before
+   * the next open.
+   */
+  const sessionStart = sessionOpen(now);
+
+  /*
+   * Both ports are backed by the orders ledger, which is the only record that
+   * survives a restart. In-memory implementations exist for the unit tests; a
+   * process that restarts mid-session must not hand every user a fresh $500,000.
+   *
+   * `add` and `record` are deliberately no-ops on the preview path: opening a
+   * ticket must not consume a user's allowance or burn their key. The routing
+   * endpoint persists the order itself, which is what both ports read, so
+   * neither needs a write here either — but the port contract has them, and a
+   * silent no-op would be worse than an explicit one.
+   */
+  const dailyNotional = {
+    usedUsd: (userId: string, atMs: number): number =>
+      acceptedNotionalUsdSince(userId, sessionOpen(atMs)),
+    add: (): void => {
+      // The order row is the running total; there is nothing separate to add to.
+    },
+  };
+
+  const idempotency = {
+    seen: (key: string): boolean => idempotencyKeySeen(key, sessionStart - IDEMPOTENCY_LOOKBACK_MS),
+    record: (key: string, atMs: number): void => {
+      if (!input.commit) return;
+      recordIdempotencyKey(key, input.user.id, atMs, null);
+    },
+  };
 
   const context: RiskEvaluationContext = {
     userId: input.user.id,
@@ -128,6 +174,8 @@ export async function buildOrderContext(input: OrderContextInput): Promise<Order
     marketOpen: isMarketOpen(now),
     openOrderCount,
     idempotencyKey: input.idempotencyKey,
+    dailyNotional,
+    idempotency,
     quote,
     account,
     requestingSpiffeId: 'spiffe://aurelius.local/ns/platform/sa/api-gateway',

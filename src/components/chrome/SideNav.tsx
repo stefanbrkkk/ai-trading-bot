@@ -63,7 +63,7 @@ export function SideNav() {
   return (
     <nav
       aria-label="Primary"
-      className="shrink-0 border-b border-obsidian-edge bg-vanta-deep lg:w-[196px] lg:border-b-0 lg:border-r"
+      className="shrink-0 border-b border-obsidian-edge bg-vanta-deep xl:w-[196px] xl:border-b-0 xl:border-r"
     >
       {/*
         Below `lg` this is a horizontal strip that shows about four of the ten
@@ -73,12 +73,12 @@ export function SideNav() {
       */}
       <div
         data-scroll-x
-        className="flex gap-6 overflow-x-auto px-4 py-3 lg:flex-col lg:gap-5 lg:overflow-visible lg:px-4 lg:py-6"
+        className="flex gap-6 overflow-x-auto px-4 py-3 xl:flex-col xl:gap-5 xl:overflow-visible xl:px-4 xl:py-6"
       >
         {GROUPS.map((group) => (
           <div key={group.label} className="shrink-0">
-            <p className="eyebrow mb-2 hidden lg:block">{group.label}</p>
-            <ul className="flex gap-1 lg:flex-col">
+            <p className="eyebrow mb-2 hidden xl:block">{group.label}</p>
+            <ul className="flex gap-1 xl:flex-col">
               {group.items.map((item) => {
                 const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
                 return (

@@ -49,6 +49,7 @@ import {
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
 import { useChartWidth } from './useChartWidth';
+import { CHART_SHOWN, CHART_STILL, CHART_VIEWPORT } from './reveal';
 
 /** Mandated 70 / 30 split between the equity and drawdown panels. */
 const EQUITY_SHARE = 0.7;
@@ -353,8 +354,11 @@ export function EquityCurve({
         </span>
       </div>
 
-      <svg
+      <motion.svg
         ref={chartRef}
+        initial={reduceMotion ? CHART_SHOWN : CHART_STILL}
+        whileInView={CHART_SHOWN}
+        viewport={CHART_VIEWPORT}
         viewBox={`0 0 ${width} ${height}`}
         width={width}
         height={height}
@@ -421,8 +425,7 @@ export function EquityCurve({
             strokeWidth={1.5}
             strokeLinejoin="round"
             strokeLinecap="round"
-            initial={reduceMotion ? false : { pathLength: 0 }}
-            animate={{ pathLength: 1 }}
+            variants={{ [CHART_STILL]: { pathLength: 0 }, [CHART_SHOWN]: { pathLength: 1 } }}
             transition={{ duration: reduceMotion ? 0 : 1.1, ease: [0.16, 1, 0.3, 1] }}
             aria-hidden
           />
@@ -529,7 +532,7 @@ export function EquityCurve({
             </text>
           ))}
         </g>
-      </svg>
+      </motion.svg>
     </div>
   );
 }

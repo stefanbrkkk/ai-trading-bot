@@ -188,7 +188,9 @@ export default function TerminalPage() {
               {data.notice}
             </Notice>
 
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 xl:grid-cols-3">
+            <div /* Three-up at 2xl rather than xl: at 1280 the cards fell to 327px and six of
+           twenty data rows broke onto two lines. */
+        className="grid grid-cols-1 gap-5 lg:grid-cols-2 2xl:grid-cols-3">
               {data.items.map((item) => (
                 <PublicationCard key={item.signalId} item={item} />
               ))}

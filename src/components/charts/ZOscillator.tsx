@@ -26,6 +26,7 @@
 import { useMemo } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { useChartWidth } from './useChartWidth';
+import { CHART_SHOWN, CHART_STILL, CHART_VIEWPORT } from './reveal';
 import {
   Z_AXIS_LIMIT,
   Z_ENTRY_THRESHOLD,
@@ -227,8 +228,11 @@ export function ZOscillator({
   const captions = captionSource.map((c, i) => ({ ...c, y: captionYs[i] as number }));
 
   return (
-    <svg
+    <motion.svg
       ref={chartRef}
+      initial={reduceMotion ? CHART_SHOWN : CHART_STILL}
+      whileInView={CHART_SHOWN}
+      viewport={CHART_VIEWPORT}
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="xMidYMid meet"
       className="h-auto w-full"
@@ -323,16 +327,14 @@ export function ZOscillator({
         strokeWidth={1.25}
         strokeLinecap="round"
         strokeLinejoin="round"
-        initial={reduceMotion ? false : { pathLength: 0 }}
-        animate={{ pathLength: 1 }}
+        variants={{ [CHART_STILL]: { pathLength: 0 }, [CHART_SHOWN]: { pathLength: 1 } }}
         transition={{ duration: reduceMotion ? 0 : 0.9, ease: [0.16, 1, 0.3, 1] }}
       />
 
       {/* ── 5. Terminal print — the only number this chart states outright. ── */}
       {last ? (
         <motion.g
-          initial={reduceMotion ? false : { opacity: 0 }}
-          animate={{ opacity: 1 }}
+          variants={{ [CHART_STILL]: { opacity: 0 }, [CHART_SHOWN]: { opacity: 1 } }}
           transition={{ duration: reduceMotion ? 0 : 0.35, delay: reduceMotion ? 0 : 0.85 }}
         >
           <circle cx={last.x} cy={last.y} r={2.75} fill={GOLD_BRIGHT} />
@@ -362,6 +364,6 @@ export function ZOscillator({
           {nyDate(lastTime)}
         </text>
       </g>
-    </svg>
+    </motion.svg>
   );
 }

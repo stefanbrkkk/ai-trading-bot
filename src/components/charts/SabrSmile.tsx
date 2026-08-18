@@ -56,6 +56,7 @@ import {
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
 import { useChartWidth } from './useChartWidth';
+import { CHART_SHOWN, CHART_STILL, CHART_VIEWPORT } from './reveal';
 
 const AXIS_TEXT = 9;
 const GRID_TICKS = 4;
@@ -303,8 +304,11 @@ export function SabrSmile({
         ) : null}
       </div>
 
-      <svg
+      <motion.svg
         ref={chartRef}
+        initial={reduceMotion ? CHART_SHOWN : CHART_STILL}
+        whileInView={CHART_SHOWN}
+        viewport={CHART_VIEWPORT}
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="xMidYMid meet"
         className="h-auto w-full"
@@ -376,8 +380,7 @@ export function SabrSmile({
             d={areaD}
             fill={`url(#${gradientId})`}
             stroke="none"
-            initial={reduceMotion ? false : { opacity: 0 }}
-            animate={{ opacity: 1 }}
+            variants={{ [CHART_STILL]: { opacity: 0 }, [CHART_SHOWN]: { opacity: 1 } }}
             transition={{ duration: reduceMotion ? 0 : 0.6, ease: [0.16, 1, 0.3, 1] }}
             aria-hidden
           />
@@ -426,16 +429,14 @@ export function SabrSmile({
             stroke={GOLD}
             strokeWidth={1.5}
             strokeLinecap="round"
-            initial={reduceMotion ? false : { pathLength: 0 }}
-            animate={{ pathLength: 1 }}
+            variants={{ [CHART_STILL]: { pathLength: 0 }, [CHART_SHOWN]: { pathLength: 1 } }}
             transition={{ duration: reduceMotion ? 0 : 0.9, ease: [0.16, 1, 0.3, 1] }}
           />
         ) : null}
 
         {/* ── 5. Market quotes, as ticks so residuals stay legible ─────────── */}
         <motion.g
-          initial={reduceMotion ? false : { opacity: 0 }}
-          animate={{ opacity: 1 }}
+          variants={{ [CHART_STILL]: { opacity: 0 }, [CHART_SHOWN]: { opacity: 1 } }}
           transition={{ duration: reduceMotion ? 0 : 0.4, delay: reduceMotion ? 0 : 0.5 }}
         >
           {quotes.map((quote, index) => (
@@ -531,7 +532,7 @@ export function SabrSmile({
             log k
           </text>
         </g>
-      </svg>
+      </motion.svg>
     </div>
   );
 }

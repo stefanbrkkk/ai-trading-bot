@@ -261,7 +261,7 @@ export default function ScreenerPage() {
               <TableShell>
                 <thead>
                   <tr>
-                    <Th>Symbol</Th>
+                    <Th className="sticky left-0 z-20 bg-charcoal">Symbol</Th>
                     <Th>Sector</Th>
                     <Th align="right">Price</Th>
                     <Th align="right">Change</Th>
@@ -282,7 +282,16 @@ export default function ScreenerPage() {
                 <tbody>
                   {data.rows.map((row) => (
                     <tr key={row.symbol} className="hover:bg-obsidian-light/50">
-                      <Td>
+                      {/*
+                        The ticker column is pinned.
+
+                        The table is 1188px inside a 348px scrollport on a phone —
+                        four of sixteen columns fit — and nothing was pinned, so
+                        scrolling right to read RSI or MLOFI left ten rows of
+                        anonymous numbers with no way to tell which name each
+                        belonged to. The symbol travels with the scroll now.
+                      */}
+                      <Td className="sticky left-0 z-10 bg-vanta">
                         {/* A ticker is one to four characters — "V" paints 8x17 —
                             and it is the only way from this table to a symbol.
                             `tap-target` makes it a 44x44 hit region; the rows are

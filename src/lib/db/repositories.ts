@@ -2102,6 +2102,53 @@ export function listOpenOrders(userId?: string): Order[] {
   return hydrateOrders(rows);
 }
 
+/**
+ * Notional this user has already had accepted during the session containing
+ * `since`, in USD.
+ *
+ * Feeds Control 1's aggregate daily ceiling, which was published at $500,000 and
+ * enforced at nothing: no `DailyNotionalPort` was wired, so `usedToday`
+ * defaulted to 0 on every request and the check compared one order against the
+ * ceiling instead of the day's running total. Eight sequential $93,500 orders
+ * routed to $748,000 in a single session, each one recording
+ * `{"passed":true,"observed":93500}` in the ledger.
+ *
+ * A rejected order never reached a venue, so it does not consume the allowance;
+ * everything else does, including one the broker refused, because the platform's
+ * ceiling is on what it *transmits*.
+ */
+export function acceptedNotionalUsdSince(userId: string, since: number): number {
+  const row = stmt(
+    `SELECT COALESCE(SUM(notional_cents), 0) AS cents
+       FROM orders
+      WHERE user_id = ? AND created_at >= ? AND status <> 'rejected_risk'`,
+  ).get(userId, since);
+  return row === undefined ? 0 : num(row, 'cents') / 100;
+}
+
+/** True when this idempotency key has already been accepted for this user. */
+export function idempotencyKeySeen(key: string, since = 0): boolean {
+  const row = stmt('SELECT 1 AS hit FROM idempotency_keys WHERE key = ? AND accepted_at >= ?').get(
+    key,
+    since,
+  );
+  return row !== undefined;
+}
+
+/** Remembers an accepted key. Idempotent: a replay records nothing new. */
+export function recordIdempotencyKey(
+  key: string,
+  userId: string,
+  acceptedAt: number,
+  orderId: string | null = null,
+): void {
+  stmt(
+    `INSERT INTO idempotency_keys (key, user_id, accepted_at, order_id)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT (key) DO NOTHING`,
+  ).run(key, userId, acceptedAt, orderId);
+}
+
 /** Feeds the 5-messages-per-second-per-user throttle. */
 export function countOrdersSince(userId: string, since: number): number {
   const row = stmt('SELECT COUNT(*) AS n FROM orders WHERE user_id = ? AND created_at >= ?').get(

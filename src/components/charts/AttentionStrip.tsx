@@ -38,6 +38,7 @@ import {
 import { EmptyState } from '@/components/ui/primitives';
 import { FeatureBars, type FeatureBarItem } from '@/components/charts/FeatureBars';
 import { useChartWidth } from './useChartWidth';
+import { CHART_SHOWN, CHART_STILL, CHART_VIEWPORT } from './reveal';
 
 const AXIS_TEXT = 9;
 /** Server-render fallback; the rendered width is measured — see `useChartWidth`. */
@@ -166,8 +167,11 @@ export function AttentionStrip({
     <div className="space-y-4">
       {strip ? (
         <div>
-          <svg
+          <motion.svg
             ref={chartRef}
+            initial={reduceMotion ? CHART_SHOWN : CHART_STILL}
+            whileInView={CHART_SHOWN}
+            viewport={CHART_VIEWPORT}
             viewBox={`0 0 ${VIEW_WIDTH_LOCAL} ${strip.viewHeight}`}
             preserveAspectRatio="xMidYMid meet"
             className="h-auto w-full"
@@ -197,8 +201,7 @@ export function AttentionStrip({
                   width={cell.width}
                   height={strip.cellHeight}
                   fill={GOLD}
-                  initial={reduceMotion ? false : { opacity: 0 }}
-                  animate={{ opacity: cell.share }}
+                  variants={{ [CHART_STILL]: { opacity: 0 }, [CHART_SHOWN]: { opacity: cell.share } }}
                   transition={{
                     duration: reduceMotion ? 0 : 0.4,
                     ease: [0.16, 1, 0.3, 1],
@@ -254,7 +257,7 @@ export function AttentionStrip({
                 {`${truncate((strip.cells[strip.cells.length - 1] as Cell).label, LABEL_CHARS)} · newest`}
               </text>
             </g>
-          </svg>
+          </motion.svg>
 
           <p className="mt-1.5 text-[0.6875rem] leading-snug text-parchment-faint">
             Attention over {strip.cells.length} input timesteps — softmax weights, sum to 1. Cell opacity is weight ÷

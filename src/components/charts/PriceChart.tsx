@@ -52,6 +52,7 @@ import {
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
 import { useChartWidth } from './useChartWidth';
+import { CHART_SHOWN, CHART_STILL, CHART_VIEWPORT } from './reveal';
 
 /** Volume panel occupies 18% of the chart height. */
 const VOLUME_SHARE = 0.18;
@@ -514,8 +515,11 @@ export function PriceChart(props: PriceChartProps) {
         </div>
       ) : null}
 
-      <svg
+      <motion.svg
         ref={chartRef}
+        initial={reduceMotion ? CHART_SHOWN : CHART_STILL}
+        whileInView={CHART_SHOWN}
+        viewport={CHART_VIEWPORT}
         viewBox={`0 0 ${width} ${height}`}
         width={width}
         height={height}
@@ -565,8 +569,7 @@ export function PriceChart(props: PriceChartProps) {
             fill={GOLD}
             fillOpacity={0.07}
             stroke="none"
-            initial={reduceMotion ? false : { opacity: 0 }}
-            animate={{ opacity: 1 }}
+            variants={{ [CHART_STILL]: { opacity: 0 }, [CHART_SHOWN]: { opacity: 1 } }}
             transition={{ duration: reduceMotion ? 0 : 0.6, ease: [0.16, 1, 0.3, 1] }}
             aria-hidden
           />
@@ -578,8 +581,7 @@ export function PriceChart(props: PriceChartProps) {
             stroke={GOLD}
             strokeOpacity={0.35}
             strokeWidth={1}
-            initial={reduceMotion ? false : { pathLength: 0 }}
-            animate={{ pathLength: 1 }}
+            variants={{ [CHART_STILL]: { pathLength: 0 }, [CHART_SHOWN]: { pathLength: 1 } }}
             transition={{ duration: reduceMotion ? 0 : 0.9, ease: [0.16, 1, 0.3, 1] }}
             aria-hidden
           />
@@ -634,8 +636,7 @@ export function PriceChart(props: PriceChartProps) {
             stroke={PARCHMENT}
             strokeWidth={1.25}
             strokeLinejoin="round"
-            initial={reduceMotion ? false : { pathLength: 0 }}
-            animate={{ pathLength: 1 }}
+            variants={{ [CHART_STILL]: { pathLength: 0 }, [CHART_SHOWN]: { pathLength: 1 } }}
             transition={{ duration: reduceMotion ? 0 : 0.9, ease: [0.16, 1, 0.3, 1] }}
             aria-hidden
           />
@@ -810,7 +811,7 @@ export function PriceChart(props: PriceChartProps) {
           onBlur={() => setCursor(null)}
           onKeyDown={onKeyDown}
         />
-      </svg>
+      </motion.svg>
 
       {cursor && hoveredBar ? (
         <div

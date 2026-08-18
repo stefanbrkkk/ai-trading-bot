@@ -211,6 +211,36 @@ export function notionalReferencePrice(
 }
 
 /**
+ * The price the fat-finger ceiling is tested against.
+ *
+ * `notionalReferencePrice` answers "what did the user type", which is the right
+ * figure to *show* them. It is the wrong figure to size a ceiling with, because
+ * a marketable limit fills at the book, not at the limit. Measured: PG bid
+ * 288.87 / ask 288.93, sell collar floor 271.54, so SELL 368 @ limit 271.56 is
+ * inside the collar and marketable — priced at the limit it is $99,934 against a
+ * $100,000 ceiling and passes, and it filled at 288.73 for $106,253. A published
+ * ceiling that a legal order can exceed by 6.3% is a number, not a control.
+ *
+ * The ceiling therefore prices at the worse of the user's price and the
+ * aggressive side of the NBBO: a buy can pay up to the ask, a sell can hit down
+ * to the bid. When there is no quote it falls back to the user's own price,
+ * which is the only figure available.
+ */
+export function ceilingReferencePrice(
+  intent: Pick<OrderIntent, 'type' | 'side' | 'limitPrice' | 'stopPrice'>,
+  quote: Quote | null | undefined,
+): number | null {
+  const stated = notionalReferencePrice(intent, quote);
+  if (stated === null) return null;
+  if (intent.type === 'market') return stated;
+  const aggressive = intent.side === 'buy' ? quote?.ask : quote?.bid;
+  if (!finitePositive(aggressive)) return stated;
+  // Worse-for-the-user in both directions is simply the higher price: a buy
+  // paying the ask, a sell whose shares are worth the bid it hits.
+  return Math.max(stated, aggressive);
+}
+
+/**
  * Dollar value of the order.
  *
  * When the ticket carries both a share quantity and a typed notional the larger
@@ -659,20 +689,30 @@ export function evaluateOrder(
   }
 
   const notionalUsd = orderNotionalUsd(intent, referencePrice);
+  /*
+   * The ceiling is tested against the worst credible fill, not against the
+   * user's own price — see `ceilingReferencePrice`. `notionalUsd` remains the
+   * figure the ticket displays, so what the user is shown is still what they
+   * typed.
+   */
+  const ceilingNotionalUsd = orderNotionalUsd(
+    intent,
+    ceilingReferencePrice(intent, context.quote) ?? referencePrice,
+  );
   if (
     halted(
-      notionalUsd <= MAX_NOTIONAL_PER_ORDER_USD
+      ceilingNotionalUsd <= MAX_NOTIONAL_PER_ORDER_USD
         ? pass(
             'notional_ceiling_per_order',
             'Order notional is within the per-order ceiling.',
-            notionalUsd,
+            ceilingNotionalUsd,
             MAX_NOTIONAL_PER_ORDER_USD,
           )
         : deny(
             'FAT_FINGER_NOTIONAL',
             'notional_ceiling_per_order',
-            `Order notional of ${formatUsd(notionalUsd)} exceeds the per-order ceiling of ${formatUsd(MAX_NOTIONAL_PER_ORDER_USD)}.`,
-            notionalUsd,
+            `Order notional of ${formatUsd(ceilingNotionalUsd)} exceeds the per-order ceiling of ${formatUsd(MAX_NOTIONAL_PER_ORDER_USD)}.`,
+            ceilingNotionalUsd,
             MAX_NOTIONAL_PER_ORDER_USD,
           ),
     )
@@ -682,7 +722,7 @@ export function evaluateOrder(
 
   const usedToday =
     context.dayNotionalUsedUsd ?? context.dailyNotional?.usedUsd(context.userId, context.now) ?? 0;
-  const projectedToday = usedToday + notionalUsd;
+  const projectedToday = usedToday + ceilingNotionalUsd;
   if (
     halted(
       projectedToday <= MAX_NOTIONAL_PER_USER_PER_DAY_USD

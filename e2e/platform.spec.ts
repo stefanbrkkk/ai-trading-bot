@@ -436,7 +436,17 @@ test('an order routes end to end and appears in the blotter', async ({ page }) =
 
   await page.goto('/portfolio', { waitUntil: 'networkidle' });
   await expect(page.locator('body')).toContainText('AAPL');
-  await expect(page.locator('body')).toContainText(/filled/i);
+  /*
+   * Filled inside the session, resting outside it.
+   *
+   * The paper broker used to fill whatever it was given, at whatever the frozen
+   * overnight quote said, while the risk engine had already recorded "the order
+   * will rest until the next session". The blotter is asserted against the
+   * session the test is actually running in so that both halves of that
+   * behaviour stay covered whatever the hour.
+   */
+  const open = (await (await page.request.get('/api/health')).json()).marketOpen === true;
+  await expect(page.locator('body')).toContainText(open ? /filled/i : /submitted/i);
 
   expectClean(problems, 'order routing');
 });

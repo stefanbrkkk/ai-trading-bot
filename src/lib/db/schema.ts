@@ -24,7 +24,7 @@ import type { SqlDriver } from '@/lib/db/driver';
 import { FEATURE_DEFINITIONS } from '@/lib/engine/features';
 
 /** Bumped whenever the statement list below changes shape. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** Default SPIFFE identity for rows written outside an authenticated agent. */
 const UNATTRIBUTED_SPIFFE = 'spiffe://aurelius/unattributed';
@@ -818,6 +818,31 @@ const GOVERNANCE_TABLES: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits (window_start)`,
 
+  /*
+   * Accepted idempotency keys, so DUPLICATE_ORDER is a control rather than a
+   * label.
+   *
+   * The pre-flight panel prints "IDEMPOTENCY — No prior submission with this
+   * key", and it printed that for a key that had already routed: no port was
+   * wired, so the engine's check had nothing to consult and always passed. The
+   * duplicate was caught one layer further out by the paper broker's own
+   * client-order-id collision, as a 502 BROKER_ERROR — the right outcome by
+   * accident, from the wrong component, with the audit ledger recording that the
+   * platform's own control had found nothing.
+   *
+   * A separate table rather than a column on `orders`: `migrate()` replays
+   * `CREATE TABLE IF NOT EXISTS`, which adds a new table to an existing database
+   * and cannot add a column to one.
+   */
+  `CREATE TABLE IF NOT EXISTS idempotency_keys (
+    key         TEXT    PRIMARY KEY,
+    user_id     TEXT    NOT NULL,
+    accepted_at INTEGER NOT NULL,
+    order_id    TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_idempotency_user ON idempotency_keys (user_id, accepted_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_idempotency_accepted ON idempotency_keys (accepted_at DESC)`,
+
   `CREATE TABLE IF NOT EXISTS models (
     id                TEXT    PRIMARY KEY,
     version           TEXT    NOT NULL UNIQUE,
@@ -1085,6 +1110,7 @@ export const TABLE_NAMES: readonly string[] = [
   'admin_actions',
   'audit_events',
   'rate_limits',
+  'idempotency_keys',
   'models',
   'nn_weights',
 ];

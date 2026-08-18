@@ -137,20 +137,17 @@ export function StatTile({
     <div className={cx('min-w-0', className)} title={title}>
       {/*
         Wraps on a phone, truncates from `sm` up.
+
         Truncation keeps a row of tiles on one line where there is room for it,
         and `title` recovers the rest — on a pointer device. On a phone there is
         no hover and no room: at 375px "Local-accuracy residual" needed 170px in a
-        107px tile and rendered as "Local-accuracy resid…", unrecoverable. Two
-        lines is the better trade below `sm`; the grid stretches the row so the
-        figures stay aligned either way.
-      */}
-      {/*
+        107px tile and rendered as "Local-accuracy resid…", unrecoverable.
+
         Two lines are reserved below `sm` so a wrapped label does not push its own
-        figure below its neighbour's. The grid stretches every cell to the row's
+        figure below its neighbour's — the grid stretches every cell to the row's
         height, which keeps the tiles the same size but not their contents in the
-        same place; the longest label in the product is 23 characters and wraps to
-        two lines at 375px, never three. Above `sm` the label truncates to one line
-        and the reservation is released.
+        same place. The longest label in the product is 23 characters and wraps to
+        two lines at 375px, never three.
       */}
       <p className="eyebrow mb-1.5 min-h-[2em] leading-none sm:min-h-0 sm:truncate" title={label}>
         {label}
@@ -178,8 +175,11 @@ export function StatGrid({
     2: 'grid-cols-2',
     3: 'grid-cols-2 sm:grid-cols-3',
     4: 'grid-cols-2 sm:grid-cols-4',
-    5: 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5',
-    6: 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-6',
+    // Five and six across only from `xl`. At `lg` the content area is 764px, so
+    // six tiles shared 107px each and "In-sample accuracy" rendered as
+    // "IN-SAMPLE ACC…" on the model card's headline row.
+    5: 'grid-cols-2 sm:grid-cols-3 xl:grid-cols-5',
+    6: 'grid-cols-2 sm:grid-cols-3 xl:grid-cols-6',
   }[columns];
   return <div className={cx('grid gap-x-6 gap-y-5', cols, className)}>{children}</div>;
 }
@@ -451,8 +451,21 @@ export function TableShell({
      * is a smaller cost than losing three quarters of the rows, so the cap is gone
      * and `Th` no longer claims to stick.
      */
+    /*
+     * The floor is released below `sm`.
+     *
+     * 900px is right for a numeric grid on a laptop and wrong for a phone: at
+     * 320px the scrollport is 278px, so a prose column like /control's rationale
+     * cell began 97px to the *right* of the visible edge and reading one sentence
+     * took a 600px sideways swipe. Below `sm` the table lays out to the width it
+     * has and wraps; from `sm` up the floor returns and the region scrolls, with
+     * the edge fade and keyboard access `ScrollAffordance` gives it.
+     */
     <div className={cx('scroll-x', className)}>
-      <table className="w-full border-collapse text-[0.8125rem]" style={{ minWidth }}>
+      <table
+        className="w-full border-collapse text-[0.8125rem]"
+        style={{ ['--table-min-width' as string]: `${minWidth}px` }}
+      >
         {children}
       </table>
     </div>
@@ -687,8 +700,18 @@ export function Field({
   );
 }
 
+/*
+ * 16px on a phone, 13px from `sm` up.
+ *
+ * iOS Safari zooms the whole page when a control smaller than 16px takes focus,
+ * and the viewport meta deliberately does not set `maximum-scale` — suppressing
+ * the zoom that way also suppresses a user's own pinch, which is a worse trade.
+ * Every one of the nineteen text inputs and selects in the product measured
+ * 13px/37.5px, so every form on every phone jumped on the first tap. The height
+ * goes up with it: 44px is the touch floor, and a 37.5px control is under it.
+ */
 export const INPUT_CLASS =
-  'w-full border border-obsidian-edge bg-vanta-deep px-3 py-2 font-mono text-[0.8125rem] text-parchment placeholder:text-parchment-ghost';
+  'w-full border border-obsidian-edge bg-vanta-deep px-3 py-2.5 font-mono text-base text-parchment placeholder:text-parchment-ghost min-h-[44px] sm:min-h-0 sm:py-2 sm:text-[0.8125rem]';
 
 /**
  * `appearance: none` removes the native dropdown indicator, so `globals.css`

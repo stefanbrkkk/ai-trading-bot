@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { cx } from '@/components/ui/primitives';
+import { AccountMenu } from './AccountMenu';
 import { nyTime } from '@/lib/ui/format';
 
 /**
@@ -109,9 +110,12 @@ export function TopBar() {
             />
           </div>
 
-          <span className="tabular text-xs text-parchment-dim" suppressHydrationWarning>
+          <span className="tabular hidden text-xs text-parchment-dim sm:inline" suppressHydrationWarning>
             {health ? nyTime(health.now) : '—'}
           </span>
+
+          {/* Who is signed in, and the way out. There was no way out. */}
+          <AccountMenu />
         </div>
       </div>
     </header>

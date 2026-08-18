@@ -38,6 +38,7 @@ import {
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
 import { useChartWidth } from './useChartWidth';
+import { CHART_SHOWN, CHART_STILL, CHART_VIEWPORT } from './reveal';
 import {
   DriverTooltip,
   elementPoint,
@@ -316,8 +317,7 @@ export function ShapForcePlot({
                 fill={fill}
                 stroke={active ? stroke : 'none'}
                 strokeWidth={active ? 1.5 : 0}
-                initial={reduceMotion ? false : { opacity: 0 }}
-                animate={{ opacity: 0.85 }}
+                variants={{ [CHART_STILL]: { opacity: 0 }, [CHART_SHOWN]: { opacity: 0.85 } }}
                 transition={
                   reduceMotion ? { duration: 0 } : { duration: 0.4, delay: index * WATERFALL_STAGGER }
                 }
@@ -342,8 +342,7 @@ export function ShapForcePlot({
           strokeWidth={1}
           strokeOpacity={0.7}
           strokeLinejoin="round"
-          initial={reduceMotion ? { pathLength: 1 } : { pathLength: 0 }}
-          animate={{ pathLength: 1 }}
+          variants={{ [CHART_STILL]: { pathLength: 0 }, [CHART_SHOWN]: { pathLength: 1 } }}
           transition={{ duration: reduceMotion ? 0 : 0.9, ease: [0.16, 1, 0.3, 1] }}
           aria-hidden
         />
@@ -353,8 +352,11 @@ export function ShapForcePlot({
 
   return (
     <div ref={host} className="relative">
-      <svg
+      <motion.svg
         ref={chartRef}
+        initial={reduceMotion ? CHART_SHOWN : CHART_STILL}
+        whileInView={CHART_SHOWN}
+        viewport={CHART_VIEWPORT}
         viewBox={`0 0 ${viewWidth} ${VIEW_HEIGHT}`}
         preserveAspectRatio="xMidYMid meet"
         className="h-auto w-full"
@@ -427,7 +429,7 @@ export function ShapForcePlot({
         <text x={viewWidth - MARGIN_X} y={VIEW_HEIGHT - 4} textAnchor="end" fontSize={9} fill={PARCHMENT_FAINT}>
           supporting
         </text>
-      </svg>
+      </motion.svg>
 
       {shownTip ? (
         <DriverTooltip
@@ -438,6 +440,7 @@ export function ShapForcePlot({
           x={shownTip.point.x}
           y={shownTip.point.y}
           anchor={tooltipAnchor(shownTip.point.x, shownTip.point.hostWidth)}
+          hostWidth={shownTip.point.hostWidth}
           visible={tip !== null}
         />
       ) : null}

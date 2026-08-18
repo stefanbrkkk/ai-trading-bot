@@ -41,6 +41,7 @@ import {
 } from '@/lib/ui/format';
 import { EmptyState } from '@/components/ui/primitives';
 import { useChartWidth } from './useChartWidth';
+import { CHART_SHOWN, CHART_STILL, CHART_VIEWPORT } from './reveal';
 
 const AXIS_TEXT = 9;
 const Y_TICKS = 4;
@@ -275,8 +276,11 @@ export function ReturnDistribution({
 
   return (
     <div>
-      <svg
+      <motion.svg
         ref={chartRef}
+        initial={reduceMotion ? CHART_SHOWN : CHART_STILL}
+        whileInView={CHART_SHOWN}
+        viewport={CHART_VIEWPORT}
         viewBox={`0 0 ${width} ${height}`}
         width={width}
         height={height}
@@ -343,8 +347,10 @@ export function ReturnDistribution({
                 static value is the one that moves and the server-rendered position
                 is already correct.
               */
-              initial={reduceMotion ? false : { attrY: baseline, height: 0 }}
-              animate={{ attrY: bar.y, height: bar.h }}
+              variants={{
+                [CHART_STILL]: { attrY: baseline, height: 0 },
+                [CHART_SHOWN]: { attrY: bar.y, height: bar.h },
+              }}
               transition={{
                 duration: reduceMotion ? 0 : 0.45,
                 // Sweeping left to right reads as the distribution filling in
@@ -428,7 +434,7 @@ export function ReturnDistribution({
             );
           })}
         </g>
-      </svg>
+      </motion.svg>
 
       <p className="mt-2.5 text-[0.6875rem] leading-relaxed text-parchment-faint">
         {integer(binCount)} bins of {fractionAsPercent(binWidth, 2)} ({RULE_CAPTION[rule]}) over{' '}
