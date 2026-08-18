@@ -1,8 +1,8 @@
 /**
  * Ring buffer with sequence barriers — the in-process analogue of the LMAX
- * Disruptor mandated by MASTER §2.1 / Phase 1 §1 / Phase 3 §3.
+ * Disruptor the specification mandates.
  *
- * What the research specifies and why it cannot be transplanted literally:
+ * What it specifies and why it cannot be transplanted literally:
  *
  *   The mandate is a pre-allocated circular array, multi-producer claim via
  *   hardware Compare-And-Swap, and a Sequence Barrier that stops the execution
@@ -17,7 +17,13 @@
  *   • A pre-allocated, power-of-two ring buffer with entries constructed once
  *     and mutated in place — no per-event allocation, which is the actual
  *     performance property the Disruptor buys (mechanical sympathy, cache
- *     locality, zero GC pressure on the hot path).
+ *     locality, zero GC pressure on the hot path). Available rather than
+ *     delivered, and worth saying plainly: `RingBuffer` and
+ *     `BatchEventProcessor` below are not instantiated anywhere in the
+ *     platform. The request-scoped pipeline computes one symbol per call and
+ *     has no stream to run through them. `Sequence` and `SequenceBarrier` from
+ *     this same module *are* used, by the hierarchical state clock, which is
+ *     where the ordering guarantee below is actually enforced.
  *   • Monotonic sequence claiming with a gating sequence, so a producer can
  *     never lap a consumer that has not yet released a slot.
  *   • A real `SequenceBarrier`: the execution consumer's `waitFor` only returns
@@ -176,7 +182,7 @@ export class RingBuffer<T> {
  * Sequence barrier: `waitFor(sequence)` succeeds only once the ring buffer has
  * published that slot *and* every dependent sequence has passed it.
  *
- * This is the guarantee MASTER §2.1 asks for by name — the execution consumer
+ * This is the guarantee the specification asks for by name — the execution consumer
  * reads a unified state vector only after all three temporal agents publish.
  */
 export class SequenceBarrier {

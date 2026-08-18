@@ -92,7 +92,7 @@ export interface CatalogEntry extends Omit<FeatureCatalogEntry, 'group' | 'unit'
   /**
    * Phrases that must appear in a question before a derived entry may be
    * selected. Without this gate the ~640 derived entries would out-recall the
-   * ~80 base features on every question that merely names a feature.
+   * base features on every question that merely names a feature.
    */
   cues: string[];
   /** Concatenated retrieval text — label, aliases, description, group, key. */

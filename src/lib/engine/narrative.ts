@@ -1,8 +1,6 @@
 /**
  * The Human-Translation Engine.
  *
- * MASTER §4.2 / Phase 4 §1 / XAI research §Human-Translation Engine.
- *
  * This is a **deterministic algorithmic mapping layer, not a Large Language
  * Model**. The research is explicit about why, and it is quoted here because it
  * is a compliance constraint rather than a preference:
@@ -27,7 +25,16 @@
  * verbatim from the research. Every other feature falls through to a generic
  * composer that assembles the same grammatical shape from the feature registry's
  * own predicate/implication pair, so the tone stays "objective, analytical,
- * authoritative, and completely devoid of colloquialisms" across all 80 features.
+ * authoritative, and completely devoid of colloquialisms" across the whole
+ * feature registry.
+ *
+ * That last clause used to write the registry's size out as a literal, as did
+ * three other comments in the engine, and the registry had long since outgrown
+ * the number — one of those files even contradicted its own header eighty-eight
+ * lines further down, quoting two different widths for the same vector. A count
+ * written into prose is a number with no test on it, so none of these sentences
+ * names one any more: `MODEL_FEATURE_COUNT` is exported from the registry and is
+ * the only place it is allowed to live.
  */
 
 import {
@@ -93,7 +100,7 @@ export interface MatrixEntry {
  * The Institutional Mapping Matrix.
  *
  * Keyed `featureKey|impactDirection|featureState`. The six entries carrying
- * research-verbatim copy are marked; the rest of the 80-feature surface is
+ * research-verbatim copy are marked; the rest of the registry surface is
  * handled by `composeGenericNarrative`.
  */
 export const INSTITUTIONAL_MAPPING_MATRIX: Record<string, MatrixEntry> = {
@@ -181,6 +188,28 @@ export function indefiniteArticle(pct: number): string {
 }
 
 /**
+ * True when the model's attribution and the registry's own reading of a feature
+ * state point opposite ways.
+ *
+ * Two independent lines of evidence describe one driver. The SHAP value says
+ * which way this input moved the model's probability. `FeatureState.polarity`
+ * says which way that state normally leans, authored per band in the registry
+ * beside the predicate and the implication every sentence here is assembled
+ * from. They usually agree. When they do not, no sentence that takes its frame
+ * from one and its words from the other is true, and the composers below say so
+ * instead of picking a side.
+ *
+ * A neutral band leans neither way and therefore cannot be contested.
+ */
+export function attributionContestsState(state: FeatureState, pushesProbabilityUp: boolean): boolean {
+  if (state.polarity === 'neutral') return false;
+  return state.polarity !== (pushesProbabilityUp ? 'bullish' : 'bearish');
+}
+
+/** Inserted before the implication wherever the two lines of evidence disagree. */
+const CONTESTED_CLAUSE = 'against the way that state normally leans';
+
+/**
  * Generic composer for features without a verbatim matrix row.
  *
  * Shape for a supporting driver:
@@ -189,6 +218,22 @@ export function indefiniteArticle(pct: number): string {
  *
  * Shape for an opposing driver:
  *   "{predicate} ({label} at {value}) acts as a {pct}% headwind, {implication}."
+ *
+ * Either shape gains `CONTESTED_CLAUSE` when `attributionContestsState` holds.
+ * Without it the two halves of the sentence argued against each other: the frame
+ * comes from the SHAP sign and the predicate and implication come from the
+ * registry, so wherever those disagreed the engine published, in one breath,
+ * "3% of this bullish conviction is driven by a primary downtrend (EMA 50/200
+ * spread at −31.05%), a regime in which long setups have materially lower base
+ * rates" on BA, and the mirror image on MSFT's short, which credited net
+ * institutional *accumulation* with driving a bearish conviction. Measured over
+ * one published sweep: 107 of 374 polarised driver sentences, on 49 of the 54
+ * directional names, and 33 of 65 on the flat ones.
+ *
+ * The disagreement belongs to the model rather than to the prose — the tree
+ * ensemble is fitted, not authored, and it is allowed to weight an input against
+ * its usual sign — so it is named and both readings are kept, which is the same
+ * posture the counter-thesis takes towards the thesis.
  *
  * `supports` is signal-relative and must be computed by the caller, because a
  * raw SHAP sign does not answer the question on its own. This took `direction`
@@ -215,6 +260,16 @@ export function composeGenericNarrative(
 ): string {
   const pct = Math.round(contributionPercent);
   const formatted = formatFeatureValue(definition, value);
+  /*
+   * `supports` is signal-relative and inverts the raw SHAP sign on a short, so
+   * the raw sign is recovered here rather than passed in: the two are exact
+   * inverses of one another under the convention documented above, and a second
+   * parameter carrying the same bit is a second thing a caller can get wrong.
+   */
+  const pushesProbabilityUp = signalDirection === 'short' ? !supports : supports;
+  const contested = attributionContestsState(state, pushesProbabilityUp);
+  // ", implication." normally; " — implication." when the clause intervenes.
+  const tail = contested ? `, ${CONTESTED_CLAUSE} — ${state.implication}.` : `, ${state.implication}.`;
 
   /*
    * A flat signal has no stance to attribute anything to.
@@ -234,14 +289,14 @@ export function composeGenericNarrative(
     const opening = `${state.predicate} (${definition.label} at ${formatted})`;
     const capitalised = `${opening.charAt(0).toUpperCase()}${opening.slice(1)}`;
     return supports
-      ? `${capitalised} pushes the model's probability up by ${pct}% of total attribution, ${state.implication}.`
-      : `${capitalised} pushes it down by ${pct}% of total attribution, ${state.implication}.`;
+      ? `${capitalised} pushes the model's probability up by ${pct}% of total attribution${tail}`
+      : `${capitalised} pushes it down by ${pct}% of total attribution${tail}`;
   }
 
   const stance = signalDirection === 'long' ? 'bullish' : 'bearish';
 
   if (supports) {
-    return `${pct}% of this ${stance} conviction is driven by ${state.predicate} (${definition.label} at ${formatted}), ${state.implication}.`;
+    return `${pct}% of this ${stance} conviction is driven by ${state.predicate} (${definition.label} at ${formatted})${tail}`;
   }
   /*
    * Capitalise the sentence, not the article.
@@ -253,7 +308,7 @@ export function composeGenericNarrative(
    * beside eleven sentences that were capitalised correctly.
    */
   const opening = `${state.predicate} (${definition.label} at ${formatted})`;
-  return `${opening.charAt(0).toUpperCase()}${opening.slice(1)} acts as ${indefiniteArticle(pct)} ${pct}% headwind, ${state.implication}.`;
+  return `${opening.charAt(0).toUpperCase()}${opening.slice(1)} acts as ${indefiniteArticle(pct)} ${pct}% headwind${tail}`;
 }
 
 export interface TranslatedDriver extends SignalDriver {
@@ -374,12 +429,21 @@ export function translateExplanation(
      * institutional phrasing is not lost: the generic composer is built from the
      * same `state.predicate` and `state.implication` the matrix row draws on, so
      * the vocabulary is identical and only the framing changes.
+     *
+     * A contested state falls through for the same reason. A verbatim row is one
+     * fixed string and has nowhere to put the qualifying clause the generic
+     * composer adds, so it would assert the stance flatly. No row in the matrix
+     * is contested today — each is keyed on the SHAP direction its own state
+     * leans — but the matrix is copy, edited by hand, and this keeps a future
+     * row from re-opening the defect the composer was hardened against.
      */
-    const narrative =
-      // A flat signal has no stance, and every matrix row asserts one.
-      entry && supports && signalDirection !== 'flat'
-        ? hydrateTemplate(entry.template, contributionPercentage, c.value)
-        : composeGenericNarrative(definition, state, c.value, contributionPercentage, supports, signalDirection);
+    const contested = attributionContestsState(state, c.shap >= 0);
+    // A flat signal has no stance, and every matrix row asserts one.
+    const verbatim =
+      entry !== undefined && supports && !contested && signalDirection !== 'flat' ? entry : undefined;
+    const narrative = verbatim
+      ? hydrateTemplate(verbatim.template, contributionPercentage, c.value)
+      : composeGenericNarrative(definition, state, c.value, contributionPercentage, supports, signalDirection);
 
     return {
       featureKey: definition.key,
@@ -397,7 +461,7 @@ export function translateExplanation(
       domain: domainForFeature(definition.key, definition.group),
       semanticKey: entry?.semanticKey ?? `${definition.key}_${state.state.toLowerCase()}`,
       contributionPercentage,
-      fromMatrix: Boolean(entry) && supports && signalDirection !== 'flat',
+      fromMatrix: verbatim !== undefined,
     };
   });
 }
@@ -460,10 +524,35 @@ export function composeCounterThesis(
    * (2) at 10.0) acts as a 33% headwind, favouring a snap-back." Every noun in
    * that second sentence is already in the first. Only the implication was new,
    * so only the implication is carried.
+   *
+   * Carrying the implication carries the contest with it, and the same clause
+   * `composeGenericNarrative` uses is needed for the same reason. On a short,
+   * the strongest opposing driver is the one pushing the modelled probability
+   * up, and where the registry reads that state as bearish the sentence named it
+   * as the strongest argument *against* the thesis and then gave a reason that
+   * argues for it: MSFT published "The strongest opposing driver is a primary
+   * downtrend (EMA 50/200 spread at −16.42%), subtracting 3% of total
+   * attribution — a regime in which long setups have materially lower base
+   * rates." Nineteen of the forty-six directional counter-theses on one sweep.
+   * The driver table beside it now qualifies the same pairing, so leaving this
+   * one bare would put the qualification on one surface and not the other.
    */
-  return `The strongest opposing driver is ${describeDriver(strongest)}, subtracting ${Math.round(
-    strongest.contributionPercentage,
-  )}% of total attribution — ${strongest.implication}`;
+  const state = driverState(strongest);
+  const contested = state !== null && attributionContestsState(state, strongest.shap >= 0);
+  return (
+    `The strongest opposing driver is ${describeDriver(strongest)}, subtracting ${Math.round(
+      strongest.contributionPercentage,
+    )}% of total attribution` +
+    (contested ? `, ${CONTESTED_CLAUSE}` : '') +
+    ` — ${strongest.implication}`
+  );
+}
+
+/** The registry band this driver's raw value falls in, or null for an unmapped key. */
+function driverState(driver: TranslatedDriver): FeatureState | null {
+  const definition = featureDefinition(driver.featureKey);
+  if (!definition) return null;
+  return resolveState(definition, driver.value);
 }
 
 function describeDriver(driver: TranslatedDriver): string {

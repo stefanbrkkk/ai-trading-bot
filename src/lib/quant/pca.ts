@@ -2,7 +2,7 @@
  * Principal Component Analysis via the symmetric eigendecomposition of the
  * sample covariance (or correlation) matrix.
  *
- * MASTER §2.2: "Filter noise using Principal Component Analysis, extracting the
+ * The requirement, quoted: "Filter noise using Principal Component Analysis, extracting the
  * first principal component eigenvector to dictate microsecond execution."
  * Deep limit-order-book data is highly collinear; the first PC distils millions
  * of level updates into one orthogonal directional-intent signal.

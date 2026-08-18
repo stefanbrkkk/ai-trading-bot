@@ -27,6 +27,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
+import type { SignalDirection } from '@/lib/domain/types';
 import {
   BAR_GROW_LEFT,
   BAR_GROW_RIGHT,
@@ -73,6 +74,38 @@ export interface ShapWaterfallStep {
   featureKey?: string;
   /** Discretised state, surfaced in the tooltip as an audit label. */
   state?: string;
+  /**
+   * |φ| / Σ|φ| over the **whole** attribution, as the engine published it.
+   *
+   * Supplied by the caller rather than derived here, because this chart is
+   * handed the top eight drivers and one pooled remainder — it cannot see the
+   * seventy-odd contributions the remainder stands for, and so cannot compute
+   * their denominator. See `resolveShares` for what happens when it is absent.
+   */
+  share?: number;
+}
+
+/**
+ * Whether a contribution argues for the direction the platform published.
+ *
+ * `direction` on a contribution is the sign of φ — it pushes the model's
+ * probability up or down — and that is not the same question as "does this
+ * support the call". On a SHORT the published stance is that the probability
+ * goes down, so a negative φ is the *supporting* evidence and a positive one is
+ * the headwind. Reading the sign as the answer painted every short's supporting
+ * drivers burgundy, labelled them "opposing" to a screen reader, and put them on
+ * the opposite side of the force plot's anchor from the thesis that cited them.
+ *
+ * `narrative.ts` already resolves this the same way for the sentences, so the
+ * chart and the prose beside it now agree by construction rather than by
+ * coincidence. A flat signal has no published side to be relative to, so the raw
+ * sign is the honest reading and is what is used.
+ */
+export function supportsSignal(
+  direction: 'positive' | 'negative',
+  signalDirection: SignalDirection | undefined,
+): boolean {
+  return signalDirection === 'short' ? direction === 'negative' : direction === 'positive';
 }
 
 export interface ShapWaterfallProps {
@@ -88,6 +121,11 @@ export interface ShapWaterfallProps {
   /** Server-supplied probabilities. Omitted → derived via the logit link below. */
   baseProbability?: number;
   finalProbability?: number;
+  /**
+   * The side the platform published for this name. Decides which sign of φ is
+   * "supporting" — see `supportsSignal`. Omitted is read as `long`.
+   */
+  signalDirection?: SignalDirection;
 }
 
 const LABEL_COLUMN = 176;
@@ -123,6 +161,56 @@ function logistic(z: number): number {
   return Number.isFinite(z) ? 1 / (1 + Math.exp(-z)) : Number.NaN;
 }
 
+/**
+ * The share every row prints, from the shares the caller published.
+ *
+ * This used to be `|φ| / Σ|φ|` over the rows *actually drawn*, on the reasoning
+ * that a column should sum to 100% of what the reader can see. It cannot: the
+ * rows drawn are the top eight drivers plus one pooled remainder, and the
+ * remainder carries the NET sum of the tail (Σφ over 73 features, which cancels)
+ * rather than its magnitude (Σ|φ|, which does not). So the local denominator
+ * came out ~30% short of the real one and inflated every named row by a uniform
+ * factor — MSFT's sector relative strength printed 17% in this chart, 11.9% in
+ * the drivers table below it, 12% in the thesis above it and −12% in the feature
+ * bars beside it, all four labelled "of attribution", on one screen.
+ *
+ * The engine already publishes the right number; `/api/signals/[symbol]` says so
+ * in as many words ("One number, published once"). So the rule here is that a
+ * published share is authoritative and is printed verbatim.
+ *
+ * What is left over is divided among the rows the caller did not publish a share
+ * for, in proportion to |φ|. That is not a fudge — it is exactly right for the
+ * one row that needs it. A pooled "73 other drivers" row *is* everything outside
+ * the named set, so its share is `1 − Σ(named shares)` by construction, which is
+ * what a single unpublished row receives. And with nothing published at all the
+ * rule degenerates to the old `|φ| / Σ|φ|` over the drawn rows, so a caller that
+ * has no shares to give still gets a drawing rather than a column of zeros.
+ */
+export function resolveShares(steps: readonly ShapWaterfallStep[]): number[] {
+  const magnitude = steps.map((step) => (Number.isFinite(step.shap) ? Math.abs(step.shap) : 0));
+  // `Math.abs` because a caller may carry the share signed to match the bar's
+  // direction, as the force plot's contributions do.
+  const published = steps.map((step) => (Number.isFinite(step.share) ? Math.abs(step.share as number) : null));
+
+  let claimed = 0;
+  let unclaimedMagnitude = 0;
+  for (let i = 0; i < steps.length; i += 1) {
+    const share = published[i];
+    if (share === undefined || share === null) unclaimedMagnitude += magnitude[i] as number;
+    else claimed += share;
+  }
+  // Clamped at zero: a caller whose published shares already exceed one has
+  // nothing left to hand out, and a negative remainder would print as a
+  // negative percentage rather than as the caller's arithmetic error.
+  const remainder = Math.max(0, 1 - claimed);
+
+  return steps.map((_, i) => {
+    const share = published[i];
+    if (share !== undefined && share !== null) return share;
+    return unclaimedMagnitude > 0 ? (remainder * (magnitude[i] as number)) / unclaimedMagnitude : 0;
+  });
+}
+
 export function ShapWaterfall({
   baseValue,
   steps,
@@ -132,6 +220,7 @@ export function ShapWaterfall({
   width: widthFallback = 720,
   baseProbability,
   finalProbability,
+  signalDirection,
 }: ShapWaterfallProps) {
   const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
@@ -154,16 +243,26 @@ export function ShapWaterfall({
   const layout = useMemo(() => {
     const base = Number.isFinite(baseValue) ? baseValue : 0;
 
-    // Σ|φ| over the rows actually drawn, so the shares in the value column always
-    // sum to 100% of what the reader can see.
-    let totalAbs = 0;
-    for (const step of steps) if (Number.isFinite(step.shap)) totalAbs += Math.abs(step.shap);
+    // A non-finite contribution would propagate into a width/x attribute, so the
+    // filter happens before anything is measured — including the shares, which
+    // must not reserve any of the total for a row that is never drawn.
+    const drawn = steps.filter((step) => Number.isFinite(step.shap));
+    const shares = resolveShares(drawn);
+    /*
+     * Whether the value column can name its denominator.
+     *
+     * Only when the caller published at least one share, because that is what
+     * anchors the whole column to the engine's Σ|φ| — the rows left unpublished
+     * then divide the part of the total the published ones do not account for.
+     * With nothing published the column is the local fallback over the drawn
+     * rows, which is a different denominator, and heading it "% of Σ|φ|" would
+     * replace a silent wrong number with a labelled one.
+     */
+    const denominatorPublished = drawn.some((step) => Number.isFinite(step.share));
 
     const rows: Row[] = [];
     let running = base;
-    for (const step of steps) {
-      // A non-finite contribution would propagate into a width/x attribute.
-      if (!Number.isFinite(step.shap)) continue;
+    drawn.forEach((step, index) => {
       const start = running;
       const end = running + step.shap;
       running = end;
@@ -173,12 +272,12 @@ export function ShapWaterfall({
         narrative: step.narrative ?? '',
         state: step.state,
         direction: step.direction,
-        share: totalAbs > 0 ? Math.abs(step.shap) / totalAbs : 0,
+        share: shares[index] ?? 0,
         start,
         end,
         probability: step.cumulativeProbability,
       });
-    }
+    });
 
     const last = rows[rows.length - 1];
     const final = Number.isFinite(finalValue) ? finalValue : running;
@@ -213,6 +312,7 @@ export function ShapWaterfall({
 
     return {
       rows,
+      denominatorPublished,
       base,
       final,
       offset,
@@ -228,7 +328,7 @@ export function ShapWaterfall({
     };
   }, [baseValue, steps, finalValue, width, baseProbability, finalProbability]);
 
-  const { rows, offset, scale, viewWidth, viewHeight } = layout;
+  const { rows, denominatorPublished, offset, scale, viewWidth, viewHeight } = layout;
 
   if (rows.length === 0) {
     return (
@@ -304,6 +404,19 @@ export function ShapWaterfall({
           {basePct}
         </text>
 
+        {/* The value column's denominator, named rather than left to be guessed.
+            An unheaded percentage next to a table whose SHARE column is taken
+            over the whole attribution invites the reading that the two are
+            different quantities; they are the same one, and this says so.
+            `aria-hidden` because every row's own label already ends "percent of
+            attribution" — a screen reader does not need the header repeated once
+            per driver. */}
+        {denominatorPublished ? (
+          <text x={viewWidth - 6} y={27} textAnchor="end" fontSize={9} fill={PARCHMENT_FAINT} aria-hidden>
+            % of Σ|φ|
+          </text>
+        ) : null}
+
         {/* Outcome hairline. */}
         <line
           x1={xView(layout.final)}
@@ -344,7 +457,8 @@ export function ShapWaterfall({
           const dimmed = activeKey !== null && !active;
           const barWidth = Math.abs(row.end - row.start) * scale;
           const barX = Math.min(row.start, row.end) * scale;
-          const fill = row.direction === 'positive' ? SAGE : BURGUNDY;
+          const supports = supportsSignal(row.direction, signalDirection);
+          const fill = supports ? SAGE : BURGUNDY;
 
           return (
             <g
@@ -352,7 +466,7 @@ export function ShapWaterfall({
               role="button"
               tabIndex={0}
               aria-label={`${row.label}: ${integer(row.share * 100)} percent of attribution, ${
-                row.direction === 'positive' ? 'supporting' : 'opposing'
+                supports ? 'supporting' : 'opposing'
               }${row.narrative ? `. ${row.narrative}` : ''}`}
               className="cursor-default outline-none transition-opacity duration-150"
               opacity={dimmed ? 0.45 : 1}

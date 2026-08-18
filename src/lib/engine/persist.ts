@@ -10,20 +10,49 @@
  * reported as short did not appear in the screener's list at all. One platform
  * has to have one set of numbers.
  *
- * The write is idempotent per evaluation instant. That instant is the last
- * completed session close, so a server that restarts six times in a day writes
- * once, and the store keeps its append-only shape: a new vintage is added beside
- * the old one rather than replacing it, which is what makes "what did you believe
- * on the 14th" still answerable after this runs on the 17th.
+ * The sweep is written on every call, and the write is idempotent by content:
+ * `insertSignal` upserts on the deterministic signal id, `writeFeatureValues` on
+ * (symbol, as_of, feature_key) and `insertQuotes` on (symbol, ts), so re-running
+ * it at the same instant replaces each row with the identical row. The store
+ * keeps its append-only shape across instants — a new vintage is added beside
+ * the old one rather than replacing it, which is what makes "what did you
+ * believe on the 14th" still answerable after this runs on the 17th.
+ *
+ * It did not always. This function used to skip the write whenever the store
+ * already held a vintage at or after the evaluation instant:
+ *
+ *     if (stored !== null && stored >= asOf) return { written: false, … }
+ *
+ * The evaluation instant is the last completed session close — a function of the
+ * calendar, deliberately, so that every surface agrees on when it is evaluating.
+ * That makes the instant *stop moving* for a whole trading day, and the guard
+ * read "a vintage exists at this instant" as "the store is current", which is a
+ * different claim: the sweep's output also depends on the model and on the code.
+ * Change either, restart, and the equality branch fires and discards the new
+ * sweep forever, because no later boot can ever produce a larger instant on that
+ * day either. Measured on the shipped store: 59 of 67 conviction scores, 16 of
+ * 67 directions and all 67 prices disagreed between InvestGPT — which compiles
+ * against `v_equity_snapshot`, i.e. this table — and the screener beside it. SO
+ * answered flat/0/133.13 to the SQL surface and long/32.1/131.98 to every live
+ * one; `/api/signals/top5` led with SO while InvestGPT's own top row was SCHW at
+ * 41.8, a name the terminal scored 16.7.
+ *
+ * There is no cheap content probe that would have caught it. Probing one symbol
+ * is what the old guard did, and a change that moves some symbols and not others
+ * — the flat-levels repair in pipeline.ts is exactly one — leaves the probe
+ * symbol identical while the sweep behind it has moved. Reading all 67 back to
+ * compare costs about what writing them costs. So the guard is gone: this runs
+ * once per process at boot (`src/instrumentation.ts`), and paying for ~67 upserts
+ * there is the price of the store never disagreeing with the platform again.
  */
 
-import { insertQuotes, insertSignal, latestFeatureAsOf, upsertSymbols } from '@/lib/db';
+import { insertQuotes, insertSignal, upsertSymbols } from '@/lib/db';
 import { ALL_SYMBOLS, requireSpec, symbolMeta } from '@/lib/market/universe';
 import { resolveMarketProvider } from '@/lib/market/provider';
 import type { UniverseSnapshot } from './service';
 
 export interface PersistResult {
-  /** False when a vintage at or after this instant is already stored. */
+  /** False only when the snapshot carried no signals, so there was nothing to write. */
   written: boolean;
   asOf: number;
   signals: number;
@@ -32,13 +61,7 @@ export interface PersistResult {
 
 export async function persistUniverseSnapshot(snapshot: UniverseSnapshot): Promise<PersistResult> {
   const asOf = snapshot.computedAt;
-  const first = snapshot.signals[0];
-  if (first === undefined) return { written: false, asOf, signals: 0, quotes: 0 };
-
-  // One probe is enough: the sweep writes every symbol in the same pass, so the
-  // vintage is either present for all of them or for none.
-  const stored = latestFeatureAsOf(first.symbol);
-  if (stored !== null && stored >= asOf) return { written: false, asOf, signals: 0, quotes: 0 };
+  if (snapshot.signals.length === 0) return { written: false, asOf, signals: 0, quotes: 0 };
 
   /*
    * `v_equity_snapshot` inner-joins `symbols`, so a name with feature rows and no

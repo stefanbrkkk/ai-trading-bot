@@ -81,26 +81,58 @@ function curve(options: {
 const extra = { exposure: 0.5, turnover: 1.2, strategiesTried: 5 };
 
 describe('backtest metric invariants', () => {
-  it('never reports a downside deviation above the volatility', () => {
-    // Twelve seeded shapes, including ones with very few losing days — the
-    // regime where averaging over the subset alone diverges most.
+  /*
+   * The bound these two tests used to assert was not a theorem.
+   *
+   * They said downside deviation can never exceed volatility, and |Sortino| can
+   * never be below |Sharpe| — both on the reasoning that the downside branch
+   * sums over a subset of the same series. It sums over a subset, but it divides
+   * by the whole count, and it measures deviation from the target rather than
+   * from the mean. On a series with strong negative drift the second difference
+   * dominates: every return is below target, the "downside" sum is the full sum
+   * of squared shortfalls, and it can exceed the variance about the mean by the
+   * square of the mean itself.
+   *
+   * The relation that does hold, for a zero target and dividing by n, is the one
+   * `computeMetrics` states in its own docstring:
+   *
+   *     dd² = vol² + 252·μ² − 252·E[max(0, r)²]
+   *
+   * so the bound is dd² ≤ vol² + 252·μ², tight only when no day was positive.
+   * Since sharpe = 252·μ / vol, that is dd ≤ √(vol² + (sharpe·vol)² / 252), which
+   * is what is asserted here — over a drift list that now includes one strong
+   * enough to break the old claim outright.
+   */
+  it('bounds downside deviation by the volatility and the mean together', () => {
     for (const seed of ['a', 'b', 'c', 'd']) {
-      for (const drift of [-0.002, 0, 0.004]) {
+      for (const drift of [-0.006, -0.002, 0, 0.004]) {
         const m = computeMetrics([], curve({ bars: 300, drift, seed }), config(), extra);
+        const bound = Math.sqrt(m.volatility ** 2 + (m.sharpe * m.volatility) ** 2 / 252);
         expect(
           m.downsideDeviation,
-          `seed ${seed} drift ${drift}: downside ${m.downsideDeviation} > vol ${m.volatility}`,
-        ).toBeLessThanOrEqual(m.volatility + 1e-12);
+          `seed ${seed} drift ${drift}: downside ${m.downsideDeviation} exceeds bound ${bound}`,
+        ).toBeLessThanOrEqual(bound + 1e-9);
       }
     }
   });
 
-  it('never reports a Sortino smaller in magnitude than the Sharpe', () => {
+  it('covers the regime where downside deviation legitimately exceeds volatility', () => {
+    // The case the old inequality would have failed on. Kept as its own test so
+    // the fixture that disproves it cannot quietly be dropped from the list above.
+    const m = computeMetrics([], curve({ bars: 300, drift: -0.006, seed: 'a' }), config(), extra);
+    expect(m.downsideDeviation).toBeGreaterThan(m.volatility);
+  });
+
+  it('never reports a Sortino smaller in magnitude than the Sharpe, where the drift is not negative', () => {
+    // Restricted deliberately. With μ ≥ 0 the downside branch drops the winning
+    // days and the denominator can only shrink, so the ratio can only grow. With
+    // μ < 0 that reasoning does not apply — see the identity above — and the
+    // claim is simply false, which is why the negative drifts are gone from here
+    // rather than tolerated with a wider epsilon.
     for (const seed of ['e', 'f', 'g']) {
-      for (const drift of [-0.002, 0.001, 0.005]) {
+      for (const drift of [0, 0.001, 0.005]) {
         const m = computeMetrics([], curve({ bars: 300, drift, seed }), config(), extra);
         if (Math.abs(m.sharpe) < 1e-9 || Math.abs(m.sortino) < 1e-9) continue;
-        // Same numerator, a denominator that can only be smaller.
         expect(Math.abs(m.sortino), `seed ${seed} drift ${drift}`).toBeGreaterThanOrEqual(
           Math.abs(m.sharpe) - 1e-9,
         );

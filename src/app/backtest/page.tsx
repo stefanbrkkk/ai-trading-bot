@@ -24,6 +24,7 @@
 import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
 import { EquityCurve, MonthlyHeatmap, ReturnDistribution } from '@/components/charts';
 import { COMBINE_THRESHOLDS, PROFIT_FACTOR_NO_LOSSES } from '@/lib/engine/backtest';
+import { mean, quantile } from '@/lib/quant/stats';
 import {
   Badge,
   DataRow,
@@ -136,6 +137,38 @@ function survivalTone(value: number, threshold: number): 'sage' | 'burgundy' {
   return Number.isFinite(value) && value >= threshold ? 'sage' : 'burgundy';
 }
 
+/**
+ * The 5% tail of the series the histogram actually plots.
+ *
+ * `metrics.var95` and `metrics.cvar95` are quantiles of the **daily equity
+ * returns** — the correct measure for the equity curve, and the wrong annotation
+ * for a chart of per-trade returns, which is what the distribution panel draws.
+ * Passing them straight through drew the VaR95 line at −0.25% across a
+ * distribution whose own 5th percentile was −7.84%: 21 of 31 trades sat inside a
+ * region captioned "the 5% of observations beyond VaR95", and the three figures
+ * printed on the chart were mutually impossible — a mean of −0.52% cannot sit
+ * below a distribution with 95% of its mass at or above −0.25%.
+ *
+ * So the tail is measured on the array being plotted, using the same `quantile`
+ * (type 7) and `mean` primitives `engine/backtest` uses for the daily series, so
+ * the two agree whenever they are handed the same input. This is a client-side
+ * aggregation, which the platform otherwise avoids; it is here because the choice
+ * of *which* series to plot is made on this page, and an annotation computed from
+ * a different series than the bars beneath it is the defect being fixed.
+ *
+ * `null` below five observations rather than a zero. The engine's floor is the
+ * same — at four points or fewer the 5th percentile interpolates between the two
+ * worst trades and reports the sample size rather than the tail — but a zero
+ * reaching the chart would draw the threshold at break-even and shade every
+ * losing trade as the tail.
+ */
+function tailRisk(returns: number[]): { var95: number; cvar95: number } | null {
+  if (returns.length <= 4) return null;
+  const var95 = quantile(returns, 0.05);
+  const beyond = returns.filter((r) => r <= var95);
+  return { var95, cvar95: beyond.length > 0 ? mean(beyond) : var95 };
+}
+
 export default function BacktestPage() {
   const backtest = useApi<BacktestResponse>('/backtest/run');
 
@@ -161,6 +194,7 @@ export default function BacktestPage() {
             .map((t) => t.returnPercent ?? null)
             .filter((r): r is number => r !== null)
             .map((r) => r / 100);
+          const tradeTail = tailRisk(tradeReturns);
 
           return (
             <>
@@ -305,18 +339,30 @@ export default function BacktestPage() {
                   <PanelHeader
                     eyebrow="Trade returns"
                     title="Distribution"
-                    detail="Bin width by Freedman–Diaconis, so the shape is not an artefact of a chosen bin count."
+                    detail="Bin width by Freedman–Diaconis, so the shape is not an artefact of a chosen bin count. The VaR95 and CVaR95 lines are quantiles of these trade returns; the daily-equity tail is a different series and is listed separately below."
                   />
                   <div className="scroll-x mt-4">
                     <ReturnDistribution
                       returns={tradeReturns}
-                      {...(m.var95 === undefined ? {} : { var95: m.var95 })}
-                      {...(m.cvar95 === undefined ? {} : { cvar95: m.cvar95 })}
+                      {...(tradeTail === null ? {} : { var95: tradeTail.var95, cvar95: tradeTail.cvar95 })}
                     />
                   </div>
                   <Divider className="my-4" />
                   <dl className="space-y-0.5">
                     <DataRow label="Volatility (ann.)" value={fractionAsPercent(m.volatility)} />
+                    {/*
+                      The daily-equity tail, kept and labelled rather than dropped.
+                      This is what `metrics.var95`/`cvar95` measure, and it belongs
+                      beside the annualised volatility that shares its basis — not
+                      overlaid on the trade histogram above, where it described a
+                      series it was not computed from.
+                    */}
+                    {m.var95 === undefined ? null : (
+                      <DataRow label="VaR95 (daily equity)" value={signedFractionAsPercent(m.var95)} />
+                    )}
+                    {m.cvar95 === undefined ? null : (
+                      <DataRow label="CVaR95 (daily equity)" value={signedFractionAsPercent(m.cvar95)} />
+                    )}
                     <DataRow label="Calmar" value={ratio(m.calmar, 2)} />
                     <DataRow label="Average win" value={money(m.averageWin)} />
                     <DataRow label="Average loss" value={money(m.averageLoss)} />

@@ -1,12 +1,20 @@
 /**
  * CSR-RAG schema pruning.
  *
- * The problem it solves is quantitative. The catalog exposes ~720 queryable
- * surfaces across five relations; the full DDL for them runs to tens of thousands
- * of tokens. Injecting that into a model context is both expensive and
+ * The problem it solves is quantitative. The catalog exposes 829 queryable
+ * surfaces — `CATALOG.length`, the same number this file publishes as
+ * `report.totalColumns` and the terminal prints on the InvestGPT page — across
+ * four relations, `TABLES.length`. The full DDL for them runs to tens of
+ * thousands of tokens. Injecting that into a model context is both expensive and
  * counter-productive — recall of the *correct* column falls as the candidate set
  * grows, which is the finding the research reports and the reason schema
  * retrieval exists as a distinct stage rather than being folded into generation.
+ *
+ * The two figures are named to their constants because this paragraph had drifted
+ * to "~720 surfaces across five relations" while the code twenty lines below went
+ * on deriving 829 from `CATALOG.length` and shipping it to the page. A docstring
+ * that disagrees with the number on screen is not a small inaccuracy here: the
+ * pruning report exists so a reader can check how hard the schema was cut.
  *
  * Three stages, each with a specific job:
  *
@@ -91,8 +99,8 @@ interface Scored {
  * label-term match is strong. A description-term match is weak — descriptions
  * share vocabulary across the whole catalog, so scoring them highly would make
  * every entry look relevant. And a derived variant must clear an extra gate: its
- * cue phrases have to appear, because otherwise the ~640 derived entries
- * out-recall the ~80 base features on every question that merely names a feature.
+ * cue phrases have to appear, because otherwise the 712 derived entries
+ * out-recall the 117 base surfaces on every question that merely names a feature.
  */
 function scoreEntry(entry: CatalogEntry, question: string, terms: ReadonlySet<string>): Scored | null {
   const lower = question.toLowerCase();

@@ -7,8 +7,9 @@
 /*
  * Project Aurelius — "Old Money" design system.
  *
- * Palette, typography and depth treatment are mandated verbatim by
- * MASTER_AURELIUS_SPECIFICATION §4.1 and the XAI research's design section:
+ * Palette, typography and depth treatment are mandated verbatim by the
+ * specification this was built from, and the requirement is recorded here
+ * because the specification itself is not part of the delivered package:
  * Vanta Black grounds, deep-charcoal and obsidian surfaces, Metallic Gold
  * reserved for the conviction score and primary interaction, sage for positive
  * SHAP drivers and burgundy for negative. Saturated retail neon is banned;

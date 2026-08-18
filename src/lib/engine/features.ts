@@ -1029,15 +1029,33 @@ export const FEATURE_DEFINITIONS: FeatureDefinition[] = [
     group: 'microstructure',
     unit: 'probability',
     description: 'Volume-synchronised probability of informed trading.',
-    formula: 'mean over buckets of |buyVol − sellVol| / bucketVolume',
+    formula: 'mean over buckets of |buyVol − sellVol| / bucketVolume, buy share = Φ(Δp/σ)',
     sqlColumn: 'vpin',
     aliases: ['vpin', 'informed trading', 'toxicity', 'flow toxicity'],
     inModel: true,
     precision: 3,
+    /*
+     * Bands derived from the estimator's own null, not chosen by eye.
+     *
+     * VPIN does not read zero on flow that carries no information: a bucket of n
+     * equal-volume bars keeps an irreducible sampling imbalance, so the floor is
+     * a property of the bucket depth. At `compute.ts`'s six bars per bucket and
+     * ten buckets per window, 40 000 Monte-Carlo trials of balanced flow give
+     * mean 0.206, p95 0.288, and P(< 0.15) = 0.119, P(≥ 0.30) = 0.031.
+     *
+     * So 0.15 and 0.30 sit at roughly the 12th and 97th percentiles of *no
+     * information at all*: below 0.15 the tape is measurably more two-sided than
+     * a fair coin, above 0.30 it is one-sided beyond what sampling alone
+     * produces at this window length. That is what makes the bearish predicate
+     * below an earned claim. The previous 0.25/0.45 edges were inherited from an
+     * estimator whose null sat at 0.497 — above the toxic edge itself — which put
+     * 47 of the 67 published names in STATE_TOXIC_FLOW and none at all in
+     * STATE_BENIGN_FLOW; the same universe now splits 10 / 54 / 3.
+     */
     states: [
-      B('STATE_BENIGN_FLOW', -Infinity, 0.25, 'benign, two-sided order flow', 'so adverse selection risk is low', 'bullish'),
-      NEUTRAL('STATE_NORMAL_FLOW', 0.25, 0.45, 'ordinary flow toxicity'),
-      B('STATE_TOXIC_FLOW', 0.45, Infinity, 'toxic, one-sided order flow', 'the microstructural precursor to a liquidity-driven dislocation', 'bearish'),
+      B('STATE_BENIGN_FLOW', -Infinity, 0.15, 'benign, two-sided order flow', 'so adverse selection risk is low', 'bullish'),
+      NEUTRAL('STATE_NORMAL_FLOW', 0.15, 0.3, 'ordinary flow toxicity'),
+      B('STATE_TOXIC_FLOW', 0.3, Infinity, 'toxic, one-sided order flow', 'the microstructural precursor to a liquidity-driven dislocation', 'bearish'),
     ],
   },
   {
@@ -1673,11 +1691,35 @@ export const FEATURE_DEFINITIONS: FeatureDefinition[] = [
     group: 'regime',
     unit: 'signed_unit',
     description: 'Composite trend-versus-reversion score from Hurst, ADF and ADX.',
-    formula: 'tanh(2·(hurst − 0.5) + adx/60 + max(0, adf + 2)/3)',
+    formula: 'tanh(⅓·[z(hurst) + z(adx) + z(adf)]), z = (x − null)/scale clipped to ±2',
     sqlColumn: 'regime_trend_score',
     aliases: ['regime', 'market regime', 'trend regime'],
     inModel: true,
     precision: 3,
+    /*
+     * The ±0.25 edges survive the rebuild of the score, but they mean something
+     * different now and are worth restating.
+     *
+     * Under the old expression — `tanh(2·(hurst − 0.5) + adx/60 + max(0, adf + 2)/3)`
+     * — the ADX term was non-negative by construction and the ADF term clipped
+     * at zero, leaving the Hurst term as the only one that could argue for
+     * reversion at all. Nothing in the published universe then pushed the sum
+     * below the atanh(0.25) = 0.2554 needed to leave STATE_TREND_REGIME: all 134
+     * stored rows resolved to it and the lowest score anywhere was 0.341. Two of
+     * the three states defined here went unobserved, and this registry is what
+     * `/api/features` serves to clients and what InvestGPT compiles qualitative
+     * predicates against, so both were advertised anyway.
+     *
+     * `compute.ts` now standardises each input against the value it takes when
+     * there is no regime — Hurst 0.5, ADX 25, ADF τ_μ = −1.51 — so the score is
+     * exactly 0 on a random walk and symmetric about it. |score| > 0.25 then
+     * reads as "the three estimators agree, by better than a quarter of a
+     * standard deviation on average, on which regime this is". Recomputed across
+     * the 67-name universe the score runs −0.896 to +0.881 and splits 29 trending
+     * / 22 mixed / 16 reverting, where the old expression on those same inputs ran
+     * −0.168 to +0.939 and split 57 / 10 / 0. A synthetic stationary series
+     * (H 0.42, ADF −2.9, ADX 18) scores −0.776.
+     */
     states: [
       B('STATE_REVERSION_REGIME', -Infinity, -0.25, 'a mean-reverting regime', 'in which continuation entries have historically bled', 'neutral'),
       NEUTRAL('STATE_MIXED_REGIME', -0.25, 0.25, 'a mixed regime'),

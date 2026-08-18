@@ -47,7 +47,6 @@ import type {
 } from '@/lib/domain/types';
 import { isMarketOpen } from '@/lib/market/calendar';
 import { getSpec } from '@/lib/market/universe';
-import { isKillSwitchEngaged } from '@/lib/risk/killSwitch';
 import {
   ADV_PARTICIPATION_LIMIT,
   KILL_SWITCH_HTTP_STATUS,
@@ -106,7 +105,11 @@ export interface RiskEvaluationContext {
   correlationId: string;
   /** Millisecond-precision evaluation instant. Injected, never read from a clock here. */
   now: number;
-  /** Defaults to the process-wide switch. */
+  /**
+   * Whether platform-wide routing is halted. The engine performs no I/O, and the
+   * authoritative halt lives in the ledger, so this must be supplied. Absent, it
+   * is read as engaged and the order is denied.
+   */
   killSwitchEngaged?: boolean;
   /** Defaults to "no subscription", which denies live routing. */
   subscription?: RiskSubscriptionContext;
@@ -234,7 +237,7 @@ export function ceilingReferencePrice(
   if (stated === null) return null;
 
   /*
-   * Only two shapes can transact above the price the ceiling is sized from, and
+   * Three shapes can transact above the price the ceiling is sized from, and
    * taking the aggressive side for the rest inflated the ceiling against orders
    * that could never reach it.
    *
@@ -245,15 +248,28 @@ export function ceilingReferencePrice(
    *     the user typed. This is the case the ceiling was written for: PG bid
    *     288.87, SELL 368 @ limit 271.56 priced itself at $99,934 against a
    *     $100,000 cap and filled at 288.73 for $106,253.
+   *   * A BUY STOP. A stop price is a trigger, not a bound on the fill, and this
+   *     is the direction where the two come apart. A buy stop placed *below* the
+   *     market is already through it — the book triggers on the last trade, so
+   *     the order becomes a market order on receipt and lifts the offer. Priced
+   *     at the stop it measured nothing at all: AAPL bid 141.75 / ask 141.77,
+   *     BUY 1,408 STOP @ 71.02 sits inside the ±50% stop sanity band, priced
+   *     itself at $99,996 against the $100,000 ceiling, passed every control and
+   *     filled 1,408 shares at 141.94 for $199,852 — twice the published cap.
+   *     `Math.max` leaves the correctly-placed case alone: a buy stop above the
+   *     offer is still measured at its stop, because that is where it triggers.
    *
    * Everything else is already bounded by the figure the user typed. A BUY LIMIT
    * cannot fill above its limit — that is what a limit order is — so pricing it
    * off the ask refused orders that were inside the ceiling and told the user
-   * their $99,000 order was $101,000. A SELL STOP fills at or below its stop, so
-   * pricing it off the bid overstated it by the entire distance to the touch.
+   * their $99,000 order was $101,000. A SELL STOP is bounded either way: placed
+   * correctly it triggers below the market and fills at or under its stop, and
+   * placed above the market it triggers on receipt and hits a bid that is lower
+   * still, so the stop the user typed is the conservative figure in both cases
+   * and pricing it off the bid overstated it by the whole distance to the touch.
    */
   const aggressive =
-    intent.type === 'market'
+    intent.type === 'market' || intent.type === 'stop'
       ? intent.side === 'buy'
         ? quote?.ask
         : undefined
@@ -440,7 +456,19 @@ export function evaluateOrder(
   };
 
   // ── 1. Global kill switch — nothing routes while it is engaged ────────────
-  const engaged = context.killSwitchEngaged ?? isKillSwitchEngaged();
+  /*
+   * An unsupplied halt state denies, like every other unevaluable control here.
+   *
+   * This used to fall back to `isKillSwitchEngaged()`, a process-global switch
+   * object that nothing in the platform ever installs. The operative halt is a
+   * row in the `kill_switch` table, which `buildOrderContext` reads and passes
+   * in as `killSwitchEngaged`, so the fallback was not a second opinion — it was
+   * the constant `false`. A caller that omitted the flag was told routing was
+   * open no matter what the ledger said, on the one control whose whole purpose
+   * is to stop everything. Defaulting to "halted" is the fail-closed reading of
+   * silence, and it costs nothing: both routing paths supply the flag.
+   */
+  const engaged = context.killSwitchEngaged ?? true;
   if (
     halted(
       engaged
@@ -660,13 +688,32 @@ export function evaluateOrder(
   if (halted(sessionResult)) return finalise();
 
   // ── 6. Duplicate submission ──────────────────────────────────────────────
-  // Repeated Execute clicks under network latency are the mandate's named
-  // failure mode. The intent token's nonce stops an identical replay; the
-  // idempotency key stops a re-submission that acquired a fresh token.
+  /*
+   * Repeated Execute clicks under network latency are the mandate's named
+   * failure mode, and two different controls answer it.
+   *
+   * The single-use intent token is the one the terminal's own ticket rests on:
+   * one click mints one token, and the routing endpoint burns it with an atomic
+   * `UPDATE … WHERE consumed_at IS NULL`, so a replay of the same click cannot
+   * route twice however many workers receive it. The idempotency key is for a
+   * caller that retries the POST itself — an API client repeating a request
+   * whose response it never saw — and it is armed only when that caller supplies
+   * a key.
+   *
+   * So the unarmed case has to report itself as unarmed. It used to print 'No
+   * prior submission recorded for this order.', word for word the sentence a
+   * real lookup that found nothing prints, which meant the pre-flight panel
+   * showed a passing IDEMPOTENCY row on every order the ticket sent while
+   * nothing had been looked up at all. A control that reports a result it did
+   * not compute is worse than one that is absent.
+   */
   const idempotencyKey = context.idempotencyKey ?? null;
   let duplicateResult: RiskCheckResult;
   if (idempotencyKey === null || context.idempotency === undefined) {
-    duplicateResult = pass('idempotency', 'No prior submission recorded for this order.');
+    duplicateResult = pass(
+      'idempotency',
+      'No idempotency key was supplied; repeat submission is bounded by the single-use authorisation token instead.',
+    );
   } else if (context.idempotency.seen(idempotencyKey)) {
     duplicateResult = deny(
       'DUPLICATE_ORDER',
@@ -760,7 +807,7 @@ export function evaluateOrder(
         : deny(
             'FAT_FINGER_NOTIONAL',
             'notional_ceiling_per_day',
-            `Aggregate notional of ${formatUsd(projectedToday)} for the session exceeds the daily ceiling of ${formatUsd(MAX_NOTIONAL_PER_USER_PER_DAY_USD)}.`,
+            `Aggregate notional of ${formatUsd(projectedToday)} for the day exceeds the daily ceiling of ${formatUsd(MAX_NOTIONAL_PER_USER_PER_DAY_USD)}.`,
             projectedToday,
             MAX_NOTIONAL_PER_USER_PER_DAY_USD,
           ),
@@ -847,17 +894,26 @@ export function evaluateOrder(
   if (context.commit !== false) {
     if (idempotencyKey !== null) context.idempotency?.record(idempotencyKey, context.now);
     /*
-     * Reserve the same figure the ceiling was tested against.
+     * Charge the quota the same figure the ceiling was tested against.
      *
      * The per-day check above projects `usedToday + ceilingNotionalUsd` — the
      * worse of the stated price and the side of the book a marketable order
-     * would reach — and this line used to reserve `notionalUsd`, the stated
-     * price. Every approved order therefore consumed less quota than it had been
-     * measured against, and the gap compounds: fifty-four sell limits priced
-     * 6% through the bid recorded $498,584 of usage against the $500,000 ceiling
-     * while carrying $530,475 of credible exposure. Checking in one currency and
-     * charging in another is exactly the marketable-limit gap `ceilingReferencePrice`
-     * exists to close, reintroduced a day at a time.
+     * would reach. Whatever consumes the quota has to be that same number.
+     * Checking in one currency and charging in another is the marketable-limit
+     * gap `ceilingReferencePrice` exists to close, reintroduced a day at a time:
+     * fifty-four sell limits priced 6% through the bid recorded $498,584 of
+     * usage against the $500,000 ceiling while carrying $530,475 of credible
+     * exposure.
+     *
+     * On the wired path this call is not where the charge lands, and the comment
+     * that used to sit here implied otherwise. `DailyNotionalPort.usedUsd` sums
+     * the `notional_cents` column of the orders ledger, so the persisted order
+     * row *is* the running total and there is no separate counter to add to —
+     * `POST /api/orders/submit` writes that column at the ceiling reference
+     * price for exactly this reason. The port is still called because the
+     * in-memory implementation the unit tests drive the engine with has nowhere
+     * else to record the charge, and because an engine that silently skipped it
+     * would leave that implementation permanently at zero.
      */
     context.dailyNotional?.add(context.userId, context.now, ceilingNotionalUsd);
   }
@@ -940,7 +996,8 @@ function validateQuantity(quantity: number | null): { result: RiskCheckResult; s
  * bid are erroneous, while the passive directions (a buy below the market, a sell
  * above it) are ordinary resting orders and must route untouched. Stop prices get
  * the wide symmetric sanity band instead, because they are placed away from the
- * market by design.
+ * market by design — plus a direction test, because that band is only the right
+ * band while the stop is still on the side of the market it belongs on.
  */
 function evaluatePriceParameters(intent: OrderIntent, reference: number): RiskCheckResult {
   const tolerance = limitPriceTolerance(reference);
@@ -970,6 +1027,35 @@ function evaluatePriceParameters(intent: OrderIntent, reference: number): RiskCh
         `Stop price of ${formatUsd(stopPrice)} deviates ${(stopDeviation * 100).toFixed(1)}% from the reference price of ${formatUsd(reference)}, outside the ${(STOP_PRICE_SANITY_DEVIATION * 100).toFixed(0)}% sanity band.`,
         stopDeviation,
         STOP_PRICE_SANITY_DEVIATION,
+      );
+    }
+
+    /*
+     * A stop already through the market is a market order wearing a stop's
+     * collar, and the collar is the wrong one.
+     *
+     * The sanity band above is symmetric and deliberately wide — ±50% — because
+     * a stop is placed away from the market by design. That width is only
+     * defensible while the stop is on the side it belongs on. A buy stop below
+     * the offer, or a sell stop above the bid, triggers on receipt and transacts
+     * at the touch, so it is a market order that has been handed a 50% band
+     * instead of the 6% one a marketable limit gets. Nothing rejected it: the
+     * band is symmetric, and a BUY STOP at 71.02 against a 141.77 offer is only
+     * −49.9%.
+     *
+     * `reference` here is the side the triggered order would transact on — the
+     * offer for a buy, the bid for a sell — so a stop at or through it is one
+     * print away from firing at worst. The remedy is named in the message,
+     * because the user almost certainly meant the order type they described.
+     */
+    const throughTheMarket = intent.side === 'buy' ? stopPrice <= reference : stopPrice >= reference;
+    if (throughTheMarket) {
+      return deny(
+        'PRICE_TOLERANCE_NBBO',
+        'price_tolerance',
+        `A ${intent.side} stop at ${formatUsd(stopPrice)} is at or through the ${intent.side === 'buy' ? 'offer' : 'bid'} of ${formatUsd(reference)} and would trigger on receipt. Submit a market order instead.`,
+        stopPrice,
+        reference,
       );
     }
   }
@@ -1028,5 +1114,14 @@ function evaluateBuyingPower(
 
 /** Currency formatting for rejection copy. Plain and terminal-like. */
 function formatUsd(value: number): string {
+  /*
+   * The mandated rejection copy is interpolated with this, so a non-finite
+   * input would put a literal "$\u221e" or "$1e+308" into a compliance-visible
+   * sentence. The order form caps its own inputs, but a caller posting straight
+   * to the API is bounded only by the schema, which caps the symbol and not the
+   * price — so the guard belongs here, where every one of those sentences is
+   * built, rather than at each of the four call sites.
+   */
+  if (!Number.isFinite(value)) return 'an amount too large to represent';
   return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }

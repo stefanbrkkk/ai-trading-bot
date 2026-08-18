@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import { useTerminalStore } from '@/components/TerminalProvider';
 import { selectActiveAsset, selectRefreshMode } from '@/store/terminalStore';
 import { cx } from '@/components/ui/primitives';
@@ -10,13 +11,53 @@ import { cx } from '@/components/ui/primitives';
  *
  * Each field reads a single primitive from the store through its own atomic
  * selector, so a driver-array update elsewhere does not re-render this strip.
+ *
+ * It also reserves its own height as scroll padding on the document, which is
+ * the price of being sticky. A browser scrolling focus into view with the
+ * default `block: 'nearest'` considers a box that ends at the viewport's bottom
+ * edge to be in view, and stops — but this strip is painted over that edge, so
+ * the control it just focused is underneath it. Swept with Tab on /screener at
+ * 1440x900, six stops (LIN, KO, ORCL, CVX, MA, BRK.B) returned this footer from
+ * `elementFromPoint` at all nine sampled points of their own rect: the focus
+ * indicator, which WCAG 2.4.11 requires to be visible, was completely hidden,
+ * and the page still had 1085px of scroll left to give. The `/login` disclosures
+ * link and both `/research` suggestion buttons were covered the same way at
+ * 390x844.
+ *
+ * Measured rather than a constant, because the strip is 27px at 1440 and 43px at
+ * 390 — the three fields wrap below `sm`, and a hard-coded reservation would be
+ * wrong at exactly the width where the footer is tallest. It is written to the
+ * document element rather than to CSS because that element is the scrollport for
+ * every route and this component is the only thing that knows how tall it is.
  */
 export function StatusStrip() {
   const activeAsset = useTerminalStore(selectActiveAsset);
   const refreshMode = useTerminalStore(selectRefreshMode);
+  const footerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const node = footerRef.current;
+    if (node === null || typeof ResizeObserver === 'undefined') return;
+    const root = document.documentElement;
+    const read = (): void => {
+      root.style.scrollPaddingBottom = `${Math.ceil(node.getBoundingClientRect().height)}px`;
+    };
+    const observer = new ResizeObserver(read);
+    observer.observe(node);
+    read();
+    return () => {
+      observer.disconnect();
+      // Left set, the reservation would outlive the obstruction on any route
+      // that stops rendering the strip.
+      root.style.scrollPaddingBottom = '';
+    };
+  }, []);
 
   return (
-    <footer className="sticky bottom-0 z-20 border-t border-obsidian-edge bg-vanta-deep/95 backdrop-blur-sm">
+    <footer
+      ref={footerRef}
+      className="sticky bottom-0 z-20 border-t border-obsidian-edge bg-vanta-deep/95 backdrop-blur-sm"
+    >
       <div className="flex items-center justify-between gap-4 px-4 py-1.5 lg:px-6">
         {/*
           The three fields wrap rather than scroll. At 390px they are 24px wider

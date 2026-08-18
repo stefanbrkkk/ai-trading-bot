@@ -72,10 +72,30 @@ import {
   aggregateStream,
   compositeAltScore,
 } from '@/lib/quant/decay';
-import { EPS, clamp, mean, ols, quantile, stdev } from '@/lib/quant/stats';
+import { EPS, clamp, mean, normCdf, ols, stdev } from '@/lib/quant/stats';
 import { adfStatistic, hurstExponent, logReturns } from '@/lib/quant/stats';
 import { isoDate, minutesSinceOpen, toNewYork } from '@/lib/market/calendar';
 import type { AltDataEvent, FeatureValue, OptionChainSlice, SymbolMeta } from '@/lib/domain/types';
+
+/**
+ * How much of the intraday tape the microstructure block reads: the last 60
+ * five-minute bars, i.e. five hours ending at the evaluation instant.
+ */
+const VPIN_TAPE_BARS = 60;
+
+/**
+ * Bars aggregated into one VPIN volume bucket, and therefore — with the tape
+ * length above — the bucket count in the averaging window (60 / 6 = 10).
+ *
+ * VPIN's bucket has to be deep enough that a *balanced* tape averages to a small
+ * number, because a bucket of n equal-volume bars carries an irreducible
+ * imbalance of about √(2/3πn) from sampling alone: 0.28 at three bars, 0.21 at
+ * six, 0.15 at twelve. Deeper buckets lower that floor but leave fewer
+ * of them to average, so the estimate gets noisier bucket by bucket. Six bars —
+ * half an hour of tape, ten buckets across the window — is where those two
+ * pressures balance.
+ */
+const VPIN_BARS_PER_BUCKET = 6;
 
 export interface ComputeInput {
   symbol: string;
@@ -107,7 +127,13 @@ export interface ComputedFeatures {
   raw: Record<string, number>;
   /** Ordered model input vector, aligned to MODEL_FEATURE_KEYS. */
   vector: number[];
-  /** Presentation-ready values, in registry order. */
+  /**
+   * Presentation-ready values, in registry order.
+   *
+   * `value` and `state` are complete here. `normalised` is not: it is left at
+   * the 0.5 placeholder until `applyCrossSectionalNormalisation` ranks a whole
+   * universe of these, which only the universe sweep does.
+   */
   values: FeatureValue[];
   /** Intermediate artefacts the UI and the narrative engine reuse. */
   artefacts: FeatureArtefacts;
@@ -275,7 +301,15 @@ export function computeFeatures(input: ComputeInput): ComputedFeatures {
   // ── Microstructure ───────────────────────────────────────────────────────
   const mlofi = computeMlofiSignal(books, { levels: 10, bucketSize: 1, decay: 3 });
   const lastBook = books[books.length - 1];
-  const tradeHistory = sessionBars.slice(-60).map((b, i, arr) => {
+  const tapeWindow = sessionBars.slice(-VPIN_TAPE_BARS);
+  /*
+   * The tick rule: a bar closing at or above the previous close is treated as
+   * entirely buyer-initiated. This is a *directional* series, and it is what
+   * `microstructureMetrics` wants — Kyle's lambda regresses the price change on
+   * signed order flow, and Roll's spread on the price path alone. It is not what
+   * VPIN wants; see the bulk-volume classification below.
+   */
+  const tradeHistory = tapeWindow.map((b, i, arr) => {
     const prev = i > 0 ? (arr[i - 1] as Bar).close : b.open;
     const direction = b.close >= prev ? 1 : -1;
     return { price: b.close, signedVolume: direction * b.volume, dollarVolume: b.close * b.volume };
@@ -293,10 +327,52 @@ export function computeFeatures(input: ComputeInput): ComputedFeatures {
         bookNotional: 0,
         bookResilience: 0,
       };
+  /*
+   * VPIN, with the two things the estimator actually requires: bulk-volume
+   * classification, and buckets deep enough that a balanced tape averages out.
+   *
+   * This used to hand `vpin` the tick-rule series above — every bar 100% buy or
+   * 100% sell — in buckets of three times mean bar volume. Both halves of that
+   * were wrong in the same direction. A bucket of three coin-flip bars splits
+   * 3-0 or 2-1, so its imbalance is 1 or ⅓ and never anything else, and the
+   * average over such buckets converges to about ½ on flow carrying no
+   * information whatsoever. Measured: 20 000 Monte-Carlo trials of 60 balanced
+   * bars returned mean 0.497 (p05 0.382, p95 0.615), three quarters of them above
+   * the 0.45 "toxic, one-sided order flow" band and one in ten thousand below the
+   * 0.25 benign band. The universe agreed — the 67 published names ran 0.334 to
+   * 0.639, mean 0.490, splitting 0 benign / 20 normal / 47 toxic, and not one of
+   * them came near the router's 0.85 abort. A feature that labels seven names in
+   * ten toxic for behaving exactly like a fair coin is not measuring toxicity.
+   *
+   * The fix restores the Easley–López de Prado–O'Hara construction:
+   *
+   *   • Bulk-volume classification. The buy share of a bar's volume is
+   *     Φ(Δp/σ_Δp), so the signed volume is `V·(2Φ(Δp/σ) − 1)` — a fraction of
+   *     the bar, proportional to how large its move is against the window's own
+   *     dispersion. A bar that ticks up by a tenth of a standard deviation is
+   *     52/48 buy, not 100/0. `vpin` already normalises by the clamped mix, so
+   *     a fractional `signedVolume` needs no change there.
+   *   • Buckets six bars deep — half an hour of five-minute tape — and a window
+   *     of the ten buckets that fit in the 60-bar sample. Under balanced flow the
+   *     bucket imbalance of n equal bars is E|Σf|/n ≈ √(2/3πn), so the floor is
+   *     a property of n alone: 0.28 at three bars, 0.21 at six, and it is never
+   *     zero. Six is where the floor is small enough to leave the band structure
+   *     room while ten buckets still average away single-bucket noise.
+   *
+   * The resulting estimator reads 0.206 on balanced flow (40 000 trials, p95
+   * 0.288) and 0.85 on a tape drifting one way at 2σ per bar, which is what the
+   * feature's states and the router's `ABORT_TOXIC_FLOW` gate are calibrated
+   * against — see the band derivation on the `vpin` entry in `features.ts`.
+   */
+  const tapeDeltas = tapeWindow.map((b, i, arr) => b.close - (i > 0 ? (arr[i - 1] as Bar).close : b.open));
+  const tapeSigma = Math.max(stdev(tapeDeltas), EPS);
   const vpinValue = vpin(
-    tradeHistory.map((t) => ({ volume: Math.abs(t.signedVolume), signedVolume: t.signedVolume })),
-    Math.max(1, mean(tradeHistory.map((t) => Math.abs(t.signedVolume))) * 3),
-    20,
+    tapeWindow.map((b, i) => ({
+      volume: b.volume,
+      signedVolume: b.volume * (2 * normCdf((tapeDeltas[i] as number) / tapeSigma) - 1),
+    })),
+    Math.max(1, mean(tapeWindow.map((b) => b.volume)) * VPIN_BARS_PER_BUCKET),
+    Math.floor(VPIN_TAPE_BARS / VPIN_BARS_PER_BUCKET),
   );
   const microDivergenceBps = lastBook && midPrice(lastBook) > EPS
     ? ((microPrice(lastBook) - midPrice(lastBook)) / midPrice(lastBook)) * 10_000
@@ -415,7 +491,51 @@ export function computeFeatures(input: ComputeInput): ComputedFeatures {
   const volPercentile =
     rvHistory.length > 20 ? rvHistory.filter((v) => v <= currentRv).length / rvHistory.length : 0.5;
   const adxNow = last(adxResult.adx);
-  const regimeTrendScore = Math.tanh(2 * (hurst - 0.5) + adxNow / 60 + Math.max(0, adfStat + 2) / 3);
+  /*
+   * Three pieces of evidence, each standardised against the value it takes when
+   * there is no regime at all, then averaged and squashed.
+   *
+   * The previous expression was `tanh(2·(hurst − 0.5) + adx/60 + max(0, adf + 2)/3)`,
+   * and two of its three terms could only ever argue one way. `adx/60` is
+   * non-negative by construction, so it added between +0.17 and +1.12 to every
+   * name in the universe whatever the market was doing; `max(0, adf + 2)/3`
+   * clipped at zero, so a strongly stationary spread — the single most direct
+   * evidence of mean reversion the module computes — was merely silent rather
+   * than negative. The consequence was not subtle: across the whole published
+   * universe the score ran 0.341 to 0.998, so all 134 stored rows resolved to
+   * STATE_TREND_REGIME and the other two declared states — which
+   * `/api/features?key=regime_trend_score` publishes to clients regardless — went
+   * unobserved on every name and every date. Recomputing the 67 names at the
+   * last completed session close reproduces it: the old expression spans −0.168
+   * to +0.939 and lands 57 trending, 10 mixed, none reverting, while the three
+   * standardised terms below span −0.896 to +0.881 and land 29 / 22 / 16.
+   *
+   * Each term below is a z-score against a null this repository can state
+   * precisely, so a market with no regime scores exactly zero rather than +0.84:
+   *
+   *   • Hurst. `hurstExponent` already subtracts the Anis–Lloyd expected
+   *     rescaled range, so its null is centred: on 100 i.i.d. returns it
+   *     measures mean 0.4946, sd 0.0910 over 3 000 trials. Hence (H − 0.5)/0.09.
+   *   • ADX. Wilder's own reading of his index — under 20 there is no trend,
+   *     over 25 there is one — makes 25 the neutral point; ±1 then lands at
+   *     12.5 and 37.5, which are the "definitively ranging" and "definitively
+   *     trending" ends of that scale.
+   *   • ADF. `adfStatistic` reproduces the Dickey–Fuller τ_μ distribution: on
+   *     8 000 random walks of length 120 it measures mean −1.514, sd 0.840 and a
+   *     5% critical value of −2.854 against the textbook −2.86. A unit root is
+   *     therefore τ ≈ −1.51, not 0, and the term is centred there — so a
+   *     significantly stationary spread now scores about −1.6 and argues for
+   *     reversion by as much as an equally significant explosive root argues for
+   *     trend.
+   *
+   * Clipped at ±2 so no single estimator at four sigma can pin the composite on
+   * its own, and averaged rather than summed so the score stays a statement
+   * about how much the three agree.
+   */
+  const hurstEvidence = clamp((hurst - 0.5) / 0.09, -2, 2);
+  const adxEvidence = clamp((adxNow - 25) / 12.5, -2, 2);
+  const adfEvidence = clamp((adfStat + 1.51) / 0.84, -2, 2);
+  const regimeTrendScore = Math.tanh((hurstEvidence + adxEvidence + adfEvidence) / 3);
   const liquidityScore = computeLiquidityScore(micro.spreadBps, micro.amihud, meta.adv30, mlofi.pc1ExplainedVariance);
 
   const nyParts = toNewYork(now);
@@ -538,7 +658,15 @@ export function computeFeatures(input: ComputeInput): ComputedFeatures {
       label: def.label,
       group: def.group,
       value,
-      normalised: 0.5, // filled by the cross-sectional pass
+      /*
+       * A placeholder, not a value. Only the universe sweep fills this in:
+       * `getUniverseSnapshot` computes every name and then calls
+       * `applyCrossSectionalNormalisation` over the whole set. `getSignal` runs
+       * the pipeline for one symbol, where there is no cross-section to rank
+       * against, so every feature on that path is published with 0.5 — all 89
+       * of them, on every `GET /api/signals/<symbol>` response.
+       */
+      normalised: 0.5,
       unit: def.unit,
       state: resolveState(def, value).state,
     };
@@ -598,6 +726,10 @@ function computeLiquidityScore(
  * Cross-sectional ECDF pass. Features are only comparable across names after
  * being ranked within the universe, which is what Phase 2 §2 mandates for
  * alt-data and what the screener's percentile columns display.
+ *
+ * This is the only writer of `FeatureValue.normalised`, and `getUniverseSnapshot`
+ * is its only caller. A single-symbol `getSignal` has no cross-section to rank
+ * against and therefore publishes the 0.5 placeholder set by `computeFeatures`.
  */
 export function applyCrossSectionalNormalisation(computed: ComputedFeatures[]): void {
   if (computed.length === 0) return;
@@ -626,13 +758,17 @@ export function formatRaw(key: string, value: number): string {
 }
 
 /**
- * Percentile of `value` within `population` — used for the screener's
- * distribution bars and for the model card's calibration report.
+ * Percentile of `value` within `population`.
+ *
+ * Kept because the cross-sectional pass below is the only consumer of a rank in
+ * this module and a second one is a plausible near-term need; the docstring used
+ * to claim the screener's distribution bars and the model card's calibration
+ * report call it, and neither does. It also carried a `quantile` call whose
+ * result was discarded through `void`, which was the sole reason this module
+ * imported `quantile` at all.
  */
 export function percentileOf(value: number, population: readonly number[]): number {
   if (population.length === 0) return 0.5;
-  const q = quantile(population, 0.5);
-  void q;
   let below = 0;
   for (const v of population) if (v <= value) below += 1;
   return below / population.length;

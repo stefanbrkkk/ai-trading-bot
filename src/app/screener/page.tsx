@@ -347,7 +347,26 @@ export default function ScreenerPage() {
                         {compact(row.marketCap, 1)}
                       </Td>
                       <Td>
-                        <span className="text-2xs text-parchment-faint">{row.topDriver}</span>
+                        {/*
+                          Width-capped, on a column the auto table layout squeezed
+                          to its min-content width.
+
+                          Nothing constrained this cell, so at 1280 and 1440 the
+                          driver column collapsed to 89px — the width of the word
+                          "volatility" — and all 67 rows wrapped to three or four
+                          lines. Every row was 95px where 56px would do, the page
+                          measured 6030px against 3432px at 1920 for the same 67
+                          names, and the whole 89px column started 128px past the
+                          right edge of the scrollport in the unscrolled state.
+                          `block` plus an explicit width is what makes `truncate`
+                          bite inside a `<td>`; 11rem clears the longest label the
+                          feature registry can produce, so nothing truncates on
+                          today's data and `title` recovers anything a longer one
+                          ever loses, exactly as `StatTile` does with its label.
+                        */}
+                        <span className="block w-44 truncate text-2xs text-parchment-faint" title={row.topDriver}>
+                          {row.topDriver}
+                        </span>
                       </Td>
                     </tr>
                   ))}

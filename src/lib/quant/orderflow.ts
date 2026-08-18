@@ -1,7 +1,7 @@
 /**
  * Multi-Level Order Flow Imbalance (MLOFI) and PCA-filtered execution intent.
  *
- * MASTER §2.2 / Phase 1 §3: "While retail traders look at Level 1 Bid/Ask
+ * The requirement, quoted: "While retail traders look at Level 1 Bid/Ask
  * sizes, Aurelius constructs a Multi-Level Order Flow Imbalance vector across M
  * depth levels of the limit order book… filter the MLOFI matrix using PCA…
  * isolating the first principal component distils millions of limit order
@@ -44,7 +44,7 @@ export interface OrderBookSnapshot {
   asks: BookLevel[];
 }
 
-/** Depth levels M used across the platform (MASTER §2.2 "M limit order book levels"). */
+/** Depth levels M used across the platform — the specified "M limit order book levels". */
 export const MLOFI_LEVELS = 10;
 
 export function bestBid(book: OrderBookSnapshot): BookLevel | undefined {

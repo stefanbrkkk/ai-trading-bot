@@ -280,7 +280,18 @@ export default function ResearchPage() {
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
             <div className="space-y-5">
               <Panel>
-                <PanelHeader eyebrow="Answer" title={answer.question} />
+                {/*
+                  The only heading in the product whose text a user wrote.
+                  `overflow-wrap` is inherited, so the class here reaches the
+                  `<h2>` `PanelHeader` renders; every other panel title is
+                  platform-authored and short, which is why the primitive does not
+                  carry it. Without it a pasted filing URL — one 87-character token
+                  with nothing to break at, and the field accepts 600 characters of
+                  them — made the heading 652px wide inside a 308px column and
+                  pushed the document to 693px against a 390px viewport, scrolling
+                  the whole page sideways on a phone.
+                */}
+                <PanelHeader className="break-words" eyebrow="Answer" title={answer.question} />
                 <div className="mt-4">
                   <AnnotatedAnswer answer={answer.answer} onCitation={setFocusedCitation} />
                 </div>

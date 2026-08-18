@@ -42,7 +42,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { ApiError, clickProvenanceSchema, correlationId, handler, ok, parseBody } from '@/lib/api/respond';
-import { buildOrderContext } from '@/lib/api/orderContext';
+import { buildOrderContext, quotaNotionalUsd } from '@/lib/api/orderContext';
 import { currentSessionToken, currentUser, requestContext } from '@/lib/auth/session';
 import {
   ORDER_MESSAGES_PER_SECOND_PER_USER,
@@ -94,7 +94,21 @@ export const POST = handler(async (request: Request) => {
 
   const body = await parseBody(request, bodySchema);
   const correlation = request.headers.get('x-correlation-id') ?? correlationId();
-  const idempotencyKey = request.headers.get('idempotency-key') ?? body.idempotencyKey ?? randomUUID();
+  /*
+   * Null when the caller supplied no key, and null is the honest value.
+   *
+   * This used to fall back to `randomUUID()`. A fresh random key can never
+   * collide with a stored one, so the DUPLICATE_ORDER control was armed with a
+   * value guaranteed to pass, and every routed order wrote a key row that
+   * nothing could ever match. The terminal's ticket sends no key at all — its
+   * protection against a double submission is the single-use intent token burnt
+   * below — so that was every order the product itself sends.
+   *
+   * Passing null through means the engine reports the control as unarmed rather
+   * than as passed, and a caller that does supply a key (an API client retrying
+   * a POST whose response it never saw) gets the control it asked for.
+   */
+  const idempotencyKey = request.headers.get('idempotency-key') ?? body.idempotencyKey ?? null;
   const symbol = body.symbol.toUpperCase();
   const ctx = await requestContext();
   const sessionToken = await currentSessionToken();
@@ -247,6 +261,19 @@ export const POST = handler(async (request: Request) => {
   // ── 5. Burn the click, then persist the authorised order before dispatch ──
   const quantity = intent.quantity as number;
   const reference = notionalReferencePrice(intent, built.quote);
+  /*
+   * Two figures, and they are not interchangeable.
+   *
+   * `reference` prices what the user is shown: their own limit or stop, or the
+   * last trade for a market order. It must not move — someone who entered a
+   * limit of 271.56 is owed a notional computed at 271.56, and that is what this
+   * endpoint returns as `notionalUsd` below.
+   *
+   * `quotaUsd` is what the order costs its user's daily allowance, measured in
+   * the currency the risk engine tests every ceiling in. See `quotaNotionalUsd`
+   * for why the two differ and what it cost to conflate them.
+   */
+  const quotaUsd = quotaNotionalUsd(intent, built.quote);
   const orderId = `ord_${randomUUID()}`;
 
   /*
@@ -329,7 +356,7 @@ export const POST = handler(async (request: Request) => {
   insertOrder(pending, {
     intentToken: body.intentToken,
     correlationId: correlation,
-    ...(reference === null ? {} : { notionalCents: Math.round(orderNotionalUsd(intent, reference) * 100) }),
+    ...(quotaUsd === null ? {} : { notionalCents: Math.round(quotaUsd * 100) }),
   });
 
   // ── 6. Dispatch ──────────────────────────────────────────────────────────
@@ -337,7 +364,9 @@ export const POST = handler(async (request: Request) => {
   const brokerDispatched = Date.now();
   const result = await broker.submitOrder(
     {
-      clientOrderId: idempotencyKey,
+      // The platform's own order id when the caller named no key: unique per
+      // submission, and traceable back to a row rather than to nothing.
+      clientOrderId: idempotencyKey ?? orderId,
       symbol,
       side: intent.side,
       type: intent.type,

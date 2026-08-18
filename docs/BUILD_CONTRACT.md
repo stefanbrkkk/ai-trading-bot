@@ -1,7 +1,13 @@
-# Project Aurelius — internal build contract
+# Project Aurelius — build contract
 
-Read this before writing any module. It is the shared contract that keeps the
-subsystems consistent.
+Read this before changing any module. It records the invariants that keep the
+subsystems consistent and the module surface to import rather than re-implement.
+
+It is a live reference, not a handover note that has served its purpose: comments
+throughout `src/` cite it by name where they explain why a piece of code is shaped
+the way it is — `BUILD_CONTRACT rule 3` in `src/lib/broker/index.ts`,
+`docs/BUILD_CONTRACT.md §kalman` in `src/lib/quant/kalman.ts` — so the path and the
+rule numbering are load-bearing.
 
 ## Hard rules
 
@@ -19,16 +25,18 @@ subsystems consistent.
    `@typescript-eslint/no-explicit-any` is an **error** — never use `any`. Use
    `unknown` plus a narrowing guard.
 2. **No new dependencies.** The runtime set is exactly: `next@15.5.23`,
-   `react@19.2`, `zustand@5`, `framer-motion@12`, `flubber@0.4.2`, `zod@3.25`.
-   Dev-only: `vitest@3.2`, `@playwright/test`, `tailwindcss@3.4`, `eslint` with
-   `@eslint/eslintrc`, `typescript`, `tsx` (load-bearing — `npm run seed` and the
-   `postbuild` hook run through it), `postcss`, `autoprefixer` and `@types/*`.
-   Node built-ins are fine (`node:crypto`, `node:sqlite`, `node:fs`). Nothing
-   else may be added. (`node-sql-parser@5.4` was provisioned for the SQL
-   validator's AST layer and then never imported — the validator tokenises and
-   checks a relation/column allowlist instead, which is what ships and what the
-   tests cover. An unimported dependency is a claim about the defence that is not
-   true, so it was removed.)
+   `react@19.2` with `react-dom`, `zustand@5`, `framer-motion@12`,
+   `flubber@0.4.2`, `zod@3.25`. Dev-only: `vitest@3.2`, `@playwright/test`,
+   `tailwindcss@3.4`, `eslint` with `@eslint/eslintrc` and `eslint-config-next`,
+   `typescript`, `tsx` (load-bearing — `npm run seed` and the `postbuild` hook run
+   through it), `postcss`, `autoprefixer` and `@types/*`.
+   Node built-ins are fine (`node:crypto`, `node:sqlite`, `node:fs`). Adding a
+   dependency is a deliberate decision, not a default: it enlarges the surface a
+   buyer has to audit and the licence set they inherit. (`node-sql-parser@5.4` was
+   provisioned for the SQL validator's AST layer and then never imported — the
+   validator tokenises and checks a relation/column allowlist instead, which is
+   what ships and what the tests cover. An unimported dependency is a claim about
+   the defence that is not true, so it was removed.)
 3. **Zero required configuration.** Every subsystem must work with a completely
    empty `.env`. API keys are optional switches, never preconditions. When a key
    is absent, fall back to a deterministic in-process implementation — never
@@ -39,10 +47,18 @@ subsystems consistent.
    `console.info`. Server code should stay silent on the happy path — the E2E
    suite asserts zero console errors.
 6. **Import alias** is `@/*` → `src/*`.
-7. Comments explain *why*, and cite the research mandate they implement. Do not
-   narrate what the code obviously does.
+7. Comments explain *why* — the invariant being upheld, or the defect the code
+   exists to prevent. Do not narrate what the code obviously does. Older comments
+   cite the research corpus by section; that corpus is no longer part of the
+   package, so a new comment should carry its reason in the repository rather than
+   point outside it.
 
-## Existing modules you may import (do not modify them)
+## The stable module surface
+
+These modules are the shared foundation every subsystem is built on. Prefer
+importing from them over adding a parallel implementation — a second copy of an
+indicator or an RNG is how two surfaces start publishing different numbers for the
+same name. Changing one changes every caller, so it is a deliberate decision.
 
 ### `@/lib/quant/*`
 - `rng` — `createRng(seed)` → `Rng` with `next/int/normal/gaussian/exponential/studentT/bernoulli/pick/shuffle/fork`.

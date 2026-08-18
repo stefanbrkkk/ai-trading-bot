@@ -44,11 +44,20 @@ export interface GbdtModel {
   learningRate: number;
   objective: 'logistic' | 'squared';
   featureNames: string[];
-  /** Total gain accumulated per feature — global importance. */
+  /**
+   * Total gain accumulated per feature — global importance. Counts only splits
+   * in `trees`, so it still describes the model after early stopping truncates
+   * the ensemble.
+   */
   featureGain: number[];
-  /** Split count per feature. */
+  /** Split count per feature, over the same surviving trees as `featureGain`. */
   featureSplits: number[];
-  /** Training diagnostics per boosting round. */
+  /**
+   * Training diagnostics per boosting round, one entry per surviving tree.
+   * `history.length === trees.length` always holds, so the last entry is the
+   * loss of the model that is actually returned rather than of the best round
+   * plus the patience window that followed it.
+   */
   history: { round: number; trainLoss: number; validLoss?: number }[];
 }
 
@@ -303,6 +312,26 @@ export function trainGbdt(
 
   const trees: DecisionTree[] = [];
   const history: { round: number; trainLoss: number; validLoss?: number }[] = [];
+  /*
+   * Running totals of `ctx.featureGain` / `ctx.featureSplits` snapshotted after
+   * each tree, so importance can be rewound to whichever tree early stopping
+   * keeps.
+   *
+   * `ctx` accumulates across the whole run and `buildTree` discards its per-node
+   * gain, so without these the counters describe every tree that was ever built,
+   * including the ones truncated away below. That is not a rounding difference:
+   * the shipped 92-tree ensemble published 734 splits against 605 real internal
+   * nodes — 17.6% of the feature importance on the model card belonged to trees
+   * the model does not contain. `sector_rel_strength` was credited with 46
+   * splits and has 40.
+   *
+   * The snapshots are cumulative rather than per-tree so that the value wanted
+   * at the end is a single index rather than a sum: entry i is the total through
+   * tree i. Two arrays of `dims` numbers per round — 112 × 89 on the shipped
+   * model — which is nothing next to the trees themselves.
+   */
+  const gainThroughTree: number[][] = [];
+  const splitsThroughTree: number[][] = [];
   let bestValid = Infinity;
   let bestRound = 0;
   const patience = options.earlyStoppingRounds ?? 0;
@@ -330,11 +359,18 @@ export function trainGbdt(
 
     const tree = buildTree(ctx, rows);
     trees.push(tree);
+    gainThroughTree.push(ctx.featureGain.slice());
+    splitsThroughTree.push(ctx.featureSplits.slice());
     for (let i = 0; i < n; i += 1) raw[i] = (raw[i] as number) + predictTree(tree, x[i] as number[]);
 
     const trainLoss = computeLoss(raw, y, objective);
     let validLoss: number | undefined;
     if (validation && validation.x.length > 0) {
+      // A throwaway wrapper so `predictRaw` can score the validation split
+      // against the trees built so far. It never escapes this scope, so the
+      // importance counters on it are the raw running totals rather than the
+      // per-surviving-tree figures the returned model carries; `predictRaw`
+      // reads neither.
       const partial: GbdtModel = {
         trees,
         baseScore,
@@ -360,14 +396,35 @@ export function trainGbdt(
     }
   }
 
+  /*
+   * Every diagnostic returned has to describe the ensemble that survived early
+   * stopping, not the one that was built.
+   *
+   * `trees` was already truncated; `history` and the importance counters were
+   * not, and both are published. `engine/model.ts` reads the *last* history
+   * entry for the model card's training and validation loss, so it was reporting
+   * the losses of the discarded tail: the shipped card claimed a training loss
+   * of 0.5751 (round 111) where the served 92-tree model's is 0.5910 — 2.7%
+   * understated, in the flattering direction — and a validation loss of 0.6736
+   * where the served model's is 0.6728, marginally better than advertised.
+   * Neither number described the model behind the ranking, which is the whole
+   * claim the transparency page makes.
+   *
+   * Truncating here rather than at the read site keeps the invariant local:
+   * anything a caller derives from a returned `GbdtModel` is about `trees`.
+   */
+  history.length = trees.length;
+  const survivingGain = gainThroughTree[trees.length - 1];
+  const survivingSplits = splitsThroughTree[trees.length - 1];
+
   return {
     trees,
     baseScore,
     learningRate: opts.learningRate,
     objective,
     featureNames,
-    featureGain: ctx.featureGain,
-    featureSplits: ctx.featureSplits,
+    featureGain: survivingGain ?? new Array<number>(dims).fill(0),
+    featureSplits: survivingSplits ?? new Array<number>(dims).fill(0),
     history,
   };
 }

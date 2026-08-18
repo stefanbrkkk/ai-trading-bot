@@ -9,8 +9,15 @@
  * basis it derives from — and offers no way to change any of them.
  *
  * The risk decision history is scoped to the caller by the session, never by a
- * query parameter. A user is entitled to the complete record of every check run
- * against their own orders and to nothing about anyone else's.
+ * query parameter. A user is entitled to the complete record of every decision
+ * taken on an order they submitted and to nothing about anyone else's.
+ *
+ * A pre-flight check is not in that record, and the copy on this page now says so.
+ * `POST /api/orders/preflight` runs the identical engine with `commit: false` and
+ * writes nothing at all, which is the right behaviour for a preview — but this
+ * page told the reader that "a decision is recorded every time you run a
+ * pre-flight check", so an account that had previewed two orders was shown an
+ * empty history under a sentence promising two rows.
  */
 
 'use client';
@@ -70,6 +77,38 @@ interface DecisionsResponse {
   limits: RiskLimit[];
 }
 
+/**
+ * A label beside a sentence, kept on the same line as its label.
+ *
+ * The shared `DataRow` primitive is right for a scalar and wrong for this list.
+ * It lays a row out as one wrapping flex line, so a value that will not fit
+ * beside its label drops to a line of its own — a deliberate escape valve, and
+ * the only thing standing between a 320px phone and a page-level horizontal
+ * scroll when a long label meets a long value.
+ *
+ * The provider reasons are not scalars. `aiReason` is a full sentence — 137
+ * characters on this deployment — so the valve fired on every render between
+ * 1024 and 1440: "Inference" sat alone on one line with its sentence orphaned
+ * beneath it, right-aligned against a ragged left edge that lined up with
+ * nothing else on the page, immediately under a "Market data" row that had
+ * stayed intact. Two rows of one list rendering as two different components is
+ * exactly the sort of thing a reader reads as a fault in the data.
+ *
+ * A two-column grid removes the choice. `minmax(0, …)` floors both tracks at
+ * zero instead of at min-content, which is what the flex version's wrap was
+ * guarding against, so the sentence wraps inside its own column at every width
+ * rather than moving out of it. `text-right` is kept so a wrapped reason lines
+ * up on the same edge as a one-line one, as every other row in the product does.
+ */
+function ReasonRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="hairline grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] items-baseline gap-x-4 py-2">
+      <dt className="text-[0.8125rem] text-parchment-dim">{label}</dt>
+      <dd className="text-right text-[0.8125rem] leading-snug text-parchment">{value}</dd>
+    </div>
+  );
+}
+
 /** Formats a limit in the unit it declares. */
 function formatLimit(value: number, unit: string): string {
   switch (unit) {
@@ -103,7 +142,7 @@ export default function ControlPage() {
       <PageHeader
         eyebrow="Controls and feeds"
         title="Control centre"
-        lede="The pre-trade limits in force, the data and inference providers serving this deployment, and the complete record of every risk check run against your orders."
+        lede="The pre-trade limits in force, the data and inference providers serving this deployment, and the complete record of every risk decision taken on an order you submitted."
       />
 
       {limits.data?.killSwitchEngaged === true ? (
@@ -161,12 +200,12 @@ export default function ControlPage() {
                 detail="A half-configured provider is reported as degraded rather than silently substituted — a silent downgrade is indistinguishable from a working configuration."
               />
               <dl className="mt-3 space-y-0.5">
-                <DataRow label="Market data" value={data.providerReason} />
-                <DataRow label="Inference" value={data.aiReason} />
-                {data.engineReason !== null ? <DataRow label="Engine" value={data.engineReason} /> : null}
-                {data.modelReason !== null ? <DataRow label="Model" value={data.modelReason} /> : null}
+                <ReasonRow label="Market data" value={data.providerReason} />
+                <ReasonRow label="Inference" value={data.aiReason} />
+                {data.engineReason !== null ? <ReasonRow label="Engine" value={data.engineReason} /> : null}
+                {data.modelReason !== null ? <ReasonRow label="Model" value={data.modelReason} /> : null}
                 {data.degradedFeeds.length > 0 ? (
-                  <DataRow label="Degraded feeds" value={data.degradedFeeds.join(', ')} />
+                  <ReasonRow label="Degraded feeds" value={data.degradedFeeds.join(', ')} />
                 ) : null}
               </dl>
             </Panel>
@@ -222,8 +261,9 @@ export default function ControlPage() {
       {/* ── Decision history ─────────────────────────────────────────── */}
       {me.data?.user === null || me.data?.user === undefined ? (
         <Notice tone="info" title="Sign in for your decision history">
-          Every risk check run against your orders is recorded, including the ones that rejected them. The record is
-          scoped to your own account.
+          Every risk decision taken on an order you submit is recorded, including the ones that rejected it. A pre-flight
+          check is a preview that reserves nothing and writes nothing, so it does not appear. The record is scoped to
+          your own account.
         </Notice>
       ) : (
         <AsyncSlot
@@ -232,7 +272,7 @@ export default function ControlPage() {
           lines={5}
           isEmpty={(data) => data.decisions.length === 0}
           emptyTitle="No risk decisions yet"
-          emptyDetail="A decision is recorded every time you run a pre-flight check or route an order — approvals and rejections alike."
+          emptyDetail="A decision is recorded every time you submit an order — approvals and rejections alike. A pre-flight check is a preview that reserves nothing and writes nothing, so running one leaves this empty."
         >
           {(data) => (
             <>
@@ -256,7 +296,7 @@ export default function ControlPage() {
                 <div className="p-5 pb-0">
                   <PanelHeader
                     eyebrow="Your risk decisions"
-                    title="Every check, approvals and rejections"
+                    title="Every submitted order, approved and rejected"
                     detail="A rejected order leaves no other trace, so this is the record of why you were stopped."
                   />
                 </div>

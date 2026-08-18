@@ -11,20 +11,37 @@
  * cancel every pending unexecuted order where the broker's API permits, logging
  * each attempt.
  *
- * Consequences for the design:
+ * WHAT IS ON THE EXECUTING PATH TODAY, exactly, because this file previously
+ * described a design the platform does not run:
  *
- *   · The engaged flag lives in module scope and is read synchronously on every
- *     request. No cache, no TTL, no deploy — the next request after the admin
- *     click sees the halt.
- *   · `engage()` is synchronous and returns the pending-order list it registered
- *     for cancellation *before* any network I/O, so the halt cannot be delayed by
- *     a slow or hanging broker. The actual DELETE calls are flushed afterwards by
- *     `flushCancellations()`.
- *   · Outbound severance is expressed as an abort signal the broker adapters
- *     attach to their fetches, which is how "sever active API POST connections"
- *     is implemented in a runtime with no socket registry of its own.
- *   · State is mirrored through a port, so a restart mid-incident comes back
- *     halted rather than silently resuming routing.
+ *   · The halt is a row in the `kill_switch` table, written by the admin route
+ *     and read synchronously by `killSwitchState()` on every order request. No
+ *     cache, no TTL, no deploy — the next request after the admin click sees it,
+ *     and because the state is in the ledger rather than in a process, a second
+ *     worker and a restarted one see it too.
+ *   · `killSwitchShed()` below turns that state into the mandated 503 envelope,
+ *     and both routing endpoints call it before any other work. That is (b), and
+ *     it is the function in this file that production actually uses.
+ *   · `buildOrderContext` passes the same state to the risk engine as
+ *     `killSwitchEngaged`, where it is the first control evaluated, so a halt is
+ *     also recorded as a refusal in the decision ledger rather than only as an
+ *     HTTP status. The engine denies when the flag is absent.
+ *   · (c) is performed inline by the admin route, which walks every working
+ *     order — 'pending_risk', 'submitted', 'partially_filled' — and records each
+ *     cancellation attempt with its broker status.
+ *
+ * WHAT IS NOT IMPLEMENTED. There is no severance of in-flight outbound POSTs.
+ * `class KillSwitch` below models one, as an abort signal the broker adapters
+ * would attach to their fetches — both adapters honour a `signal` on their
+ * request context — but nothing in the platform constructs the class or
+ * populates that field, so no such signal exists at runtime and sub-requirement
+ * (a) is unmet. The class, `getKillSwitch`, `setKillSwitch` and
+ * `isKillSwitchEngaged` have no caller anywhere in `src/`, `tests/`, `e2e/` or
+ * `scripts/`: they are a reference implementation of the mandate's full shape,
+ * not the mechanism the halt runs on, and `isKillSwitchEngaged()` in particular
+ * returns a constant `false` because `processSwitch` is never installed. They
+ * are documented as such rather than presented as the implementation, which is
+ * what the previous version of this comment did.
  */
 
 import type { KillSwitchState } from '@/lib/domain/types';
@@ -93,6 +110,17 @@ const IDLE_STATE: KillSwitchState = {
   cancelledOrders: 0,
 };
 
+/**
+ * The mandate's full Control 6 shape, as a testable unit.
+ *
+ * Not wired: nothing in the platform constructs it. The operative halt is the
+ * `kill_switch` ledger row described at the top of this file, and the engagement
+ * ordering, the abort-on-engage severance and the best-effort cancellation flush
+ * below are the reference for what a wired implementation has to do — including
+ * the two things the ledger-backed path does not do at all, which are severing
+ * in-flight POSTs and re-aborting the controller when a process restarts into an
+ * engaged state.
+ */
 export class KillSwitch {
   private current: KillSwitchState;
   private readonly statePort: KillSwitchStatePort;
@@ -127,8 +155,10 @@ export class KillSwitch {
   }
 
   /**
-   * Signal the broker adapters attach to their outbound requests. Aborting it is
-   * how an active POST is severed the instant the switch is thrown.
+   * The signal a broker adapter would attach to its outbound requests; aborting
+   * it is how an active POST gets severed the instant the switch is thrown. Both
+   * adapters accept one on their request context and honour it, but no call site
+   * passes this signal to them, so today it severs nothing.
    */
   signal(): AbortSignal {
     return this.controller.signal;
@@ -303,9 +333,10 @@ export function killSwitchShed(state: Pick<KillSwitchState, 'engaged' | 'reason'
 }
 
 /**
- * Process-wide switch. Module scope is what makes the control instantaneous:
- * every route in the process reads the same object, so the flag flips without a
- * deploy, a restart or a cache invalidation.
+ * Holder for a process-wide switch instance. Nothing installs one — see the
+ * note at the top of the file — so it is null for the life of every process the
+ * platform runs, and the three accessors below are part of the unwired
+ * reference surface rather than of the halt.
  */
 let processSwitch: KillSwitch | null = null;
 
@@ -314,12 +345,20 @@ export function getKillSwitch(deps: KillSwitchDeps = {}): KillSwitch {
   return processSwitch;
 }
 
-/** Installs a configured switch (real ports) or clears it for tests. */
+/** Installs a configured switch (real ports) or clears it. */
 export function setKillSwitch(instance: KillSwitch | null): void {
   processSwitch = instance;
 }
 
-/** Convenience read for the risk engine's first check. */
+/**
+ * Whether an installed process switch is engaged.
+ *
+ * Not the platform's halt state, and it must not be used as a proxy for one: no
+ * switch is ever installed, so this returns `false` however engaged the real
+ * halt is. The risk engine used to fall back to it when no halt state was
+ * supplied, which made that fallback a constant "routing is open"; it now denies
+ * instead. The authoritative read is `killSwitchState()` against the ledger.
+ */
 export function isKillSwitchEngaged(): boolean {
   return processSwitch !== null && processSwitch.engaged();
 }

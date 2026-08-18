@@ -24,6 +24,7 @@ import { extractiveSummary, splitSentences } from '@/lib/ai/deterministic';
 import { AUTHORITY, SOURCE_LABELS, buildCorpus, chunkDocument } from '@/lib/rag/corpus';
 import { embed } from '@/lib/rag/embed';
 import {
+  BM25_RELEVANCE_FLOOR,
   diversify,
   hasRelevantEvidence,
   indexText,
@@ -42,6 +43,7 @@ export { AUTHORITY, SOURCE_LABELS, buildCorpus, chunkDocument } from '@/lib/rag/
 export { EMBEDDING_DIM, cosine, embed } from '@/lib/rag/embed';
 export type { RetrievableChunk, RetrievalResult, RetrievalTrace, ScoredChunk } from '@/lib/rag/retrieve';
 export {
+  BM25_RELEVANCE_FLOOR,
   DENSE_RELEVANCE_FLOOR,
   diversify,
   expandQuery,
@@ -315,6 +317,47 @@ function stripProhibited(text: string): { text: string; removed: string[] } {
 //  Entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Whether this pipeline will treat the retrieval as evidence at all.
+ *
+ * `hasRelevantEvidence` offers two ways to qualify — a lexical match above the
+ * BM25 floor, *or* a dense similarity above the dense floor — and measured
+ * against this corpus the second arm admits essentially anything. The hashed
+ * embedding is a bag of character n-grams over financial English, and the two
+ * populations it produces are not separated anywhere: on-topic questions score
+ * 0.358–0.518 and off-topic ones 0.319–0.505, so there is no threshold that could
+ * be moved to fix it. Raising the floor would refuse "what is the current
+ * volatility regime across the index?" (0.486) before it refused "what was the
+ * closing price of Bitcoin on 3 March 1997?" (0.505).
+ *
+ * The consequence was the failure this whole gate exists to prevent. "What did
+ * the Federal Reserve decide at its March 2021 meeting?" scored 2.68 on BM25 —
+ * far below the 5.0 floor — cleared the dense arm at 0.437, and came back as six
+ * cited sentences about semiconductor revenue with a grounding score of 100%.
+ * Nothing on the page said the answer did not address the question, because as
+ * far as the pipeline was concerned it did.
+ *
+ * So lexical evidence is *necessary* here rather than one of two alternatives:
+ * the corpus has to be demonstrably discussing the subject in the question's own
+ * terms before any passage is treated as evidence. The dense channel keeps the
+ * job it is good at — it is half of the reciprocal-rank fusion that decides which
+ * passages rank highest — and loses its vote on whether there is anything worth
+ * ranking.
+ *
+ * The cost is real and points the right way. A vaguely worded but genuinely
+ * on-topic question ("tell me about research and development spending", best BM25
+ * 3.30) is now refused rather than answered from whatever ranked first, and the
+ * refusal names the scores so the reader can see it was a scope decision and
+ * rephrase. The alternative was an answer that looked, on screen, exactly like a
+ * correct one.
+ *
+ * Composed with `hasRelevantEvidence` rather than replacing it, so tightening the
+ * shared predicate can only tighten this gate further.
+ */
+export function answerableFromEvidence(trace: RetrievalTrace): boolean {
+  return hasRelevantEvidence(trace) && trace.termsInCorpus > 0 && trace.bestBm25 >= BM25_RELEVANCE_FLOOR;
+}
+
 export interface AskOptions {
   /** Restricts retrieval. Inferred from the question when omitted. */
   symbols?: readonly string[];
@@ -361,13 +404,15 @@ export async function ask(question: string, options: AskOptions = {}): Promise<R
    * writes a fluent, well-cited answer about earnings guidance in reply to a
    * question about the weather. A confidently wrong answer is the worst
    * available outcome for a research tool, so the relevance floor is checked
-   * against the raw channel scores rather than the fused ranking.
+   * against the raw channel scores rather than the fused ranking, and it demands
+   * lexical evidence: see `answerableFromEvidence` for why the dense channel
+   * cannot be trusted to make this call on its own.
    */
-  const relevant = hasRelevantEvidence(trace);
+  const relevant = answerableFromEvidence(trace);
   const selected = relevant ? diversify(hits, 2, options.topK ?? 6) : [];
   if (!relevant && hits.length > 0) {
     notes.push(
-      `The question shares no indexed term with the corpus (best lexical score ${trace.bestBm25.toFixed(2)}, best semantic similarity ${trace.bestDense.toFixed(2)}), so no passage was treated as evidence.`,
+      `No retrieved passage cleared the relevance floor (best lexical score ${trace.bestBm25.toFixed(2)} against a floor of ${BM25_RELEVANCE_FLOOR.toFixed(2)}, best semantic similarity ${trace.bestDense.toFixed(2)}, ${trace.termsInCorpus} of ${trace.queryTerms.length} query terms present in the corpus), so nothing was treated as evidence.`,
     );
   }
 

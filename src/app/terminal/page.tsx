@@ -105,9 +105,23 @@ function PublicationCard({ item }: { item: PublicationItem }) {
           <Badge tone={directionTone(item.direction)}>{item.direction}</Badge>
         </div>
 
-        <div className="mb-4 mt-4 flex items-center gap-5">
+        {/*
+          The dial sits above the rows on a phone rather than beside them.
+
+          At 375 and 390 the fixed 132px dial left the `dl` 141px, and "Regime"
+          beside "Trending bull" needs about 170. `DataRow` wraps rather than
+          overflows — correctly, it is the escape valve that keeps a 320px screen
+          out of horizontal scroll — so the Regime row alone broke onto two lines
+          in all five cards while Probability, Reference and Expected stayed on
+          one, and "Low-volatility drift" took a third. Four rows of one list
+          rendering to three different heights reads as a rendering fault.
+          Stacking gives the list the full card width, which is both where it fits
+          and where a phone has room to spare; from `sm` up the row layout the
+          cards were designed around returns unchanged.
+        */}
+        <div className="mb-4 mt-4 flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:gap-5">
           <ConvictionDial score={item.conviction} size={132} caption={item.direction} />
-          <dl className="min-w-0 flex-1 space-y-1.5">
+          <dl className="w-full min-w-0 flex-1 space-y-1.5">
             <DataRow label="Probability" value={fractionAsPercent(item.probability)} />
             <DataRow label="Reference" value={price(item.referencePrice)} />
             <DataRow label="Expected" value={signedFractionAsPercent(item.expectedReturn)} />

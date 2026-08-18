@@ -208,13 +208,6 @@ export function nyDate(epochMs: number): string {
   return Number.isFinite(epochMs) ? NY_DATE.format(new Date(epochMs)) : '—';
 }
 
-/** Millisecond-precision stamp for the forensic telemetry views. */
-export function forensicStamp(epochMs: number): string {
-  if (!Number.isFinite(epochMs)) return '—';
-  const d = new Date(epochMs);
-  return `${NY_DATETIME.format(d)}.${String(d.getUTCMilliseconds()).padStart(3, '0')} ET`;
-}
-
 export function relativeTime(epochMs: number, now = Date.now()): string {
   if (!Number.isFinite(epochMs)) return '—';
   const delta = now - epochMs;
@@ -227,23 +220,18 @@ export function relativeTime(epochMs: number, now = Date.now()): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Semantic colour selection
+//  The palette
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Sage for positive, burgundy for negative, parchment for neutral.
+ * The hex values the charts draw with, named once so an SVG `fill` and a
+ * Tailwind class cannot drift apart.
  *
- * These are the only two directional colours in the system. Neon green and red
- * are banned by the design mandate: they read as retail and, per the research,
- * "subtly signal a cheap or high-anxiety environment".
+ * Sage is positive, burgundy negative, gold unsigned — the only directional
+ * colours in the system. Neon green and red are banned by the design mandate:
+ * they read as retail and, per the research, "subtly signal a cheap or
+ * high-anxiety environment".
  */
-export function directionalClass(value: number, options: { neutralBand?: number } = {}): string {
-  const band = options.neutralBand ?? 0;
-  if (value > band) return 'text-sage-bright';
-  if (value < -band) return 'text-burgundy-bright';
-  return 'text-parchment-dim';
-}
-
 export const SAGE = '#5F7161';
 export const SAGE_BRIGHT = '#83A086';
 export const BURGUNDY = '#8C3A3A';
@@ -257,31 +245,6 @@ export const PARCHMENT_FAINT = '#948F84';
 export const PARCHMENT_GHOST = '#8A857A';
 export const OBSIDIAN_EDGE = '#343435';
 export const CHARCOAL = '#141414';
-export const VANTA = '#0A0A0A';
-
-/** Hex for a SHAP driver's sign — the exact values the design mandate names. */
-export function driverColour(shap: number): string {
-  return shap >= 0 ? SAGE : BURGUNDY;
-}
-
-export function driverColourBright(shap: number): string {
-  return shap >= 0 ? SAGE_BRIGHT : BURGUNDY_BRIGHT;
-}
-
-/** Conviction band label — never a recommendation, only a description. */
-export function convictionBand(conviction: number): { label: string; className: string } {
-  if (conviction >= 70) return { label: 'High', className: 'text-gold-bright' };
-  if (conviction >= 50) return { label: 'Moderate', className: 'text-gold' };
-  if (conviction >= 30) return { label: 'Low', className: 'text-parchment-dim' };
-  if (conviction > 0) return { label: 'Marginal', className: 'text-parchment-faint' };
-  return { label: 'None', className: 'text-parchment-ghost' };
-}
-
-export function directionLabel(direction: 'long' | 'short' | 'flat'): string {
-  if (direction === 'long') return 'Long bias';
-  if (direction === 'short') return 'Short bias';
-  return 'No directional bias';
-}
 
 /** Truncates to a character budget on a word boundary. */
 export function truncate(text: string, max: number): string {

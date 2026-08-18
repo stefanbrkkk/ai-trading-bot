@@ -15,6 +15,15 @@ Where a written agreement exists, that agreement governs and this file is
 subordinate to it. Nothing here is intended to expand or restrict the rights it
 grants.
 
+THIRD-PARTY COMPONENTS
+
+The font files under public/fonts/ (Inter, JetBrains Mono, Playfair Display) are
+third-party works licensed under the SIL Open Font License, Version 1.1. They
+are not covered by the grant above and nothing in it restricts the rights the
+OFL confers on them. Their copyright notices and the full licence text are in
+public/fonts/OFL.txt. The npm dependencies declared in package.json are likewise
+governed by their own licences, which travel with them in node_modules/.
+
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
 FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT

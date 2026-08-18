@@ -1,10 +1,22 @@
 /**
  * Clickwrap acceptance.
  *
- * The server independently requires `scrolledToBottom` and a trusted click. A
- * browsewrap acceptance — one the user could have given without being shown the
- * terms — is not accepted, because the enforceability of the agreement is exactly
- * what this record exists to establish.
+ * The schema refuses an acceptance that does not carry `scrolledToBottom`,
+ * `checkboxChecked` and a click marked trusted — all three are `z.literal(true)`
+ * or checked again in `acceptTerms` — so no record is ever written without them,
+ * and every record carries the click's coordinates, viewport and timestamp as
+ * evidence.
+ *
+ * All three are client attestations, and the record is worth exactly what an
+ * attestation is worth. The server has no independent view of whether the terms
+ * were rendered or scrolled: nothing binds this POST to a prior fetch of the
+ * disclosures, and `scrollDurationMs` is measured by the browser. This docstring
+ * used to claim the server "independently requires" those facts and that a
+ * browsewrap acceptance is refused; what is actually refused is an acceptance
+ * that omits the markers, which is a weaker and different thing. Binding
+ * acceptance to a single-use nonce minted by `GET /api/compliance/disclosures`
+ * and timing the interval server-side is what would make the stronger claim
+ * true.
  */
 
 import { z } from 'zod';

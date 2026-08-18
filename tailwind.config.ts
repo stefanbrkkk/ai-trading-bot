@@ -3,7 +3,7 @@ import type { Config } from 'tailwindcss';
 /**
  * Project Aurelius design tokens.
  *
- * Palette is mandated verbatim by MASTER_AURELIUS_SPECIFICATION §4.1 / Phase 4 §2:
+ * Palette is mandated verbatim by the specification this was built from:
  *   Vanta Black #0A0A0A backgrounds, Obsidian #1C1C1C cards, Metallic Gold #D4AF37
  *   conviction, Oxidized Copper/Sage #5F7161 positive drivers, Muted Burgundy #8C3A3A
  *   negative drivers. Neon red/green is banned.

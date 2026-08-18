@@ -356,7 +356,42 @@ export function ols(x: readonly number[], y: readonly number[]): { alpha: number
   return { alpha: my - beta * mx, beta, r2: sxx < EPS || syy < EPS ? 0 : (sxy * sxy) / (sxx * syy) };
 }
 
-/** Augmented Dickey–Fuller τ statistic (no drift, lag 1) for stationarity. */
+/**
+ * Augmented Dickey–Fuller τ statistic, lag 1, **with a constant** — the τ_μ
+ * specification:
+ *
+ *     Δy_t = α + γ·y_{t−1} + δ·Δy_{t−1} + ε,   τ = γ̂ / SE(γ̂)
+ *
+ * The constant is load-bearing, and the version without it was a silent
+ * no-power test. This regression is run on the log-price spread against the
+ * benchmark (engine/compute.ts), which is a *level* with a large non-zero mean —
+ * across the universe the median window has |mean| 1.073 against a standard
+ * deviation of 0.108, so it sits ten of its own sigmas from zero. Forcing the
+ * fit through the origin
+ * leaves γ̂ ≈ 0 as the only way to reconcile a series that sits away from zero,
+ * so the estimator ends up reading the level rather than the reversion. Measured
+ * on simulated OU paths (θ = 0.05, stationary σ = 0.08, n = 120): with the
+ * constant the mean τ is ≈ −2.16 and rejection at the 5% value ≈ 14%, and both
+ * are invariant to μ; without it the mean τ collapses from −1.82 at μ = 0 to
+ * −0.16 at μ = −0.78 and rejection to 0%. On live data the published τ had a
+ * median of −0.57 and a maximum of +4.48 — a *positive* Dickey–Fuller statistic
+ * is a fitted explosive root, which is what reading the level instead of the
+ * reversion produces. Recomputed with the constant, the same 63 spreads have a
+ * median of −1.46.
+ *
+ * Including the constant is also what makes the shipped critical value the right
+ * one. The null distribution here is τ_μ, whose 5% point is −2.89 at n = 120
+ * (measured: −2.85 over 5000 driftless random walks, empirical size at −2.86 of
+ * 4.9%) — that is the −2.86 in engine/regime.ts. The no-constant regression has
+ * the plain τ null with a 5% point near −1.97, so comparing it to −2.86 was a
+ * 0.4% test wearing a 5% label.
+ *
+ * Solved by the Frisch–Waugh–Lovell equivalence: centring Δy_t, y_{t−1} and
+ * Δy_{t−1} and running the same two-regressor normal equations on the centred
+ * data reproduces (γ̂, δ̂) and the residuals of the three-regressor fit exactly,
+ * so the constant costs one extra pass and one degree of freedom rather than a
+ * 3×3 solve.
+ */
 export function adfStatistic(series: readonly number[]): number {
   const n = series.length;
   if (n < 20) return 0;
@@ -368,17 +403,19 @@ export function adfStatistic(series: readonly number[]): number {
     yLag.push(series[i - 1] as number);
     dyLag.push((series[i - 1] as number) - (series[i - 2] as number));
   }
-  // Two-regressor OLS: Δy_t = γ·y_{t-1} + δ·Δy_{t-1} + ε
   const n2 = dy.length;
+  const mDy = mean(dy);
+  const mYLag = mean(yLag);
+  const mDyLag = mean(dyLag);
   let s11 = 0;
   let s12 = 0;
   let s22 = 0;
   let s1y = 0;
   let s2y = 0;
   for (let i = 0; i < n2; i += 1) {
-    const a = yLag[i] as number;
-    const b = dyLag[i] as number;
-    const y = dy[i] as number;
+    const a = (yLag[i] as number) - mYLag;
+    const b = (dyLag[i] as number) - mDyLag;
+    const y = (dy[i] as number) - mDy;
     s11 += a * a;
     s12 += a * b;
     s22 += b * b;
@@ -389,17 +426,75 @@ export function adfStatistic(series: readonly number[]): number {
   if (Math.abs(det) < EPS) return 0;
   const gamma = (s1y * s22 - s2y * s12) / det;
   const delta = (s2y * s11 - s1y * s12) / det;
+  // Recovered from the centred solution rather than estimated separately.
+  const alpha = mDy - gamma * mYLag - delta * mDyLag;
   let rss = 0;
   for (let i = 0; i < n2; i += 1) {
-    const e = (dy[i] as number) - gamma * (yLag[i] as number) - delta * (dyLag[i] as number);
+    const e =
+      (dy[i] as number) - alpha - gamma * (yLag[i] as number) - delta * (dyLag[i] as number);
     rss += e * e;
   }
-  const sigma2 = rss / Math.max(1, n2 - 2);
+  // Three parameters are estimated now (α, γ, δ), so the residual degrees of
+  // freedom are n2 − 3.
+  const sigma2 = rss / Math.max(1, n2 - 3);
   const varGamma = (sigma2 * s22) / det;
   return varGamma <= 0 ? 0 : gamma / Math.sqrt(varGamma);
 }
 
-/** Hurst exponent by rescaled-range analysis; 0.5 = random walk. */
+/**
+ * Anis–Lloyd expected value of R/S for a segment of `m` independent draws:
+ *
+ *     E[R/S]_m = ((m − 0.5)/m) · Γ((m−1)/2) / (√π·Γ(m/2)) · Σ_{i=1}^{m−1} √((m−i)/i)
+ *
+ * This is the null against which the observed R/S has to be read. The raw R/S
+ * slope is *not* an estimate of H at the sample sizes used here — it converges
+ * to 0.5 from above at a rate of roughly 1/√m, which is why the uncorrected
+ * estimator reads ≈ 0.62 on pure noise at m ≤ 50.
+ *
+ * The Γ ratio is evaluated in log space so it stays finite at any segment
+ * length; it tends to (m·π/2)^(−1/2), which is the large-m form Peters
+ * substitutes above m = 340 to avoid the overflow that `lnGamma` already avoids.
+ */
+function expectedRescaledRange(m: number): number {
+  let acc = 0;
+  for (let i = 1; i < m; i += 1) acc += Math.sqrt((m - i) / i);
+  const front = Math.exp(lnGamma((m - 1) / 2) - lnGamma(m / 2)) / Math.sqrt(Math.PI);
+  return ((m - 0.5) / m) * front * acc;
+}
+
+/**
+ * Hurst exponent by rescaled-range analysis, Anis–Lloyd corrected; 0.5 = random
+ * walk, above = persistent, below = anti-persistent.
+ *
+ * The correction is the difference between an estimator and a coin flip. R/S on
+ * short segments is biased upward under the null, so regressing log(R/S) on
+ * log(m) directly — which this used to do — returns H ≈ 0.62 on iid Gaussian
+ * noise at n = 100, with 90% of draws above 0.5. That bias was not academic:
+ * `engine/regime.ts` maps H onto `persistence = clamp((H − 0.5)/0.15, −1, 1)`,
+ * so a 0.62 baseline is a standing vote for "trending" cast before any data is
+ * read. The 134 published `hurst_100` values had a mean of 0.625 against the
+ * pure-noise baseline of 0.622 — indistinguishable, which is to say the feature
+ * carried no information at all — 93% of them sat above 0.5, mean `persistence`
+ * was +0.69, and 37% were pinned at the +1 rail. Combined with the ADF above
+ * that made `mean_reverting` unreachable: it never once appeared across the 134
+ * stored signals, and `regimeMultiplier` scores reversion strategies at 1.3 in
+ * that regime against 0.55–0.6 in the trending ones.
+ *
+ * So the regressand is log(R/S_m) − log(E[R/S]_m) and the slope is H − 0.5.
+ * Measured on iid Gaussians at n = 100: mean H = 0.494 over 3000 draws (three
+ * seeds, all within 0.007 of 0.5), against 0.62 before. Discrimination is
+ * unaffected — AR(1) at φ = −0.7/0/+0.7 reads 0.29/0.49/0.72.
+ *
+ * One subtlety worth recording, because it looks like an inconsistency: the
+ * segment deviation below is the Bessel-corrected one while Anis–Lloyd derive
+ * E[R/S] against the population deviation. Those differ by √(m/(m−1)) per
+ * segment, a factor that shrinks with m and therefore tilts the slope. It tilts
+ * it *toward* the truth here — it offsets the residual finite-m error in the
+ * Anis–Lloyd expectation itself. Pairing E[R/S] with the population deviation
+ * instead was measured and reads 0.463 on the same noise; the Bessel-corrected
+ * pairing reads 0.494. The pairing is chosen by that measurement, not by
+ * derivation, and `tests/fix-quant.test.ts` pins the result.
+ */
 export function hurstExponent(series: readonly number[]): number {
   const n = series.length;
   if (n < 32) return 0.5;
@@ -431,9 +526,10 @@ export function hurstExponent(series: readonly number[]): number {
     }
     if (used > 0) {
       logN.push(Math.log(size));
-      logRS.push(Math.log(acc / used));
+      logRS.push(Math.log(acc / used) - Math.log(expectedRescaledRange(size)));
     }
   }
   if (logN.length < 2) return 0.5;
-  return clamp(ols(logN, logRS).beta, 0, 1);
+  // The regressand is the *excess* over the null, so the slope estimates H − 0.5.
+  return clamp(0.5 + ols(logN, logRS).beta, 0, 1);
 }

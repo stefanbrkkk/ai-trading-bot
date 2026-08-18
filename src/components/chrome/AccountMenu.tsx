@@ -15,6 +15,17 @@
  * page's behaviour depends on the session — the blotter, the order ticket, the
  * admin console — and the header showed the market clock and the data provider
  * while saying nothing about the account those pages were answering to.
+ *
+ * The popover is a plain disclosure, not an ARIA menu. It carried `role="menu"`
+ * with three `role="menuitem"` children, and none of the keyboard model that
+ * role promises: no arrow-key roving focus, no `tabindex` management, only
+ * click-away and Escape. Announcing "menu" to a screen-reader user is a
+ * commitment that arrow keys will move between the items, and they did not. The
+ * markup was also malformed against the spec — `menu` owns `group`,
+ * `menuitem`, `menuitemcheckbox` and `menuitemradio`, and this one had two
+ * paragraphs as direct children with the items nested a level below inside a
+ * layout `div`. Two links and a button reach the same three destinations by Tab,
+ * natively, with no promise to break.
  */
 
 import Link from 'next/link';
@@ -57,12 +68,41 @@ export function AccountMenu() {
   const user = me.data?.user ?? null;
 
   if (me.loading && me.data === null) {
-    return <span className="font-mono text-2xs uppercase tracking-institutional text-parchment-ghost">…</span>;
+    /*
+     * A placeholder the size of the control it stands in for.
+     *
+     * This used to be a bare one-character span, so the settled state appeared
+     * out of a 7px box: a 24px-tall bordered control roughly 105px wide, which
+     * grew the header row from 40px to 45px and pushed every page's content down
+     * five pixels. That single swap was the largest contributor to a CLS the
+     * header was running on all thirteen routes.
+     *
+     * All three states share the same 6.5rem floor and 10rem ceiling — this
+     * placeholder, the signed-out link and the signed-in trigger — because
+     * reserving the box of one of them shifts the other two. Measured with the
+     * session request held open, reserving nothing here left 66.4px of the
+     * cluster's travel in place after the rest of the header had been pinned;
+     * the "Sign in" ghost button is 73.8px unreserved and 104px with the floor,
+     * which is where the signed-in control already sits. A display name long
+     * enough to pass 6.5rem still grows the control, up to the 10rem it has
+     * always truncated at.
+     */
+    return (
+      <span
+        aria-hidden
+        className={cx(
+          'flex min-w-[6.5rem] max-w-[10rem] items-center border border-transparent px-2 py-1',
+          'font-mono text-2xs uppercase tracking-institutional text-parchment-ghost',
+        )}
+      >
+        …
+      </span>
+    );
   }
 
   if (user === null) {
     return (
-      <Link href="/login" className={buttonClass('ghost', 'sm', 'tap-target')}>
+      <Link href="/login" className={buttonClass('ghost', 'sm', 'tap-target min-w-[6.5rem] max-w-[10rem]')}>
         Sign in
       </Link>
     );
@@ -91,9 +131,9 @@ export function AccountMenu() {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        aria-haspopup="menu"
+        aria-haspopup="true"
         className={cx(
-          'tap-target flex max-w-[10rem] items-center gap-1.5 border border-obsidian-edge px-2 py-1',
+          'tap-target flex min-w-[6.5rem] max-w-[10rem] items-center gap-1.5 border border-obsidian-edge px-2 py-1',
           'font-mono text-2xs uppercase tracking-institutional text-parchment-dim',
           'transition-colors hover:border-parchment-ghost hover:text-parchment',
         )}
@@ -105,11 +145,7 @@ export function AccountMenu() {
       </button>
 
       {open ? (
-        <div
-          role="menu"
-          aria-label="Account"
-          className="absolute right-0 top-[calc(100%+0.5rem)] z-40 w-60 border border-obsidian-edge bg-vanta-deep p-3 shadow-plinth"
-        >
+        <div className="absolute right-0 top-[calc(100%+0.5rem)] z-40 w-60 border border-obsidian-edge bg-vanta-deep p-3 shadow-plinth">
           <p className="truncate text-[0.8125rem] text-parchment" title={user.email}>
             {user.email}
           </p>
@@ -119,7 +155,6 @@ export function AccountMenu() {
           <div className="mt-3 flex flex-col gap-1.5">
             <Link
               href="/portfolio"
-              role="menuitem"
               onClick={close}
               className="border border-transparent px-2 py-1.5 text-[0.8125rem] text-parchment-dim transition-colors hover:border-obsidian-edge hover:text-parchment"
             >
@@ -127,7 +162,6 @@ export function AccountMenu() {
             </Link>
             <Link
               href="/compliance"
-              role="menuitem"
               onClick={close}
               className="border border-transparent px-2 py-1.5 text-[0.8125rem] text-parchment-dim transition-colors hover:border-obsidian-edge hover:text-parchment"
             >
@@ -135,7 +169,6 @@ export function AccountMenu() {
             </Link>
             <button
               type="button"
-              role="menuitem"
               id="sign-out"
               disabled={busy}
               onClick={() => void signOut()}

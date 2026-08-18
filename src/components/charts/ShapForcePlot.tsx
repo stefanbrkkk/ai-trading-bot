@@ -24,6 +24,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
+import type { SignalDirection } from '@/lib/domain/types';
 import { WATERFALL_STAGGER, linePath, linearScale, type Point } from '@/lib/ui/svg';
 import {
   BURGUNDY,
@@ -39,6 +40,7 @@ import {
 import { EmptyState } from '@/components/ui/primitives';
 import { useChartWidth } from './useChartWidth';
 import { CHART_SHOWN, CHART_STILL, CHART_VIEWPORT } from './reveal';
+import { supportsSignal } from './ShapWaterfall';
 import {
   DriverTooltip,
   elementPoint,
@@ -72,6 +74,12 @@ export interface ShapForcePlotProps {
   onHover?: (featureKey: string | null) => void;
   hoveredKey?: string | null;
   width?: number;
+  /**
+   * The side the platform published for this name. Decides which sign of φ sits
+   * on the supporting side of the anchor — see `supportsSignal` in
+   * `ShapWaterfall`. Omitted is read as `long`.
+   */
+  signalDirection?: SignalDirection;
 }
 
 const VIEW_HEIGHT = 132;
@@ -150,6 +158,7 @@ export function ShapForcePlot({
   onHover,
   hoveredKey,
   width: widthFallback = 760,
+  signalDirection,
 }: ShapForcePlotProps) {
   const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
@@ -289,7 +298,7 @@ export function ShapForcePlot({
               role="button"
               tabIndex={0}
               aria-label={`${segment.label}: ${integer(segment.share * 100)} percent of attribution, ${
-                segment.direction === 'positive' ? 'supporting' : 'opposing'
+                supportsSignal(segment.direction, signalDirection) ? 'supporting' : 'opposing'
               }${segment.narrative ? `. ${segment.narrative}` : ''}`}
               className="cursor-default outline-none transition-opacity duration-150"
               opacity={dimmed ? 0.45 : 1}

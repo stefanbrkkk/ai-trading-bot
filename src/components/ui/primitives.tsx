@@ -136,20 +136,30 @@ export function StatTile({
   return (
     <div className={cx('min-w-0', className)} title={title}>
       {/*
-        Wraps on a phone, truncates from `sm` up.
+        Wraps below `lg`, truncates from `lg` up.
 
         Truncation keeps a row of tiles on one line where there is room for it,
         and `title` recovers the rest — on a pointer device. On a phone there is
         no hover and no room: at 375px "Local-accuracy residual" needed 170px in a
         107px tile and rendered as "Local-accuracy resid…", unrecoverable.
 
-        Two lines are reserved below `sm` so a wrapped label does not push its own
+        The breakpoint was `sm`, and 640px is not where the room arrives — it is
+        where the four-across grid turns on. Between 640 and about 705 each tile
+        got 116–131px while "Queryable surfaces" needed 133, so /investgpt printed
+        "QUERYABLE SURF…" and "DERIVED VARIAN…" beside two labels that fitted. It
+        is the band a 1280px window lands in at 200% zoom, which is the case that
+        matters: a reader who has zoomed to read the label is the one who loses
+        it. At `lg` the same tile is 212px against the same 133px, so nothing
+        truncates from there up.
+
+        Two lines are reserved below `lg` so a wrapped label does not push its own
         figure below its neighbour's — the grid stretches every cell to the row's
         height, which keeps the tiles the same size but not their contents in the
-        same place. The longest label in the product is 23 characters and wraps to
-        two lines at 375px, never three.
+        same place. `min-h-[2em]` at 0.625rem/1 is exactly two 10px line boxes.
+        The longest label in the product is 23 characters, which wraps to two
+        lines at 375px and at 640px, never three.
       */}
-      <p className="eyebrow mb-1.5 min-h-[2em] leading-none sm:min-h-0 sm:truncate" title={label}>
+      <p className="eyebrow mb-1.5 min-h-[2em] leading-none lg:min-h-0 lg:truncate" title={label}>
         {label}
       </p>
       <p className={cx('tabular leading-none', sizeClass, toneClass)}>

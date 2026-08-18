@@ -38,8 +38,9 @@ import {
   type ComponentProps,
   type ReactNode,
 } from 'react';
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import { useParams } from 'next/navigation';
+import { useActiveSymbol } from '@/components/TerminalProvider';
 import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
 import {
   AttentionStrip,
@@ -81,10 +82,13 @@ import {
 } from '@/components/ui/primitives';
 import { useApi } from '@/lib/ui/api';
 import {
+  bps,
   duration,
+  fixed,
   fractionAsPercent,
   sessionHalfLife,
   integer,
+  money,
   nyDateTime,
   percent,
   price,
@@ -92,7 +96,7 @@ import {
   sigma,
   signedFractionAsPercent,
 } from '@/lib/ui/format';
-import type { FeatureGroup, RegimeLabel, SignalDirection } from '@/lib/domain/types';
+import type { FeatureGroup, FeatureUnit, RegimeLabel, SignalDirection } from '@/lib/domain/types';
 
 type Domain = 'technical' | 'fundamental' | 'sentiment';
 
@@ -106,7 +110,32 @@ interface Contribution {
   state: string;
   group: FeatureGroup;
   domain: Domain;
-  unit: string;
+  /**
+   * The registry's own unit, not a free string.
+   *
+   * It was typed `string`, which is why the VALUE column and the sentence beside
+   * it could disagree in silence: `formatFeatureValue` below handled four of the
+   * twelve members — plus a fifth case, `'days'`, that has never been one — and
+   * dropped the other eight into a bare three-decimal ratio, none of which was a
+   * compile error. Narrowing the type is what makes the next unit added to
+   * `FeatureUnit` fail the build here.
+   */
+  unit: FeatureUnit;
+  /**
+   * The raw value formatted by the feature registry — the one authoritative
+   * rendering of this number.
+   *
+   * `semanticTranslation` embeds the registry's string ("Liquidity score at
+   * 89.4%"), so anything the VALUE cell formats for itself is a second opinion
+   * about a number the reader can see twice in one row. It read `0.894` beside
+   * `89.4%`, `0.193` beside `19.3%`, `−69.316` beside `−69.32 bp`.
+   *
+   * Optional only because the field is new: `/api/signals/[symbol]` has to
+   * publish it (`formatRaw` in `lib/engine/compute` is the same call the
+   * narrative already makes), and until it does the fallback below stands in.
+   * Once it is always present this becomes required and the fallback goes.
+   */
+  featureValueFormatted?: string;
 }
 
 interface WaterfallStep {
@@ -115,6 +144,14 @@ interface WaterfallStep {
   cumulative: number;
   cumulativeProbability: number;
   direction: 'positive' | 'negative';
+  /**
+   * |φ| / Σ|φ| over the whole attribution, published by the engine.
+   *
+   * The chart used to divide by the sum of the rows it was handed, which is a
+   * subset, so one driver read 17% here, 12% in the force plot and 11.9% in the
+   * table below. The denominator is now decided once, server-side.
+   */
+  share: number;
 }
 
 interface AgentInference {
@@ -363,14 +400,42 @@ function useIdleMount(): boolean {
 /**
  * One of the two attribution views, held in the DOM whether or not it is shown.
  *
- * `h-0 overflow-hidden` rather than `hidden`: the chart measures itself off its
- * own `getBoundingClientRect`, and a `display: none` subtree measures zero, so
- * the pane would have to lay out from scratch on reveal — exactly the cost this
- * is avoiding. Zero height keeps the width real and clips the drawing instead.
+ * Collapsed to zero height rather than to `display: none`: the chart measures
+ * itself off its own `getBoundingClientRect`, and a `display: none` subtree
+ * measures zero, so the pane would have to lay out from scratch on reveal —
+ * exactly the cost this is avoiding. Zero height keeps the width real and clips
+ * the drawing instead.
+ *
+ * The height is *animated* to zero, over the same 180 ms as the fade, because a
+ * class that flipped `h-0` on synchronously split one gesture into two unrelated
+ * events. Sampled per frame across a press of Force, the pane went 508 px →
+ * 132 px in a single frame — dragging the drivers heading below it 355 px up the
+ * document and taking 355 px off the page's height — while the crossfade that
+ * same press had started still had ~190 ms to run. Worse, the outgoing pane was
+ * already clipped to nothing on the frame its opacity still read 1.000, so its
+ * whole fade-out was drawn inside a zero-height box and never seen: 180 ms of
+ * animation work, none of it visible. Easing both heights with one curve makes
+ * the container's travel from 508 to 132 monotonic and puts the fade where it
+ * can be watched.
+ *
+ * Overlapping the two panes in a single grid cell would hold the geometry
+ * perfectly still, and it is the wrong trade here: the waterfall is roughly four
+ * times the height of the force plot, so the cell would size to the waterfall
+ * and the force view would carry ~376 px of empty panel beneath it — for good,
+ * rather than for 180 ms.
+ *
+ * `initial={false}` so the pane `useIdleMount` brings in late appears in its
+ * resting state instead of animating out of whatever the DOM happened to read.
  *
  * `inert` is what makes it honest: both charts put `tabIndex={0}` on every
  * driver, so a hidden-but-mounted pane would otherwise be eight invisible tab
  * stops. `aria-hidden` alone does not stop focus.
+ *
+ * `useReducedMotion` because Framer writes opacity and height straight to
+ * `style` from JavaScript, where the blanket `prefers-reduced-motion` rule in
+ * `globals.css` cannot reach them — it can only zero a CSS transition. Every
+ * other motion component in the product asks; this one did not, and still
+ * tweened through ten intermediate frames for a reader who had said no.
  */
 function AttributionPane({
   active,
@@ -381,14 +446,17 @@ function AttributionPane({
   mounted: boolean;
   children: ReactNode;
 }) {
+  // Before the `mounted` guard: a hook cannot live behind an early return.
+  const reduceMotion = useReducedMotion();
   if (!mounted) return null;
   return (
     <motion.div
-      className={active ? undefined : 'h-0 overflow-hidden'}
+      className="overflow-hidden"
       aria-hidden={!active}
       inert={!active}
-      animate={{ opacity: active ? 1 : 0 }}
-      transition={{ duration: 0.18, ease: 'easeOut' }}
+      initial={false}
+      animate={{ opacity: active ? 1 : 0, height: active ? 'auto' : 0 }}
+      transition={{ duration: reduceMotion ? 0 : 0.18, ease: 'easeOut' }}
     >
       {children}
     </motion.div>
@@ -447,11 +515,19 @@ function AttributionPanel({
   steps,
   forceContributions,
   residual,
+  signalDirection,
 }: {
   waterfall: SignalResponse['waterfall'];
   steps: ComponentProps<typeof ShapWaterfall>['steps'];
   forceContributions: ComponentProps<typeof ShapForcePlot>['contributions'];
   residual: number;
+  /*
+   * The published side, forwarded so both charts colour and label a driver by
+   * whether it argues FOR the call rather than by the sign of phi. On a short
+   * those are opposites, and the sentence beside the chart already resolves it
+   * the signal-relative way.
+   */
+  signalDirection: SignalResponse['direction'];
 }) {
   const view = useContext(ViewContext);
   const setView = useContext(SetViewContext);
@@ -496,6 +572,7 @@ function AttributionPanel({
             baseProbability={waterfall.baseProbability}
             finalProbability={waterfall.finalProbability}
             steps={steps}
+            signalDirection={signalDirection}
           />
         </AttributionPane>
         <AttributionPane active={view === 'force'} mounted={idleReady || view === 'force'}>
@@ -504,6 +581,7 @@ function AttributionPanel({
             baseProbability={waterfall.baseProbability}
             finalProbability={waterfall.finalProbability}
             contributions={forceContributions}
+            signalDirection={signalDirection}
           />
         </AttributionPane>
       </div>
@@ -537,7 +615,22 @@ function AttributionPanel({
 
 export default function SymbolPage() {
   const params = useParams<{ symbol: string }>();
-  const symbol = (params.symbol ?? '').toUpperCase();
+  /**
+   * Clamped to the same 12 characters the order APIs already enforce.
+   *
+   * The route parameter is user-supplied and lands in the request path, so the
+   * server's "X is not in the tradable universe." comes back with all of it
+   * inside — and that message renders as one unbreakable word. 300 A's in the
+   * URL made the document 3015px wide at a 1440px viewport, so the whole page
+   * scrolled sideways and every panel on it ran 1575px past the right edge. The
+   * published universe tops out at five characters, so nothing legitimate is
+   * truncated; 12 is the bound `/api/orders/*` and `/api/intent` already refuse
+   * to exceed, and matching it keeps one number in the product rather than two.
+   */
+  const symbol = (params.symbol ?? '').toUpperCase().slice(0, 12);
+  // Publishes the symbol to the terminal store, so the footer's FOCUS field
+  // names what this route is showing instead of reading NONE.
+  useActiveSymbol(symbol);
 
   const signal = useApi<SignalResponse>(symbol.length > 0 ? `/signals/${symbol}` : null);
   /**
@@ -620,20 +713,34 @@ export default function SymbolPage() {
                     ) : null
                   }
                 />
-                <AsyncSlot state={series} label="Loading series" lines={6}>
-                  {(chart) => (
-                    <div className="mt-4">
-                      <PriceChart
-                        bars={chart.daily}
-                        kalmanBand={chart.kalmanBand}
-                        bollinger={chart.bollinger}
-                        levels={data.levels}
-                        vwap={chart.vwap}
-                        showVolume
-                      />
-                    </div>
-                  )}
-                </AsyncSlot>
+                {/*
+                  The rendered height is reserved, not the skeleton's.
+
+                  The chart series resolves after the signal, and the six-line
+                  skeleton is ~235px shorter than the chart that replaces it. On
+                  a 1440x900 viewport that late growth pushed the attribution
+                  panel below the fold *after* its in-view gate had already
+                  fired, so the SHAP waterfall played its entrance where nobody
+                  could see it and was simply finished by the time it was
+                  scrolled to. Reserving the full height means resolving the
+                  series moves nothing.
+                */}
+                <div className="min-h-[520px]">
+                  <AsyncSlot state={series} label="Loading series" lines={6}>
+                    {(chart) => (
+                      <div className="mt-4">
+                        <PriceChart
+                          bars={chart.daily}
+                          kalmanBand={chart.kalmanBand}
+                          bollinger={chart.bollinger}
+                          levels={data.levels}
+                          vwap={chart.vwap}
+                          showVolume
+                        />
+                      </div>
+                    )}
+                  </AsyncSlot>
+                </div>
               </Panel>
 
               <div className="grid grid-cols-1 gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
@@ -657,17 +764,27 @@ export default function SymbolPage() {
                     </div>
                     <dl className="mt-5 space-y-0.5">
                       {/*
-                        Named for what it measures. It is the tree ensemble's
-                        P(this name beats the benchmark over the horizon) — not
-                        the probability that the published direction is right.
-                        The router is authoritative on direction and can, and
-                        does, publish SHORT against a probability above 50%; a
-                        bare "Probability" beside that reads as a contradiction.
+                        Named for what it measures, which is not what an earlier
+                        version of this comment said it was.
+
+                        `Signal.probability` is oriented to the published side —
+                        the pipeline publishes `1 − p` on a short — so it is the
+                        model's confidence in the call being shown, not a raw
+                        P(beats benchmark) that happens to sit beside a badge
+                        arguing the other way. It also can no longer be below
+                        50% on a directional name: the tree holds a veto over the
+                        router's side, and a disagreement publishes flat rather
+                        than a SHORT under a 57% chance of going up.
+
+                        The waterfall's f(x) directly below is the unoriented
+                        number and will read as the complement on a short. That
+                        is the decomposition of the model output, and it is
+                        labelled as such.
                       */}
                       <DataRow
-                        label="P(beats benchmark)"
+                        label="Confidence in this call"
                         value={fractionAsPercent(data.predictionProbability)}
-                        hint="Tree-ensemble probability of outperforming, before the router decides direction"
+                        hint="Calibrated probability that the published direction beats the benchmark over the horizon"
                       />
                       <DataRow label="Expected return" value={signedFractionAsPercent(data.expectedReturn)} />
                       <DataRow
@@ -709,66 +826,8 @@ export default function SymbolPage() {
                     steps={steps}
                     forceContributions={forceContributions}
                     residual={data.attributionResidual}
+                    signalDirection={data.direction}
                   />
-
-                  {/* ── Driver table ───────────────────────────────────── */}
-                  <Panel padded={false}>
-                    <div className="p-5 pb-0">
-                      <PanelHeader
-                        eyebrow="Drivers"
-                        title="Every contribution, in plain English"
-                        detail="Each sentence is produced by a fixed mapping from the feature's discretised state, so the same state always yields the same wording."
-                      />
-                    </div>
-                    {/*
-                      A lower floor than the shared default, because this table has
-                      five columns rather than twenty-four and the default was
-                      clipping it. At 1440 the panel is 838px wide and `minWidth:
-                      900` pushed the table 62px past it — 222px at 1280 — so every
-                      interpretation sentence ran off the right edge mid-word,
-                      behind a horizontal scrollbar, on the page whose entire
-                      purpose is reading those sentences. 560 keeps the sentence
-                      column legible on a phone and gets out of the way above it.
-                    */}
-                    <TableShell className="mt-4" minWidth={560}>
-                      <thead>
-                        <tr>
-                          <Th>Feature</Th>
-                          <Th align="right">Value</Th>
-                          <Th align="right">Share</Th>
-                          <Th>Impact</Th>
-                          <Th>Interpretation</Th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {contributions.map((c) => (
-                          <HoverableRow key={c.featureId} featureKey={c.featureId}>
-                            <Td>
-                              <span className="text-parchment">{c.featureDisplayName}</span>
-                              <span className="ml-2 font-mono text-2xs text-parchment-faint">
-                                {DOMAIN_LABELS[c.domain]}
-                              </span>
-                            </Td>
-                            <Td align="right" numeric>
-                              {formatFeatureValue(c.featureValueRaw, c.unit)}
-                            </Td>
-                            <Td align="right" numeric>
-                              {percent(c.contributionPercentage, 1)}
-                            </Td>
-                            <Td>
-                              <Meter
-                                value={c.contributionPercentage / 100}
-                                tone={c.impactDirection === 'positive' ? 'sage' : 'burgundy'}
-                              />
-                            </Td>
-                            <Td>
-                              <span className="text-parchment-dim">{c.semanticTranslation}</span>
-                            </Td>
-                          </HoverableRow>
-                        ))}
-                      </tbody>
-                    </TableShell>
-                  </Panel>
 
                   {/* ── Counter-thesis ─────────────────────────────────── */}
                   <Panel>
@@ -782,8 +841,96 @@ export default function SymbolPage() {
                 </div>
               </div>
 
+              {/* ── Driver table ──────────────────────────────────────── */}
+              {/*
+                Below the grid rather than inside it, and at the shell's full
+                width.
+
+                This table was what made the grid's right-hand column 1999px tall
+                at 1440 while the rail on its left ran out of content at 1013px —
+                986px of empty black, 49% of the row, and 57% of it at 1280. The
+                rail is a fixed 320px of dial, published levels and a legal
+                notice, and there is nothing honest to add to it, so the tall
+                thing moves rather than the short one growing. With the table
+                gone, the attribution panel and the counter-thesis under it come
+                out close to the rail's height and the void closes; the table
+                gains about 340px of width on the way out, which the
+                interpretation sentences spend far better than the void did.
+              */}
+              <Panel padded={false} className="mt-5">
+                <div className="p-5 pb-0">
+                  <PanelHeader
+                    eyebrow="Drivers"
+                    title="Every contribution, in plain English"
+                    detail="Each sentence is produced by a fixed mapping from the feature's discretised state, so the same state always yields the same wording."
+                  />
+                </div>
+                {/*
+                  A lower floor than the shared default, because this table has
+                  five columns rather than twenty-four and the default was
+                  clipping it. Inside the 838px column this panel used to sit in,
+                  `minWidth: 900` pushed the table 62px past it — 222px at 1280 —
+                  so every interpretation sentence ran off the right edge
+                  mid-word, behind a horizontal scrollbar, on the page whose
+                  entire purpose is reading those sentences. The panel now spans
+                  the shell, which is where those sentences wanted to be all
+                  along; 560 is what keeps the sentence column legible on a phone
+                  and gets out of the way above it.
+                */}
+                <TableShell className="mt-4" minWidth={560}>
+                  <thead>
+                    <tr>
+                      <Th>Feature</Th>
+                      <Th align="right">Value</Th>
+                      <Th align="right">Share</Th>
+                      <Th>Impact</Th>
+                      <Th>Interpretation</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {contributions.map((c) => (
+                      <HoverableRow key={c.featureId} featureKey={c.featureId}>
+                        <Td>
+                          <span className="text-parchment">{c.featureDisplayName}</span>
+                          <span className="ml-2 font-mono text-2xs text-parchment-faint">
+                            {DOMAIN_LABELS[c.domain]}
+                          </span>
+                        </Td>
+                        <Td align="right" numeric>
+                          {c.featureValueFormatted ?? formatFeatureValue(c.featureValueRaw, c.unit)}
+                        </Td>
+                        <Td align="right" numeric>
+                          {percent(c.contributionPercentage, 1)}
+                        </Td>
+                        <Td>
+                          <Meter
+                            value={c.contributionPercentage / 100}
+                            tone={c.impactDirection === 'positive' ? 'sage' : 'burgundy'}
+                          />
+                        </Td>
+                        <Td>
+                          <span className="text-parchment-dim">{c.semanticTranslation}</span>
+                        </Td>
+                      </HoverableRow>
+                    ))}
+                  </tbody>
+                </TableShell>
+              </Panel>
+
               {/* ── Agents and router ──────────────────────────────────── */}
-              <div className="mt-5 grid gap-5 lg:grid-cols-2">
+              {/*
+                `items-start`, deliberately, and only on the grids that pair two
+                panels of genuinely different length.
+
+                Equal-height cards are the right default and are relied on
+                elsewhere (see `src/app/terminal/page.tsx`, which says so). Here
+                the two panels are a fixed three-row summary beside a list that
+                grows with the data, so stretching left 31–39% of one card as
+                empty ground with a border drawn around it — which reads as
+                content that failed to load rather than as a card that is simply
+                shorter.
+              */}
+              <div className="mt-5 grid items-start gap-5 lg:grid-cols-2">
                 <Panel>
                   <PanelHeader
                     eyebrow="Multi-timeframe agents"
@@ -1112,26 +1259,65 @@ export default function SymbolPage() {
 }
 
 /**
- * Formats a feature value in its own unit.
+ * Formats a feature value in its own unit — the fallback, not the authority.
  *
- * The unit comes from the registry rather than being inferred from the magnitude:
- * an RSI of 0.42 and a ratio of 0.42 are different claims, and guessing from the
- * number would render one of them wrong.
+ * `Contribution.featureValueFormatted` is the authority: the string the feature
+ * registry itself produced, which is the same string already embedded in the
+ * interpretation sentence in this row. This function runs only for a payload
+ * that predates that field, and it is written this way so the two can no longer
+ * disagree about *what kind of quantity* a number is.
+ *
+ * They did. Typed `unit: string` with a `default` arm, it recognised four of the
+ * twelve units and dropped the other eight into a bare three-decimal ratio — so
+ * `bps`, `probability`, `index_0_100`, `bars`, `shares`, `volpoints`,
+ * `signed_unit` and `count` all rendered as plain decimals. A probability
+ * rendered `0.894` in the VALUE column beside "(Liquidity score at 89.4%)" in
+ * the sentence next to it, basis points rendered `−69.316` beside "−69.32 bp",
+ * and an explained-variance share rendered `0.193` beside "19.3%". It also
+ * carried a `'days'` case for a unit `FeatureUnit` has never had. Taking
+ * `FeatureUnit` and dropping the `default` arm is what turns the next unit added
+ * to the registry into a compile error here instead of another silent `ratio()`.
+ *
+ * The unit is still what selects the arm, and it comes from the registry rather
+ * than being inferred from the magnitude: an RSI of 0.42 and a ratio of 0.42 are
+ * different claims, and guessing from the number would render one of them wrong.
+ *
+ * The arms mirror `formatFeatureValue` in `lib/engine/features`, with one
+ * residual difference: that function reads each feature's own `precision`, which
+ * this payload does not carry, so a unit whose features do not share a precision
+ * can still round a digit differently. That is why the published string wins
+ * wherever it exists, and why this should be deleted once the route always
+ * sends it.
  */
-function formatFeatureValue(value: number, unit: string): string {
+function formatFeatureValue(value: number, unit: FeatureUnit): string {
   if (!Number.isFinite(value)) return '—';
   switch (unit) {
     case 'percent':
       return percent(value, 2);
+    case 'bps':
+      return bps(value, 2);
+    case 'volpoints':
+      // No leading '+': the registry prints a sign only when it is negative.
+      return `${fixed(value, 2)} vp`;
+    case 'probability':
+      // A probability is published as a percentage, never as its own decimal.
+      return fractionAsPercent(value, 1);
     case 'zscore':
       return sigma(value);
+    case 'signed_unit':
+      return `${value >= 0 ? '+' : ''}${fixed(value, 3)}`;
+    case 'bars':
+      return `${fixed(value, 1)} bars`;
     case 'currency':
-      return price(value);
+      // `money`, not `price`: the registry's currency arm carries the '$'.
+      return money(value);
+    case 'shares':
+      return integer(value);
+    case 'index_0_100':
+      return fixed(value, 1);
+    case 'count':
+      return fixed(value, 0);
     case 'ratio':
-      return ratio(value);
-    case 'days':
-      return `${ratio(value)}d`;
-    default:
       return ratio(value);
   }
 }

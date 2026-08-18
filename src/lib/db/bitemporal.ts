@@ -31,7 +31,7 @@ import { randomUUID } from 'node:crypto';
 import { getDb } from '@/lib/db/client';
 import type { SqlDriver, SqlRow } from '@/lib/db/driver';
 import { num, parseJson, str, strOrNull } from '@/lib/db/row';
-import { APPEND_ONLY_TRIGGERS, APPEND_ONLY_TRIGGER_NAMES } from '@/lib/db/schema';
+import { APPEND_ONLY_TRIGGERS, APPEND_ONLY_TRIGGER_NAMES, EVIDENCE_TRIGGER_NAMES } from '@/lib/db/schema';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  JSON value model and RFC 6902 patches
@@ -684,10 +684,44 @@ export interface AppendOnlyProof {
   updateBlocked: boolean;
   /** True when a real DELETE against a real row was aborted by the engine. */
   deleteBlocked: boolean;
+  /**
+   * Per evidence table, whether the freeze holds — and how that was established.
+   * `fired` means a real UPDATE against a real row was aborted by the engine;
+   * `declared` means the table was empty, so there was nothing to fire against
+   * and the trigger's own text was read back and checked instead. Reported
+   * rather than summarised, so the compliance console can name the table that is
+   * unprotected instead of only that something is.
+   */
+  evidence: { table: string; updateBlocked: boolean; evidence: 'fired' | 'declared' }[];
   enforced: boolean;
 }
 
 const PROBE_ID = '__aurelius_append_only_probe__';
+
+/** Every trigger the ledger must carry: the bitemporal pair and the evidence tables. */
+const EXPECTED_TRIGGERS: readonly string[] = [...APPEND_ONLY_TRIGGER_NAMES, ...EVIDENCE_TRIGGER_NAMES];
+
+/**
+ * One UPDATE per evidence table, against a column that must never move.
+ *
+ * Each runs inside its own savepoint and is rolled back whether it aborts or
+ * not, so the probe never leaves a mark on a populated ledger.
+ *
+ * A row-level `BEFORE UPDATE` trigger fires once per matched row, so on an empty
+ * table the statement succeeds having changed nothing and proves nothing. That
+ * is not a failure and must not be reported as one: a fresh deployment has an
+ * empty audit ledger by definition. Where there is no row to fire against, the
+ * trigger's own text is read back out of `sqlite_master` instead and checked to
+ * be a `RAISE(ABORT)` on that table — weaker evidence, honestly labelled, and it
+ * strengthens by itself the moment the table has its first row.
+ */
+const EVIDENCE_PROBES: readonly { table: string; update: string }[] = [
+  { table: 'audit_events', update: "UPDATE audit_events SET raw_payload = '__probe__'" },
+  { table: 'tos_acceptances', update: "UPDATE tos_acceptances SET version = '__probe__'" },
+  { table: 'risk_decisions', update: 'UPDATE risk_decisions SET approved = 1 - approved' },
+  { table: 'orders', update: 'UPDATE orders SET quantity = quantity + 1' },
+  { table: 'order_telemetry', update: "UPDATE order_telemetry SET click_json = '__probe__'" },
+];
 
 /**
  * Proves — rather than documents — that the ledger cannot be rewritten.
@@ -709,13 +743,24 @@ export function assertAppendOnly(db: SqlDriver = getDb()): AppendOnlyProof {
     db.exec(statement);
   }
 
+  /*
+   * The placeholder list is generated, not written out.
+   *
+   * It used to be a literal `IN (?, ?, ?, ?)` matching the four names of the
+   * day, so adding a fifth trigger threw `column index out of range` at
+   * startup — a guard that breaks when the thing it guards grows is a guard
+   * nobody can extend. `EXPECTED_TRIGGERS` is the two families together: the
+   * bitemporal snapshot/delta pair and the evidence tables (audit_events,
+   * tos_acceptances, risk_decisions, orders, order_telemetry), so this proves
+   * the whole ledger rather than a corner of it.
+   */
   const installed = db
     .prepare(
       `SELECT name FROM sqlite_master
-        WHERE type = 'trigger' AND name IN (?, ?, ?, ?)
+        WHERE type = 'trigger' AND name IN (${EXPECTED_TRIGGERS.map(() => '?').join(', ')})
         ORDER BY name`,
     )
-    .all(...APPEND_ONLY_TRIGGER_NAMES)
+    .all(...EXPECTED_TRIGGERS)
     .map((row) => str(row, 'name'));
 
   let updateBlocked = false;
@@ -754,19 +799,62 @@ export function assertAppendOnly(db: SqlDriver = getDb()): AppendOnlyProof {
     db.exec('RELEASE aurelius_append_only_probe');
   }
 
+  /*
+   * The evidence tables are proved the same way, not assumed from the trigger
+   * count. A trigger that exists but whose body was rewritten to a no-op would
+   * still be listed above; only an aborted statement is evidence. Each frozen
+   * table is probed on a column that must never move — the audit ledger's
+   * payload, an acceptance's version, a risk decision's verdict, an order's
+   * quantity, a telemetry row's control result.
+   */
+  const evidenceBlocked = EVIDENCE_PROBES.map((probe) => {
+    const populated = db.prepare(`SELECT COUNT(*) AS n FROM ${probe.table}`).get();
+    const rows = populated === undefined ? 0 : num(populated, 'n');
+
+    if (rows === 0) {
+      const declared = db
+        .prepare(`SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?`)
+        .all(probe.table)
+        .map((row) => str(row, 'sql'));
+      const guards =
+        declared.some((sql) => /BEFORE\s+UPDATE/i.test(sql) && /RAISE\s*\(\s*ABORT/i.test(sql)) &&
+        declared.some((sql) => /BEFORE\s+DELETE/i.test(sql) && /RAISE\s*\(\s*ABORT/i.test(sql));
+      return { table: probe.table, updateBlocked: guards, evidence: 'declared' as const };
+    }
+
+    let blocked = false;
+    db.exec('SAVEPOINT aurelius_evidence_probe');
+    try {
+      db.prepare(probe.update).run();
+    } catch {
+      blocked = true;
+    } finally {
+      db.exec('ROLLBACK TO aurelius_evidence_probe');
+      db.exec('RELEASE aurelius_evidence_probe');
+    }
+    return { table: probe.table, updateBlocked: blocked, evidence: 'fired' as const };
+  });
+
   const proof: AppendOnlyProof = {
     triggers: installed,
     updateBlocked,
     deleteBlocked,
+    evidence: evidenceBlocked,
     enforced:
-      updateBlocked && deleteBlocked && installed.length === APPEND_ONLY_TRIGGER_NAMES.length,
+      updateBlocked &&
+      deleteBlocked &&
+      installed.length === EXPECTED_TRIGGERS.length &&
+      evidenceBlocked.every((e) => e.updateBlocked),
   };
 
   if (!proof.enforced) {
+    const unprotected = evidenceBlocked.filter((e) => !e.updateBlocked).map((e) => e.table);
     throw new BitemporalError(
       'append-only enforcement is not active on the bitemporal ledger ' +
-        `(triggers=${proof.triggers.length}/${APPEND_ONLY_TRIGGER_NAMES.length}, ` +
-        `updateBlocked=${proof.updateBlocked}, deleteBlocked=${proof.deleteBlocked})`,
+        `(triggers=${proof.triggers.length}/${EXPECTED_TRIGGERS.length}, ` +
+        `updateBlocked=${proof.updateBlocked}, deleteBlocked=${proof.deleteBlocked}` +
+        (unprotected.length === 0 ? '' : `, unprotected=${unprotected.join(',')}`) +
+        ')',
     );
   }
   return proof;

@@ -1,10 +1,10 @@
 /**
  * Kalman filter state-space estimation.
  *
- * MASTER §2.2 / Phase 1 §2: replace Ordinary Least Squares with a Kalman filter
- * so the estimate adapts to heteroskedasticity instead of giving equal weight
- * across a fixed lookback. Phase 1 §4.1 then requires "Kalman Innovation
- * Bands": because the error covariance P updates on every tick from the
+ * The requirement: replace Ordinary Least Squares with a Kalman filter so the
+ * estimate adapts to heteroskedasticity instead of giving equal weight across a
+ * fixed lookback, and draw the execution bands from it — "Kalman Innovation
+ * Bands" — because the error covariance P updates on every tick from the
  * observed residual variance, the execution bands expand and contract with the
  * live regime rather than with a historical 20-period standard deviation.
  *
@@ -319,9 +319,16 @@ export interface DynamicHedgePoint {
 }
 
 /**
- * Time-varying regression y_t = α_t + β_t·x_t + ε with a random-walk state.
- * This is the state-space replacement for a rolling OLS hedge ratio and feeds
- * the OU calibrator with a spread whose β is already regime-adaptive.
+ * Time-varying regression y_t = α_t + β_t·x_t + ε with a random-walk state — the
+ * state-space replacement for a rolling OLS hedge ratio.
+ *
+ * Published as part of the `kalman` module's declared API surface
+ * (docs/BUILD_CONTRACT.md §kalman), with no caller inside the platform. Said
+ * plainly because the docstring used to claim the opposite: the shipped OU
+ * calibrator does *not* consume this. `engine/compute.ts` builds its spread as a
+ * fixed unit-β log difference, log(close) − log(benchmarkClose), fits it with
+ * `fitOu` and publishes that as `ou_zscore`. Nothing on that path reaches this
+ * function, so a β estimated here has never moved a number a user sees.
  */
 export function dynamicHedgeRatio(
   y: readonly number[],
@@ -361,9 +368,11 @@ export function dynamicHedgeRatio(
      * a priori innovation. Dividing one by the other pairs two different
      * quantities, and the mismatch grows with the filter's gain: at
      * `processNoise = 1e-2` the posterior residual collapses to zero by
-     * construction, so a five-unit dislocation on a 300-point cointegrated pair
-     * reported z = 0.0000 — "at fair value" for the largest gap in the series,
-     * on the statistic the OU reversion strategy trades.
+     * construction, so the reported z collapses toward zero exactly on the
+     * largest dislocations — "at fair value" for the widest gap in the series.
+     * The `ou_zscore` the reversion strategy trades does not come from here (see
+     * the function docstring), so this was a defect in a published-but-uncalled
+     * export rather than one that reached a user.
      *
      * `step.innovation` is the residual `S` is the variance of. It was already
      * being computed and thrown away.

@@ -44,8 +44,16 @@ import { useEffect, useRef, useState } from 'react';
  * designed at, on the page where the numbers are the product.
  *
  * At 240 the viewBox equals the host from 240px up, so the scale is exactly 1
- * and a 9px label is 9px. `tests`/the chart-text sweep check that no label pair
- * collides at the narrow end.
+ * and a 9px label is 9px.
+ *
+ * Nothing in the suite guards that floor. This paragraph used to end "`tests`/the
+ * chart-text sweep check that no label pair collides at the narrow end" — an
+ * unfilled placeholder naming a sweep that has never existed, which is worse than
+ * silence because it reads as coverage. The 240 was set by hand-measuring the
+ * densest charts at that width, and a change back to 320 would not be caught
+ * automatically. A real guard would have to be a Playwright case in
+ * `e2e/platform.spec.ts` comparing `getBBox` rects of the `<text>` nodes inside a
+ * chart at 390px; vitest runs in `node`, with no layout to measure.
  */
 export const MIN_CHART_WIDTH = 240;
 

@@ -14,10 +14,28 @@
  * The factory is instantiated exactly once per mount via `useRef` inside
  * `TerminalProvider`, and consumed only through atomic selectors so a component
  * re-renders iff its own slice changes under strict `===` equality.
+ *
+ * ── What is actually wired ──────────────────────────────────────────────────
+ *
+ * One component subscribes: `chrome/StatusStrip`, through `selectActiveAsset`
+ * and `selectRefreshMode`.
+ *
+ * `activeAsset` was unwritten for a long time — no route called `updateAsset`,
+ * so the footer reported `FOCUS — NONE` on `/terminal/AAPL` and `/order/NVDA`,
+ * the two routes where a symbol demonstrably is in focus. Both now publish it
+ * through `useActiveSymbol` (`components/TerminalProvider`). `refreshMode` is
+ * still `'long_run'` for the life of the app: `app/layout.tsx` mounts the
+ * provider with no `initialState` and nothing offers the user a way to change
+ * it, which is the honest state of a field that describes a polling cadence the
+ * product does not currently let anyone vary.
+ *
+ * The read helpers nobody read were removed, so the exported selector list is
+ * exactly what the tree subscribes to and this note cannot quietly become false
+ * again.
  */
 
 import { createStore } from 'zustand/vanilla';
-import type { RegimeLabel, ScreenerFilter, Signal, SignalDirection } from '@/lib/domain/types';
+import type { ScreenerFilter, Signal } from '@/lib/domain/types';
 
 /** Which XAI domain tab is open on the signal detail view. */
 export type XaiTab = 'technical' | 'fundamental' | 'sentiment';
@@ -166,17 +184,14 @@ export function createTerminalStore(initState: Partial<TerminalState> = {}) {
  * matters: an inline selector returning a fresh object would defeat the `===`
  * equality gate and re-render on every store write, which is precisely the
  * layout thrashing the research warns about.
+ *
+ * Two, because two are subscribed to. There were thirteen, and the other eleven
+ * — conviction, signal, direction, regime, the XAI tab, the hovered driver, the
+ * open tooltip, the screener filter, the watchlist, density and the ticket — had
+ * no subscriber anywhere in the tree. An exported read API that no component
+ * reads is not a smaller version of a wired one; it makes an unwired store look
+ * wired to the next person who greps it. Any of them is two lines to restore
+ * beside the component that needs it.
  */
 export const selectActiveAsset = (s: TerminalState): string => s.activeAsset;
-export const selectConviction = (s: TerminalState): number => s.convictionScore;
-export const selectSignal = (s: TerminalState): Signal | null => s.signal;
-export const selectDirection = (s: TerminalState): SignalDirection => s.signal?.direction ?? 'flat';
-export const selectRegime = (s: TerminalState): RegimeLabel | null => s.signal?.regime ?? null;
-export const selectXaiTab = (s: TerminalState): XaiTab => s.xaiTab;
-export const selectHoveredDriver = (s: TerminalState): string | null => s.hoveredDriver;
-export const selectOpenTooltip = (s: TerminalState): string | null => s.openTooltip;
-export const selectScreenerFilter = (s: TerminalState): ScreenerFilter => s.screenerFilter;
-export const selectWatchlist = (s: TerminalState): string[] => s.watchlist;
 export const selectRefreshMode = (s: TerminalState): RefreshMode => s.refreshMode;
-export const selectDensity = (s: TerminalState): 'comfortable' | 'compact' => s.density;
-export const selectTicket = (s: TerminalState): TerminalState['ticket'] => s.ticket;

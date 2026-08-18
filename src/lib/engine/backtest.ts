@@ -437,10 +437,29 @@ export function computeMetrics(
    * which turns a partial-moment into an average loss and inflates it by roughly
    * sqrt(n/k). Measured on the seeded fixture: 42 negative days out of 753 gave a
    * downside deviation of 0.1151 against a volatility of 0.0384 — three times the
-   * standard deviation of the same series, which is arithmetically impossible for
-   * a quantity restricted to a subset of it. Because Sortino divides by it, the
-   * page then reported |Sortino| 0.103 < |Sharpe| 0.308, the reverse of the
-   * relationship the two ratios must have.
+   * standard deviation of the series it is drawn from, because dividing by 42
+   * instead of 753 leaves a quantity that is not a deviation of that series at
+   * all. Sortino divides by it, so the page reported |Sortino| 0.103 against a
+   * |Sharpe| of 0.308.
+   *
+   * What the corrected form guarantees is weaker than this module used to claim,
+   * and the claim is worth stating exactly because it is tempting to over-read.
+   * The semideviation below measures dispersion about a MAR of zero, while
+   * `volatility` measures it about the sample mean, so the two are not nested:
+   *
+   *     downsideDeviation² = volatility² + 252·meanDaily² − 252·E[max(0, r)²]
+   *
+   * The bound is therefore `downsideDeviation² ≤ volatility² + 252·meanDaily²`,
+   * with equality only when no day was positive — and downside deviation may
+   * genuinely exceed volatility, taking |Sortino| below |Sharpe| with it,
+   * whenever the mean is large against the dispersion. On seeded 252-bar walks at
+   * 1%/day the flip appears from about −0.4%/day of drift onward and is stable
+   * across seeds: at −0.6%/day, volatility 0.1641 against downside deviation
+   * 0.1665, Sharpe −7.93 against Sortino −7.82. That is not a defect to be fixed
+   * downstream; it is what a curve losing money on most days does, and any
+   * invariant asserting otherwise is asserting something untrue. The bound that
+   * does hold is pinned in `tests/fix-engine-compute.test.ts` over drifts strong
+   * enough to break the naive one.
    */
   const downsideSquares = dailyReturns.map((r) => Math.min(0, r) ** 2);
   const downsideDeviation = Math.sqrt(mean(downsideSquares)) * Math.sqrt(TRADING_DAYS_PER_YEAR);
@@ -490,15 +509,28 @@ export function computeMetrics(
    * number JSON can hold and every consumer can recognise.
    */
   const profitFactor = grossLoss < EPS ? (grossWin > 0 ? Infinity : 0) : grossWin / grossLoss;
-  const payoffRatio =
-    losses.length === 0 || wins.length === 0
-      ? 0
-      : Math.max(...wins.map((t) => t.netPnl)) / Math.abs(Math.min(...losses.map((t) => t.netPnl)));
+  /*
+   * Average win / average loss — the conventional payoff ratio, and the only one
+   * the rest of the page lets a reader reconstruct.
+   *
+   * This used to be `max(wins) / |min(losses)|`: the single best trade over the
+   * single worst one. On the seeded run that published 1.887 beneath a tile
+   * footnote reading "Payoff", while the trade-distribution panel further down
+   * the same page printed an average win of $1,248.49 and an average loss of
+   * $770.08 — whose quotient is 1.621. Anyone performing the division the label
+   * describes got a number 16% below the one printed next to it, and the gap ran
+   * in the strategy's favour. Extremes are not averages; a field named for the
+   * ratio of averages has to be the ratio of averages.
+   *
+   * It is also exactly the `b` the Kelly fraction below has always used, so the
+   * two are one binding now instead of two incompatible definitions of "payoff"
+   * six lines apart.
+   */
+  const payoffRatio = wins.length === 0 || averageLoss < EPS ? 0 : averageWin / averageLoss;
 
   // Kelly fraction implied by the realised win rate and payoff ratio. Reported
   // as a statistic of the *backtest*, never applied to a user account.
-  const b = averageLoss < EPS ? 0 : averageWin / averageLoss;
-  const kellyFraction = b <= 0 ? 0 : clamp(winRate - (1 - winRate) / b, 0, 1);
+  const kellyFraction = payoffRatio <= 0 ? 0 : clamp(winRate - (1 - winRate) / payoffRatio, 0, 1);
 
   const streaks = computeStreaks(trades);
 

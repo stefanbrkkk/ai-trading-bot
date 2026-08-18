@@ -231,11 +231,28 @@ const RELATION_LIST_END: ReadonlySet<string> = new Set([
  * ignored. A validator that only looks for names it recognises cannot report the
  * one case that matters.
  *
- * A parenthesis after FROM introduces a subquery rather than a relation, and the
- * subquery's own FROM is visited by the same scan, so nesting needs no special
- * handling. A CTE name is collected separately and excluded from the allowlist
- * check, because it refers to a query defined in the same statement rather than to
- * a stored relation.
+ * A CTE name is collected separately and excluded from the allowlist check,
+ * because it refers to a query defined in the same statement rather than to a
+ * stored relation.
+ *
+ * A parenthesis in the list is **not** a reason to stop reading it. The scan used
+ * to `break` there, on the reasoning that a parenthesis introduces a subquery and
+ * a subquery's own FROM is visited by the same outer scan. Both halves of that are
+ * wrong, and together they were a hole straight through the security boundary:
+ *
+ *     SELECT email, password_hash FROM v_equity_snapshot, (users)
+ *
+ * SQLite's `table-or-subquery` grammar accepts `( table-or-subquery-list )` and
+ * `( join-clause )` as well as `( select-stmt )`, so `(users)` is a plain relation
+ * reference with no inner FROM for anything to visit — and because `break` left
+ * the list entirely, nothing after the parenthesis was read either. The statement
+ * validated as touching only `v_equity_snapshot` and then executed, returning real
+ * password hashes out of the live store.
+ *
+ * So a parenthesised element is now walked. Its contents are scanned recursively
+ * as a relation list, except when they open a `SELECT`, `WITH` or `VALUES` — a
+ * true subquery, whose own FROM the outer scan does visit. Either way the walk
+ * resumes after the matching close paren, so the rest of the list is still read.
  *
  * The FROM clause is a comma-separated *list*, and reading only the token after
  * FROM saw only its first element. That is the whole security boundary, so
@@ -297,7 +314,54 @@ function extractRelations(tokens: readonly Token[]): {
     for (;;) {
       const next = tokens[cursor] as Token | undefined;
       if (next === undefined) break;
-      if (next.raw === '(') break; // subquery — its own FROM is scanned separately
+      if (next.raw === '(') {
+        // Find the matching close paren.
+        let depth = 0;
+        let close = cursor;
+        while (close < tokens.length) {
+          const inner = tokens[close] as Token;
+          if (inner.raw === '(') depth += 1;
+          else if (inner.raw === ')') {
+            depth -= 1;
+            if (depth === 0) break;
+          }
+          close += 1;
+        }
+        // Unbalanced: nothing further can be read reliably, so stop rather than
+        // guess. `validateSql` reports the imbalance separately.
+        if (close >= tokens.length) break;
+
+        const head = tokens[cursor + 1] as Token | undefined;
+        const isSubquery =
+          head?.kind === 'word' && (head.value === 'SELECT' || head.value === 'WITH' || head.value === 'VALUES');
+        if (!isSubquery) {
+          const inner = extractRelations([
+            { kind: 'word', raw: 'FROM', value: 'FROM', start: next.start },
+            ...tokens.slice(cursor + 1, close),
+          ]);
+          relations.push(...inner.relations);
+          for (const name of inner.aliases) aliases.add(name);
+          for (const name of inner.cteNames) cteNames.add(name);
+        }
+
+        // Step over an alias on the group, then a comma continues the list.
+        let after = close + 1;
+        const groupAs = tokens[after] as Token | undefined;
+        if (groupAs?.kind === 'word' && groupAs.value === 'AS') after += 1;
+        const groupAlias = tokens[after] as Token | undefined;
+        const groupAliasIsKeyword = groupAlias?.kind === 'word' && RELATION_LIST_END.has(groupAlias.value);
+        if (
+          groupAlias !== undefined &&
+          (groupAlias.kind === 'word' || groupAlias.kind === 'identifier') &&
+          !groupAliasIsKeyword
+        ) {
+          aliases.add((groupAlias.kind === 'identifier' ? groupAlias.value : groupAlias.raw).toLowerCase());
+          after += 1;
+        }
+        if ((tokens[after] as Token | undefined)?.raw !== ',') break;
+        cursor = after + 1;
+        continue;
+      }
       if (next.kind !== 'word' && next.kind !== 'identifier') break;
       // A bare keyword here is the end of the list, not a relation named WHERE.
       if (next.kind === 'word' && RELATION_LIST_END.has(next.value)) break;

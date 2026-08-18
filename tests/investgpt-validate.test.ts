@@ -64,6 +64,59 @@ describe('validateSql — comma-joined relation lists', () => {
   });
 });
 
+describe('validateSql — parenthesised relations', () => {
+  /*
+   * The second way through the same boundary, and a worse one.
+   *
+   * The list walk stopped at an open parenthesis, on the reasoning that a
+   * parenthesis introduces a subquery whose own FROM the outer scan visits
+   * anyway. SQLite's `table-or-subquery` grammar also accepts `( relation )`
+   * and `( join-clause )`, which have no inner FROM for anything to visit — and
+   * stopping meant the rest of the list went unread too. One pair of brackets
+   * turned a refused query into an allowed one:
+   *
+   *     SELECT email, password_hash FROM v_equity_snapshot, (users)
+   *
+   * That validated clean and returned real scrypt hashes out of the live store.
+   */
+  const smuggled = [
+    ['a parenthesised relation after a comma', 'SELECT email, password_hash FROM v_equity_snapshot, (users) LIMIT 5'],
+    ['a parenthesised relation after JOIN', 'SELECT * FROM v_equity_snapshot JOIN (audit_events) ON 1 = 1 LIMIT 5'],
+    ['a parenthesised relation in first position', 'SELECT * FROM (users) JOIN v_equity_snapshot ON 1 = 1 LIMIT 5'],
+    ['double brackets', 'SELECT * FROM v_equity_snapshot, ((sessions)) LIMIT 5'],
+    ['two of them at once', 'SELECT * FROM v_equity_snapshot, (orders), (audit_events) LIMIT 5'],
+    ['one behind an alias', 'SELECT * FROM v_equity_snapshot, (users) u LIMIT 5'],
+    ['one behind an AS alias', 'SELECT * FROM v_equity_snapshot, (users) AS u LIMIT 5'],
+    ['a parenthesised join clause', 'SELECT * FROM v_equity_snapshot, (users JOIN orders ON 1 = 1) LIMIT 5'],
+  ] as const;
+
+  for (const [shape, sql] of smuggled) {
+    it(`refuses ${shape}`, () => {
+      const result = verdict(sql);
+      expect(result.valid, JSON.stringify(result.issues)).toBe(false);
+      expect(result.issues.some((issue) => issue.code === 'RELATION_NOT_ALLOWED')).toBe(true);
+    });
+  }
+
+  it('reads the rest of the list after a parenthesised element, rather than stopping', () => {
+    const result = verdict('SELECT * FROM v_equity_snapshot, (v_signal_latest), users LIMIT 5');
+    expect(result.tables).toContain('users');
+    expect(result.valid).toBe(false);
+  });
+
+  it('still treats a genuine subquery as a subquery, not as a relation named SELECT', () => {
+    const result = verdict('SELECT symbol FROM (SELECT symbol FROM v_signal_latest LIMIT 5) LIMIT 5');
+    expect(result.valid, JSON.stringify(result.issues)).toBe(true);
+    expect(result.tables).not.toContain('select');
+  });
+
+  it('finds a smuggled relation inside a subquery in the list', () => {
+    const result = verdict('SELECT symbol FROM v_equity_snapshot, (SELECT token FROM sessions) LIMIT 5');
+    expect(result.valid, JSON.stringify(result.issues)).toBe(false);
+    expect(result.tables).toContain('sessions');
+  });
+});
+
 describe('validateSql — unknown qualifiers', () => {
   it('refuses a qualifier that is neither relation, CTE nor declared alias', () => {
     const sql = 'SELECT users.password_hash FROM v_equity_snapshot v LIMIT 10';
@@ -93,6 +146,8 @@ describe('validateSql — the legitimate shapes still pass', () => {
     'SELECT symbol FROM v_equity_snapshot WHERE symbol IN (SELECT symbol FROM v_signal_latest) LIMIT 10',
     'WITH top AS (SELECT symbol FROM v_signal_latest LIMIT 5) SELECT symbol FROM top LIMIT 5',
     'SELECT COUNT(*) AS n FROM v_equity_snapshot LIMIT 1',
+    'SELECT v.symbol FROM (v_equity_snapshot v JOIN v_signal_latest s ON s.symbol = v.symbol) LIMIT 25',
+    'SELECT symbol FROM (v_signal_latest) LIMIT 10',
   ];
 
   for (const sql of valid) {

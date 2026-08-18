@@ -30,8 +30,9 @@
  * `optimalSize` is a Kelly *exposure fraction of the model's own notional
  * unit*. It is computed only from the model's aggregate signal strength. It
  * never reads a user's balance, holdings, buying power or risk tolerance, and it
- * is never used to pre-fill an order quantity — MASTER §4.3 and Phase 5 §1
- * prohibit algorithmic position sizing outright. It is published as an
+ * is never used to pre-fill an order quantity: the specification prohibits
+ * algorithmic position sizing outright, and so does Rule 15c3-5's separation of
+ * a broker's risk controls from a customer's sizing decision. It is published as an
  * impersonal model statistic, identically for every subscriber, and the order
  * ticket ignores it completely.
  * ─────────────────────────────────────────────────────────────────────────────
@@ -273,7 +274,19 @@ export class HierarchicalStateClock {
   private readonly barrier: SequenceBarrier;
   private macro60m: MacroStateVector = { ...EMPTY_MACRO };
   private macro15m: MacroStateVector = { ...EMPTY_MACRO };
-  /** Records every barrier violation, surfaced on the engine health panel. */
+  /**
+   * Counts barrier violations.
+   *
+   * Nothing surfaces this today. The comment here used to claim an "engine health
+   * panel" reads it; no such panel exists, `barrierViolations` has no caller, and
+   * `PipelineResult.clock` — which carries this count out of the pipeline — has no
+   * reader in `src/app` or `src/components` and never reaches the JSON of any
+   * route. It is also structurally zero on the only path that runs in production:
+   * `runPipeline` constructs a fresh clock per call, so every request publishes at
+   * sequence 0, where `readMacroForTick` returns early without consulting either
+   * upstream sequence. The counter and the throw below are live from tick 1
+   * onwards, which `tests/fix-signal-coherence.test.ts` pins in both directions.
+   */
   private violations = 0;
 
   constructor() {

@@ -15,8 +15,25 @@
  *
  * VaR and CVaR are drawn as the loss thresholds they are, with everything beyond
  * VaR shaded, because the number on its own invites the reading "the worst case is
- * −2.3%". The shaded region is the point: 5% of the observations are in there, and
- * CVaR is their average, not their limit.
+ * −2.3%". The shaded region is the point, and CVaR is its average, not its limit.
+ *
+ * The caption counts that region rather than asserting a proportion for it. It
+ * used to read "the 5% of observations beyond VaR95", which is only true when the
+ * caller's VaR95 is the 5th percentile of the very array passed as `returns` —
+ * and on /backtest it was not: the thresholds came from the daily-equity series
+ * while the bars were trade returns, so a band captioned 5% visibly held 39% of
+ * the observations. The caller has since been corrected, and this component still
+ * cannot verify the claim, so it states what it can count instead: how many of
+ * the plotted observations are actually inside the shading it drew. A histogram
+ * whose annotation is checkable against its own bars cannot drift away from them
+ * again in silence.
+ *
+ * The three readouts sit in a reserved strip above the plot frame, not on it.
+ * Printed inside the frame they landed on the bars — at 1440px the VaR95 and
+ * CVaR95 labels rendered in #C47474 entirely inside the tallest bar's #8C3A3A
+ * fill, red on red, with the gold MEAN overlapping its right edge. The strip is
+ * sized to the number of readouts actually drawn, so a chart with no thresholds
+ * does not reserve two empty lines.
  *
  * `mean` and `quantile` come from `@/lib/quant/stats`. They are the one exception
  * to "no maths in a chart": the props deliberately carry the raw series, so the
@@ -49,6 +66,12 @@ const X_TICKS = 6;
 const BAR_GAP = 1;
 /** Enough bins for a fat tail, few enough that each one still has samples. */
 const MAX_BINS = 120;
+/** Baseline pitch of the readout strip above the plot: one 9px line plus leading. */
+const LEGEND_LINE = 12;
+/** Clearance between the lowest readout's baseline and the top of the plot frame. */
+const LEGEND_GAP = 14;
+/** Room above the readout strip, so the topmost line is not flush with the viewBox. */
+const LEGEND_TOP = 16;
 
 type BinRule = 'freedman-diaconis' | 'sturges' | 'caller';
 
@@ -94,8 +117,10 @@ interface Layout {
   xTicks: number[];
   meanX: number;
   meanValue: number;
+  meanLabelY: number;
   markers: Marker[];
-  tail: { x: number; w: number } | null;
+  /** `count` is how many plotted observations the shading actually covers. */
+  tail: { x: number; w: number; count: number } | null;
   binWidth: number;
   binCount: number;
   rule: BinRule;
@@ -103,14 +128,50 @@ interface Layout {
   baseline: number;
 }
 
-function computeLayout(props: ReturnDistributionProps): Layout | null {
+/**
+ * The whole drawing, as numbers.
+ *
+ * Exported because it is where the two claims this chart makes about itself are
+ * decided — that the readouts sit clear of the bars, and that the caption's tail
+ * count matches the shading — and both are pure arithmetic over the props.
+ * tests/fix-components.test.ts asserts them here; neither is checkable from the
+ * rendered SVG in a `node` test environment, which has no layout.
+ */
+export function computeDistributionLayout(props: ReturnDistributionProps): Layout | null {
   const { returns, var95, cvar95, width = 560, height = 280, bins } = props;
 
   const finite = (Array.isArray(returns) ? returns : []).filter((v) => Number.isFinite(v));
   if (finite.length === 0) return null;
 
-  const f = frame(width, height, { top: 16, right: 40, bottom: 28, left: 12 });
+  // VaR and CVaR are reported as a signed quantile by `engine/backtest` and as a
+  // positive magnitude by some vendors. Both mean a loss, so both are read as the
+  // left tail — the alternative is shading the profitable half of the chart.
+  const asLoss = (value: number | undefined): number | null =>
+    Number.isFinite(value) ? -Math.abs(value as number) : null;
+  const varLevel = asLoss(var95);
+  const cvarLevel = asLoss(cvar95);
+
+  /*
+   * The top margin is the readout strip, so the strip is measured before the
+   * frame that has to clear it. One line for the mean, which is always drawn,
+   * plus one for each threshold the caller supplied.
+   */
+  const legendLines = 1 + (varLevel === null ? 0 : 1) + (cvarLevel === null ? 0 : 1);
+  const f = frame(width, height, {
+    top: LEGEND_TOP + (legendLines - 1) * LEGEND_LINE + LEGEND_GAP,
+    right: 40,
+    bottom: 28,
+    left: 12,
+  });
   if (f.innerWidth <= 0 || f.innerHeight <= 0) return null;
+
+  // Stacked upward from the frame: the mean sits closest to the plot and each
+  // threshold takes the line above it, in the order they are drawn.
+  let legendRow = legendLines;
+  const nextLabelY = (): number => {
+    legendRow -= 1;
+    return f.y0 - LEGEND_GAP - legendRow * LEGEND_LINE;
+  };
 
   let lo = Infinity;
   let hi = -Infinity;
@@ -180,14 +241,6 @@ function computeLayout(props: ReturnDistributionProps): Layout | null {
     };
   });
 
-  // VaR and CVaR are reported as a signed quantile by `engine/backtest` and as a
-  // positive magnitude by some vendors. Both mean a loss, so both are read as the
-  // left tail — the alternative is shading the profitable half of the chart.
-  const asLoss = (value: number | undefined): number | null =>
-    Number.isFinite(value) ? -Math.abs(value as number) : null;
-  const varLevel = asLoss(var95);
-  const cvarLevel = asLoss(cvar95);
-
   const markers: Marker[] = [];
   const clampX = (value: number): number => Math.max(f.x0, Math.min(f.x1, x(value)));
   if (varLevel !== null) {
@@ -197,7 +250,7 @@ function computeLayout(props: ReturnDistributionProps): Layout | null {
       label: `VaR95 ${signedFractionAsPercent(varLevel, 2)}`,
       colour: BURGUNDY_BRIGHT,
       anchor: px < f.x0 + 70 ? 'start' : 'end',
-      labelY: f.y0 + 10,
+      labelY: nextLabelY(),
       dash: '4 3',
     });
   }
@@ -208,9 +261,9 @@ function computeLayout(props: ReturnDistributionProps): Layout | null {
       label: `CVaR95 ${signedFractionAsPercent(cvarLevel, 2)}`,
       colour: BURGUNDY_BRIGHT,
       anchor: px < f.x0 + 70 ? 'start' : 'end',
-      // Stacked below the VaR label: the two thresholds are always close together
-      // and a shared baseline would overprint them.
-      labelY: f.y0 + 22,
+      // One line below the VaR label: the two thresholds are always close
+      // together and a shared baseline would overprint them.
+      labelY: nextLabelY(),
       dash: '2 3',
     });
   }
@@ -231,8 +284,22 @@ function computeLayout(props: ReturnDistributionProps): Layout | null {
     })(),
     meanX: clampX(meanValue),
     meanValue,
+    meanLabelY: nextLabelY(),
     markers,
-    tail: varLevel === null ? null : { x: f.x0, w: Math.max(0, clampX(varLevel) - f.x0) },
+    /*
+     * `count` is measured against the same level the rect is drawn from, so the
+     * caption cannot disagree with the shading it describes. `<=` and not `<`
+     * because VaR95 is a quantile of the series: the observation sitting exactly
+     * on it is inside the tail it defines.
+     */
+    tail:
+      varLevel === null
+        ? null
+        : {
+            x: f.x0,
+            w: Math.max(0, clampX(varLevel) - f.x0),
+            count: finite.reduce((n, v) => (v <= varLevel ? n + 1 : n), 0),
+          },
     binWidth,
     binCount,
     rule,
@@ -258,7 +325,7 @@ export function ReturnDistribution({
   const { ref: chartRef, width } = useChartWidth(widthFallback);
   const reduceMotion = useReducedMotion();
   const layout = useMemo(
-    () => computeLayout({ returns, var95, cvar95, width, height, bins }),
+    () => computeDistributionLayout({ returns, var95, cvar95, width, height, bins }),
     [returns, var95, cvar95, width, height, bins],
   );
 
@@ -271,8 +338,24 @@ export function ReturnDistribution({
     );
   }
 
-  const { f, x, y, bars, yTicks, xTicks, meanX, meanValue, markers, tail, binWidth, binCount, rule, observations, baseline } =
-    layout;
+  const {
+    f,
+    x,
+    y,
+    bars,
+    yTicks,
+    xTicks,
+    meanX,
+    meanValue,
+    meanLabelY,
+    markers,
+    tail,
+    binWidth,
+    binCount,
+    rule,
+    observations,
+    baseline,
+  } = layout;
 
   return (
     <div>
@@ -367,7 +450,7 @@ export function ReturnDistribution({
           <line x1={meanX} x2={meanX} y1={f.y0} y2={baseline} stroke={GOLD} strokeWidth={1} shapeRendering="crispEdges" />
           <text
             x={meanX + (meanX > f.x1 - 70 ? -4 : 4)}
-            y={f.y0 + (markers.length > 1 ? 34 : markers.length === 1 ? 22 : 10)}
+            y={meanLabelY}
             textAnchor={meanX > f.x1 - 70 ? 'end' : 'start'}
             fontSize={AXIS_TEXT}
             fill={GOLD}
@@ -439,7 +522,10 @@ export function ReturnDistribution({
       <p className="mt-2.5 text-[0.6875rem] leading-relaxed text-parchment-faint">
         {integer(binCount)} bins of {fractionAsPercent(binWidth, 2)} ({RULE_CAPTION[rule]}) over{' '}
         {integer(observations)} observations.
-        {tail ? ' The shaded region is the 5% of observations beyond VaR95; CVaR95 is their average, not their limit.' : ''}
+        {tail
+          ? ` The shaded region is every observation at or below VaR95 — ${integer(tail.count)} of ` +
+            `${integer(observations)} here — and CVaR95 is their average, not their limit.`
+          : ''}
       </p>
     </div>
   );

@@ -28,7 +28,9 @@
  * The grounding score is the fraction of claims verified. It is displayed rather
  * than used as a gate: a low score is information for the reader, and silently
  * dropping unverified sentences would produce a confident answer that hides what
- * it could not support.
+ * it could not support. Declining to *grade* a sentence hides the same thing one
+ * step earlier, so the claim list covers every sentence of the answer and the
+ * score's denominator is the answer the reader is looking at, not a subset of it.
  */
 
 import { citationMarkers, splitSentences, stripCitationMarkers, tokenise } from '@/lib/ai/deterministic';
@@ -320,10 +322,26 @@ export interface GroundingResult {
 /**
  * Grades every sentence of an answer.
  *
- * Sentences shorter than four content terms are skipped rather than graded — a
- * connective ("Two points follow.") is not a claim, and grading it as an
+ * Every sentence carrying at least one content term is graded. An earlier version
+ * skipped sentences shorter than four content terms, on the theory that a
+ * connective ("Two points follow.") is not a claim and that grading it as an
  * unverified entity attribute would depress the score without telling the reader
- * anything.
+ * anything. The theory was right about connectives and wrong about what the
+ * threshold actually caught: `tokenise` drops stop words, so "Gross margin was
+ * 51.6%." is three terms, "Cutting my NVDA position." is three, and "We face
+ * intense competition." is three. Those are the shortest and most quotable
+ * assertions a filing contains — the sentence that answers the question is
+ * routinely one of them — and each left this function neither verified nor marked
+ * unverified, invisible to the claim list and absent from its denominator. The
+ * research page then reported "5 of 5 claims verified, 100.0%" above a six-
+ * sentence answer whose opening sentence had never been checked.
+ *
+ * So the gate now excludes only fragments with no gradable content at all: a bare
+ * `[3]` marker left behind by sentence splitting, or a sentence made entirely of
+ * punctuation and stop words. Everything else is classified and graded, which is
+ * the only way the denominator can honestly describe the answer on screen. A
+ * connective that grades unverified is the price, and it is the cheaper error: it
+ * understates a score, where the old behaviour overstated the coverage.
  */
 export function groundAnswer(
   answer: string,
@@ -334,7 +352,7 @@ export function groundAnswer(
 
   for (const raw of splitSentences(answer)) {
     const sentence = stripCitationMarkers(raw);
-    if (tokenise(sentence).length < 4) continue;
+    if (tokenise(sentence).length === 0) continue;
 
     /**
      * A sentence carrying `[n]` markers is checked against those sources first.

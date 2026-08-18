@@ -30,7 +30,7 @@ import type { ApiRequestError } from '@/lib/ui/api';
  * raw message.
  */
 const OPERATIONAL_CODES: Record<string, string> = {
-  // src/app/api/{signals,chart,screener,attribution}/… via `pendingSetup`
+  // src/app/api/{signals,chart,screener}/… via `pendingSetup`
   ENGINE_NOT_READY: 'The ensemble has not been trained in this deployment. Run npm run seed, then check again.',
   // src/app/api/model-card/route.ts
   MODEL_NOT_TRAINED: 'No trained ensemble is present in this deployment. Run npm run seed, then check again.',
@@ -90,6 +90,33 @@ export function ErrorPanel({
 }
 
 /**
+ * The subject of an announcement, from the caption of the thing being loaded.
+ *
+ * `label` is written as an action, because that is what a visible caption above a
+ * skeleton should say: "Loading the account", "Sweeping the universe". The live
+ * region then interpolated the same string as a noun and announced "Loading the
+ * account loaded." — on every async panel in the product, sixteen of them, and
+ * "Loading your decision history: nothing to show." for the empty ones.
+ *
+ * A leading present participle is dropped, which turns the caption back into the
+ * noun phrase it was built from: "Loading the account" → "The account", "Sweeping
+ * the universe" → "The universe", "Loading AAPL" → "AAPL". Callers whose caption
+ * is not of that shape pass `announceAs` instead and this is not consulted. Only
+ * the first character is ever recased, so an identifier stays as written.
+ *
+ * The last word is never dropped — a caption that is only a participle has no
+ * noun in it to recover, and announcing the participle is better than announcing
+ * nothing.
+ */
+export function announcementNoun(label: string | undefined): string {
+  const words = (label ?? '').trim().split(/\s+/).filter((w) => w.length > 0);
+  if (words.length === 0) return 'Content';
+  const rest = words.length > 1 && /ing$/i.test(words[0] as string) ? words.slice(1) : words;
+  const phrase = rest.join(' ');
+  return phrase.charAt(0).toUpperCase() + phrase.slice(1);
+}
+
+/**
  * Renders the right thing for an async slot.
  *
  * `empty` is checked *after* loading and error so a page cannot show "no results"
@@ -100,6 +127,7 @@ export function AsyncSlot<T>({
   state,
   children,
   label,
+  announceAs,
   lines,
   isEmpty,
   emptyTitle,
@@ -108,16 +136,25 @@ export function AsyncSlot<T>({
   state: { data: T | null; error: ApiRequestError | null; loading: boolean; reload: () => void };
   children: (data: T) => ReactNode;
   label?: string;
+  /**
+   * What the live region calls this slot, if the caption does not reduce to it.
+   *
+   * The visible caption stays a participle either way — `LoadingPanel` below is
+   * handed `label` untouched. This only ever replaces the subject of the four
+   * announcement sentences.
+   */
+  announceAs?: string;
   lines?: number;
   isEmpty?: (data: T) => boolean;
   emptyTitle?: string;
   emptyDetail?: ReactNode;
 }) {
+  const subject = announceAs ?? announcementNoun(label);
   if (state.loading && state.data === null) return <LoadingPanel label={label} lines={lines} />;
   if (state.error !== null && state.data === null) {
     return (
       <>
-        <Announce>{`${label ?? 'Content'} failed to load: ${state.error.message}`}</Announce>
+        <Announce>{`${subject} failed to load: ${state.error.message}`}</Announce>
         <ErrorPanel error={state.error} onRetry={state.reload} />
       </>
     );
@@ -126,7 +163,7 @@ export function AsyncSlot<T>({
   if (isEmpty?.(state.data) === true) {
     return (
       <>
-        <Announce>{`${label ?? 'Content'}: nothing to show.`}</Announce>
+        <Announce>{`${subject}: nothing to show.`}</Announce>
         <Panel>
           <EmptyState title={emptyTitle ?? 'Nothing to show'} detail={emptyDetail} />
         </Panel>
@@ -152,8 +189,8 @@ export function AsyncSlot<T>({
     <>
       <Announce>
         {state.error === null
-          ? `${label ?? 'Content'} loaded.`
-          : `${label ?? 'Content'} could not be refreshed. Showing the last values received.`}
+          ? `${subject} loaded.`
+          : `${subject} could not be refreshed. Showing the last values received.`}
       </Announce>
       {state.error === null ? null : (
         <Notice tone="warning" className="mb-5">

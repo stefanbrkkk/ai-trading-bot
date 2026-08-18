@@ -24,6 +24,9 @@ import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
 import { Badge, DataRow, Divider, Notice, Panel, PanelHeader, TableShell, Td, Th } from '@/components/ui/primitives';
 import { useApi, type MeResponse } from '@/lib/ui/api';
 import { duration, integer, nyDateTime } from '@/lib/ui/format';
+// Type only, and it must stay type only: `@/lib/db` reaches `node:sqlite`, and a
+// value import would drag the store into a client bundle. See `ConsentRecord`.
+import type { TosAcceptanceRecord } from '@/lib/db';
 
 interface DisclosureBundle {
   tosVersion: string;
@@ -44,16 +47,25 @@ interface ConsentRecord {
   accepted: boolean;
   acceptedAt: number | null;
   acceptedVersion: string | null;
-  history: {
-    id: string;
-    acceptedAt: number;
-    tosVersion: string;
-    ipAddress: string;
-    userAgent: string;
-    clickX: number;
-    clickY: number;
-    scrollDurationMs: number;
-  }[];
+  /**
+   * The store's own record type, not a restatement of it.
+   *
+   * This was a hand-written shape declaring `tosVersion`, `clickX` and `clickY`
+   * at the top level. The payload has never carried those names: the route
+   * returns `listTosAcceptances()` verbatim, and that record serialises the
+   * version as `version` and nests the provenance under `click`. So every row of
+   * the acceptance table rendered an empty VERSION cell and a lone comma under
+   * CLICK — on the one page whose entire purpose is to show a reader the evidence
+   * the platform holds about them, and directly beneath a panel printing the same
+   * version correctly from a different field.
+   *
+   * `useApi` casts rather than parses, so nothing about the wrong names failed
+   * the typecheck; naming a shape the compiler can check is the only thing that
+   * would have. Borrowing `TosAcceptanceRecord` is sound precisely because the
+   * route passes the record through untouched — the day it starts mapping fields
+   * for the API, this type has to stop being the store's and become the route's.
+   */
+  history: TosAcceptanceRecord[];
 }
 
 export default function CompliancePage() {
@@ -248,13 +260,23 @@ export default function CompliancePage() {
                           <span className="font-mono text-2xs text-parchment-dim">{nyDateTime(entry.acceptedAt)}</span>
                         </Td>
                         <Td>
-                          <span className="font-mono text-2xs text-parchment-faint">{entry.tosVersion}</span>
+                          <span className="font-mono text-2xs text-parchment-faint">{entry.version}</span>
                         </Td>
                         <Td align="right" numeric>
                           {duration(entry.scrollDurationMs)}
                         </Td>
                         <Td align="right" numeric>
-                          {entry.clickX}, {entry.clickY}
+                          {/*
+                            −1 is `clickProvenance`'s keyboard sentinel, not a
+                            coordinate: 0,0 is a real point in the corner of the
+                            viewport, so an acceptance activated from the keyboard
+                            is recorded as −1 rather than misreported as a click
+                            there. Printing "-1, -1" in a coordinate column would
+                            reintroduce exactly the confusion the sentinel avoids.
+                          */}
+                          {entry.click.clickX < 0 || entry.click.clickY < 0
+                            ? 'keyboard'
+                            : `${entry.click.clickX}, ${entry.click.clickY}`}
                         </Td>
                         <Td>
                           <span className="font-mono text-2xs text-parchment-ghost">{entry.ipAddress}</span>

@@ -12,9 +12,14 @@
  * reasonably assume the one informed the other. So the separation is declared where
  * the two appear together, rather than only in the terms.
  *
- * Rejected orders are shown with the risk code that stopped them. A rejection is the
- * only trace an unrouted order leaves, and "why was I stopped" is the question this
- * blotter exists to answer.
+ * The blotter lists the orders that routed, each with the risk decision that let it
+ * through. An order the pre-trade controls refused never becomes a row here at all:
+ * `/api/orders/submit` writes the decision and the audit event and answers 422 well
+ * before it reaches `insertOrder`, so a refusal exists in the decision history and
+ * nowhere else. "Why was I stopped" is therefore answered by /control, which the
+ * blotter links to at its foot — and this file used to say the opposite, promising
+ * in its empty state that rejected orders were kept here, directly contradicting the
+ * subtitle the same panel showed once it had rows.
  */
 
 'use client';
@@ -193,12 +198,38 @@ const COPULA_MEANING: Record<string, string> = {
 function TailRiskPanel({ account }: { account: 'paper' | 'live' }) {
   const tail = useApi<TailRiskResponse>(`/risk/tail?account=${account}`, { pollMs: 60_000 });
 
-  if (tail.loading || tail.data === null) return null;
-  const data = tail.data;
+  /*
+   * Through `AsyncSlot`, like every other panel on this page.
+   *
+   * The guard here used to be a bare `if (tail.loading || tail.data === null)
+   * return null`, and `useApi` leaves `data` at null when a request fails — so a
+   * 500 from `/risk/tail` deleted the panel outright. Nothing said so: no error,
+   * no empty state, no retry, no live-region announcement, just a page that
+   * silently no longer mentions joint downside, on the one surface that answers
+   * "what happens if they all go at once". A reader cannot tell a portfolio with
+   * no measurable co-movement from a measurement that failed, and the first
+   * reading is the reassuring one.
+   *
+   * `AsyncSlot` is the page's existing answer to all of that — skeleton, error
+   * panel with a retry, an announcement for each, and the stale-data notice when
+   * a 60-second poll fails on top of figures already on screen, which matters
+   * here because a tail dependence that is quietly an hour old is exactly the
+   * kind of number that should not be read as current.
+   */
+  return (
+    <div className="mb-5">
+      <AsyncSlot state={tail} label="Joint downside" lines={4}>
+        {(data) => <TailRisk data={data} />}
+      </AsyncSlot>
+    </div>
+  );
+}
 
+/** The panel body, once the copula fit has actually arrived. */
+function TailRisk({ data }: { data: TailRiskResponse }) {
   if (!data.available) {
     return (
-      <Panel className="mb-5">
+      <Panel>
         <PanelHeader
           eyebrow="Joint downside"
           title="Co-movement"
@@ -216,7 +247,7 @@ function TailRiskPanel({ account }: { account: 'paper' | 'live' }) {
   const others = Math.max(0, data.holdings - 1);
 
   return (
-    <Panel className="mb-5">
+    <Panel>
       <PanelHeader
         eyebrow="Joint downside"
         title="What happens when one of them breaks"
@@ -232,10 +263,21 @@ function TailRiskPanel({ account }: { account: 'paper' | 'live' }) {
           tone={multiple >= 5 ? 'burgundy' : multiple >= 2 ? 'gold' : 'sage'}
           footnote="Against chance, which is 1.0×"
         />
+        {/*
+          Named for the quantity, not for a probability it is not.
+
+          This tile read "P(a peer is also below its own 5%)", which claims a
+          conditional probability measured at a finite 5% threshold. λ_L is not
+          that: it is the LIMIT of that probability as the threshold goes to
+          zero — how tightly two names cling together in the extreme tail, which
+          is a different and strictly worse-case number than the one at 5%.
+          Publishing the limit under the finite label overstated a book's 5%-day
+          risk and understated what happens further out.
+        */}
         <StatTile
-          label={`P(a peer is also below its own ${quantilePct})`}
+          label="Lower-tail dependence"
           value={fractionAsPercent(lambda, 1)}
-          footnote="Exact from the fitted copulas — no sampling"
+          footnote="λ_L — the limiting co-crash probability, exact from the fitted copulas"
         />
         <StatTile
           label="Expected co-movers"
@@ -248,11 +290,13 @@ function TailRiskPanel({ account }: { account: 'paper' | 'live' }) {
 
       <p className="text-[0.75rem] leading-relaxed text-parchment-dim">
         On any given day a holding is below its own {quantilePct} threshold {quantilePct} of the time — that is what
-        the threshold means. But on a day when one of these names is down there, another is below its own threshold{' '}
-        <span className="tabular text-parchment">{fractionAsPercent(lambda, 1)}</span> of the time:{' '}
-        <span className="tabular text-gold">{ratio(multiple, multiple >= 10 ? 1 : 2)}×</span> more often than chance.
-        That excess is the cost of holding names that break together, and a correlation matrix cannot show it —
-        correlation is one number for the whole distribution, while this is measured in the left tail specifically.
+        the threshold means, and if these names were independent that would still be true of each of them when another
+        one broke. It is not. As the threshold is pushed further into the tail, the chance that a peer is down there
+        too converges on <span className="tabular text-parchment">{fractionAsPercent(lambda, 1)}</span> rather than
+        falling away to nothing: <span className="tabular text-gold">{ratio(multiple, multiple >= 10 ? 1 : 2)}×</span>{' '}
+        the {quantilePct} a coin flip would give. That excess is the cost of holding names that break together, and a
+        correlation matrix cannot show it — correlation is one number for the whole distribution, while this is a
+        property of the left tail specifically.
       </p>
 
       {data.pairs && data.pairs.length > 0 ? (
@@ -551,7 +595,7 @@ export default function PortfolioPage() {
         lines={5}
         isEmpty={(data) => data.orders.length === 0}
         emptyTitle="No orders yet"
-        emptyDetail="Every order you route appears here with its risk decision, broker status and fill. Rejected orders are kept — a rejection is the only trace an unrouted order leaves."
+        emptyDetail="Every order that routes appears here with its risk decision, broker status and fill. An order refused by the pre-trade controls never becomes one — /control lists every rejection with the limit that stopped it."
       >
         {(data) => (
           <Panel padded={false}>
@@ -559,7 +603,7 @@ export default function PortfolioPage() {
               <PanelHeader
                 eyebrow="Blotter"
                 title={`${integer(data.count)} order${data.count === 1 ? '' : 's'}`}
-                detail="Routed orders and their risk decision. A refused order never becomes one — /control lists every rejection with the limit that stopped it.."
+                detail="Routed orders and their risk decision. A refused order never becomes one — /control lists every rejection with the limit that stopped it."
               />
             </div>
             <TableShell className="mt-4">

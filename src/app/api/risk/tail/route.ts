@@ -11,12 +11,13 @@
  * a crash, and ρ will not tell you which pair does that.
  *
  * A C-vine copula does. It separates each holding's own return distribution from
- * the dependence structure between them, fits a pair copula per edge — Clayton
- * for lower-tail clustering, Gumbel for upper, Student-t for both, Gaussian for
- * neither — and reports the joint probability directly. `quant/copula` has
- * carried the whole construction since the beginning, and its
- * `jointTailProbability` docstring has always said it is "the market downturn
- * co-movement number the risk panel reports". This is that panel.
+ * the dependence structure between them and fits a pair copula per edge —
+ * Clayton for lower-tail clustering, Gumbel for upper, Student-t for both,
+ * Gaussian for neither. What this route publishes comes from `vineTailSummary`
+ * over the fitted first tree: the tail-dependence coefficients each family has
+ * in closed form, averaged over the edges. Not from `jointTailProbability`,
+ * which is the sampling route this one deliberately does not take — see the
+ * header below for the measurements that decided that.
  *
  * Impersonal, like everything else here: it describes the co-movement of the
  * instruments held, from public price history, and does not recommend a hedge,
@@ -40,11 +41,18 @@ export const dynamic = 'force-dynamic';
 const LOOKBACK_SESSIONS = 252;
 
 /**
- * Quantile each holding must breach simultaneously.
+ * The reference quantile the concentration ratio is expressed against.
  *
- * The 5th percentile of a name's own return distribution, so the question is
- * "every position having one of its own worst days at once" rather than a fixed
- * percentage that means something different for a utility and a semiconductor.
+ * The 5th percentile of a name's own return distribution — a relative threshold,
+ * so it means the same thing for a utility and for a semiconductor. Nothing is
+ * *evaluated* at this quantile any more: it is the unconditional rate that
+ * `concentrationMultiple` divides by, and the number the page prints when it
+ * needs to say what "its own tail" means.
+ *
+ * It used to be the threshold every holding had to breach simultaneously, which
+ * is the Monte-Carlo question the next comment explains was removed. That
+ * docstring outlived the code by two revisions; this one describes what the
+ * constant is actually used for.
  */
 const TAIL_QUANTILE = 0.05;
 
@@ -72,6 +80,13 @@ const TAIL_QUANTILE = 0.05;
  * Clayton through 2^(−1/θ), Gaussian and Frank exactly zero, which is itself the
  * finding worth reporting when it happens. No sampling, no estimator variance,
  * and it does not decay to nothing as holdings are added.
+ *
+ * What it is not is the answer at a *finite* threshold. It answers "in the
+ * limit", and swapping "in the limit" for "at the 5th percentile" is the one
+ * mistake this payload is easy to make: the two are different numbers, the
+ * limiting one is the smaller, and a panel that prints λ_L under a 5%-threshold
+ * label is understating co-movement while sounding more precise. Every field
+ * below says which of the two it is, and the page has to repeat that choice.
  */
 
 /**
@@ -227,21 +242,43 @@ export const GET = handler(async (request: Request) => {
       sessions: shortest,
       quantile: TAIL_QUANTILE,
       /**
-       * P(a given other holding is also in its own left tail | one of them is).
-       * Exact, from the fitted pair copulas, averaged over the first-tree edges.
+       * λ_L — lower-tail dependence, averaged over the first-tree edges.
+       *
+       * Read it exactly as the footnote on the pair table does: the *limiting*
+       * probability that one name is in its own left tail given that the other
+       * already is, as the threshold goes to zero. It is a property of the
+       * fitted copula family, closed-form per family, and it is not indexed by
+       * `quantile` at all.
+       *
+       * It is therefore not "P(a peer is below its own 5th percentile)", and
+       * must not be published under that label. The two differ by more than
+       * rounding: on a five-name book (AAPL/MSFT/JPM/XOM/PG, 252 sessions, every
+       * tree-1 edge fitted Student-t) the average λ_L is 0.212, while the exact
+       * conditional exceedance C(q,q)/q at q = 0.05 — obtained by integrating
+       * the exact h-function, since `copulaCdf` answers the Student-t case with
+       * the Gaussian cdf — is 0.268. λ_L is the smaller, limiting number, so
+       * printing it under a finite-threshold label understates the co-movement
+       * it is describing.
        */
       lowerTailDependence: tails.lower,
       upperTailDependence: tails.upper,
       /**
-       * How much more likely that is than chance. Unconditionally a holding is
-       * in its own 5% tail 5% of the time; conditioned on a peer being there it
-       * is `lowerTailDependence`. The ratio is the cost of concentration, and it
-       * is 1.0 for a book with no tail dependence at all.
+       * λ_L against the unconditional rate: how much likelier the fitted
+       * dependence makes a peer's left tail than chance does.
+       *
+       * Unconditionally a holding is below its own q-quantile a fraction q of
+       * the time, for any q — that is what a quantile is. The numerator is the
+       * limit above rather than a probability measured at `quantile`, so this is
+       * the limiting comparison and it is 1.0 for a book with no tail dependence
+       * at all. On the book quoted above it is 4.24× where the exact ratio at
+       * q = 0.05 is 5.36×: conservative in the direction that matters, and the
+       * page must not describe it as the multiple *at* the 5% threshold.
        */
       concentrationMultiple: tails.lower / TAIL_QUANTILE,
       /**
-       * Expected number of the other holdings joining a name that is having one
-       * of its worst days. The figure a reader actually pictures.
+       * Expected number of the other holdings that are in their own left tails
+       * given that one name is in its — λ_L times the number of peers, under the
+       * same limiting reading. The figure a reader actually pictures.
        */
       expectedCoMovers: tails.lower * (usable.length - 1),
       logLikelihood: model.logLikelihood,

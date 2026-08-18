@@ -259,7 +259,19 @@ export default function TransparencyPage() {
                 </div>
               </Panel>
 
-              <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+              {/*
+                `items-start`, deliberately, and only on the grids that pair two
+                panels of genuinely different length.
+
+                Equal-height cards are the right default and are relied on
+                elsewhere (see `src/app/terminal/page.tsx`, which says so). Here
+                the two panels are a fixed three-row summary beside a list that
+                grows with the data, so stretching left 31–39% of one card as
+                empty ground with a border drawn around it — which reads as
+                content that failed to load rather than as a card that is simply
+                shorter.
+              */}
+              <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-2">
                 <Panel>
                   <PanelHeader eyebrow="Ensemble" title="Gradient-boosted decision trees" detail={data.card.objective} />
                   <dl className="mt-3 space-y-0.5">

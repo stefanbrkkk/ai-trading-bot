@@ -1,9 +1,9 @@
 /**
  * Continuous-time mean reversion — the Ornstein–Uhlenbeck SDE.
  *
- * MASTER_AURELIUS_SPECIFICATION §2.2 and Phase 1 §2 mandate abandoning
- * discrete-time linear regression and static EMA pullbacks in favour of the OU
- * process, calibrated by Maximum Likelihood Estimation on incoming ticks:
+ * The specification mandates abandoning discrete-time linear regression and
+ * static EMA pullbacks in favour of the OU process, calibrated by Maximum
+ * Likelihood Estimation on incoming ticks:
  *
  *     dX_t = θ (μ − X_t) dt + σ dW_t
  *
@@ -64,6 +64,11 @@ const MIN_OBS = 8;
  *   θ̂ = −(1/Δt)·ln[ (Sxy − μ̂Sx − μ̂Sy + nμ̂²) / (Sxx − 2μ̂Sx + nμ̂²) ]
  *   σ̂² = σ̂²_h · 2θ̂ / (1 − e^{−2θ̂Δt}),  where
  *   σ̂²_h = (1/n)·Σ ( x_i − x_{i−1}·e^{−θ̂Δt} − μ̂(1 − e^{−θ̂Δt}) )²
+ *
+ * μ̂'s denominator vanishes as θ → 0, so the closed form is accepted only when
+ * it lands inside the range the series actually visited and falls back to the
+ * sample mean otherwise. The long comment at the guard records what that was
+ * publishing before.
  */
 export function fitOu(series: readonly number[], dt = 1): OuFit {
   const n = series.length - 1;
@@ -92,7 +97,65 @@ export function fitOu(series: readonly number[], dt = 1): OuFit {
 
   const muDenom = n * (sxx - sxy) - (sx * sx - sx * sy);
   const grandMean = (sx + sy) / (2 * n);
-  const mu = Math.abs(muDenom) < EPS ? grandMean : (sy * sxx - sx * sxy) / muDenom;
+  const closedFormMu = Math.abs(muDenom) < EPS ? grandMean : (sy * sxx - sx * sxy) / muDenom;
+
+  /*
+   * μ̂ is checked against the range the series actually visited — widened by
+   * half that range on each side — and falls back to the sample mean outside it.
+   *
+   * The closed form above is a ratio whose denominator vanishes as θ → 0, and
+   * the `|muDenom| < EPS` guard only catches the exact singularity, not the
+   * neighbourhood of it. On a near-unit-root spread — which is most of them,
+   * because the calibration window is a 180-bar log-price spread against the
+   * benchmark — the denominator lands small but finite and μ̂ is thrown a long
+   * way outside the data. Since the fit is published rather than merely used
+   * internally, that arrives at the user as an extreme dislocation:
+   *
+   *   ABBV, spread range [−1.3546, −0.7494], last −0.7708.
+   *     μ̂ = +0.5960, i.e. 1.35 log-units above anything the name has ever
+   *     traded at; equilibrium band [0.0825, 1.1095], which does not intersect
+   *     the data anywhere; ouZScore = −5.32. The published narrative read
+   *     "a two-and-a-half-sigma dislocation below continuous-time equilibrium,
+   *     the highest-conviction reversion state the OU model produces".
+   *   MRK, spread range [−2.0002, −1.3810]: μ̂ = +11.20, z = −13.52.
+   *   The worst shipped value was ABBV at z = −42.4, on a fitted half-life of
+   *   999 bars.
+   *
+   * On driftless random walks (n = 180) μ̂ escapes its own [min, max] in 14.8%
+   * of fits, and 2.9% of them publish |z| > 2.5 against the 1.24% the model's
+   * own stationary Gaussian law allows.
+   *
+   * The sample mean is the right fallback rather than a clamp to the nearest
+   * endpoint: it is the θ → 0 limit of the MLE, so the estimator degrades to
+   * "no reversion detected, equilibrium is where the series has been" instead of
+   * to "equilibrium is exactly at the most extreme point observed", which would
+   * manufacture a maximal dislocation out of the failure. θ̂ is then the AR(1)
+   * coefficient about that mean, and the half-life it produces is what
+   * `strategies.ts` gates on.
+   *
+   * The half-a-span margin is not slack, it is the one case where μ̂ legitimately
+   * sits outside the hull: a series decaying toward equilibrium from one side
+   * approaches μ asymptotically and never crosses it, so the exact μ of a
+   * noiseless AR(1) is an infimum the data misses by 0.9^n. A bare [min, max]
+   * test rejects that — it fails the deterministic-AR(1) recovery contract in
+   * tests/quant-ou.test.ts by 5e-10 — while every pathological fit above is two
+   * to twenty spans out and nowhere near the margin. Over the same 5000
+   * driftless random walks, the widened test still takes max |z| from 105.9 to
+   * 3.5 and P(|z| > 2.5) from 2.9% to 0.28%: from above the rate the stationary
+   * Gaussian law allows to comfortably below it.
+   */
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 0; i <= n; i += 1) {
+    const v = series[i] as number;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  const margin = 0.5 * (hi - lo);
+  const mu =
+    Number.isFinite(closedFormMu) && closedFormMu >= lo - margin && closedFormMu <= hi + margin
+      ? closedFormMu
+      : grandMean;
 
   const num = sxy - mu * sx - mu * sy + n * mu * mu;
   const den = sxx - 2 * mu * sx + n * mu * mu;
@@ -166,8 +229,26 @@ export function ouVariance(fit: OuParameters, tau: number): number {
   return (fit.sigma * fit.sigma * (1 - Math.exp(-2 * fit.theta * tau))) / (2 * fit.theta);
 }
 
-/** Standardised deviation from equilibrium, in stationary sigmas. */
+/**
+ * Standardised deviation from equilibrium, in stationary sigmas.
+ *
+ * Zero when the fit is not mean-reverting, and that is the whole point of the
+ * guard rather than a rounding convenience. A non-reverting series has no
+ * equilibrium to deviate from and no stationary sigma to measure the deviation
+ * in — as θ → 0 the stationary variance σ²/2θ diverges, so the honest limit of
+ * this quantity is zero, and the fit's `equilibriumSigma` substitutes the
+ * *sample* deviation on that branch precisely because the stationary one does
+ * not exist.
+ *
+ * Left ungated, that substitution turned a plain sample z-score into a number
+ * the feature registry reads as "a two-and-a-half-sigma dislocation below
+ * continuous-time equilibrium … the highest-conviction reversion state the OU
+ * model produces" — maximum bullish conviction, attributed to a model that had
+ * just reported a half-life of infinity. The registry resolves a state from one
+ * feature value, so the coupling has to be enforced where the value is made.
+ */
 export function ouZScore(fit: OuFit, x: number): number {
+  if (!fit.meanReverting) return 0;
   const s = fit.equilibriumSigma;
   return s < EPS ? 0 : (x - fit.mu) / s;
 }

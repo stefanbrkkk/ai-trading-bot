@@ -38,9 +38,14 @@ export const AGENT_SEQUENCE_LENGTH = 24;
 export const AGENT_HIDDEN = { lstm: 16, bilstm: 16, tft: 12 } as const;
 /**
  * The agents consume a compact projection of the full feature vector rather than
- * all 80 features: an 80-wide input at 24 timesteps would dominate training time
- * without adding signal, since the tree ensemble already covers the wide
- * cross-section. These are the sequence-relevant features.
+ * all `MODEL_FEATURE_COUNT` of it: the full width at 24 timesteps would dominate
+ * training time without adding signal, since the tree ensemble already covers the
+ * wide cross-section. These are the sequence-relevant features.
+ *
+ * The width is named rather than written out. This comment wrote it out twice as
+ * a literal, as did three others in the engine, against a registry that had long
+ * since grown past the number — and `MODEL_FEATURE_COUNT` is right there,
+ * exported from the same module this file already imports it from.
  */
 export const AGENT_FEATURE_KEYS: string[] = [
   'roc_10',
@@ -356,7 +361,14 @@ export interface ModelCard {
  */
 export const MODEL_LIMITATIONS: string[] = [
   'The ensemble is fitted on the deterministic market simulator bundled with this platform, not on licensed historical market data. Its measured accuracy describes the simulator, not live markets.',
-  'The conviction score is the modelled probability of outperforming the benchmark over the stated horizon. It is not a price target, not a guarantee, and not a recommendation.',
+  // Not a probability, and the page that renders this limitation prints the two
+  // numbers side by side. `fuseConviction` (pipeline.ts) blends three sources and
+  // discounts the result by regime confidence, so a coin-flip probability that
+  // the agents and the strategies both agree with scores 60, while a 0.99
+  // probability with |S_agg| = 0.1 and nothing else behind it scores 36.3 — and
+  // MSFT publishes conviction 31 beside P(beats benchmark) 71.0%. Describing the
+  // index as the probability made the model card contradict every signal page.
+  'The conviction score is a 0-100 index, not a probability. It blends the tree ensemble’s directional edge (40%), the router’s aggregate agent direction (35%) and the regime-weighted strategy conviction (25%), then discounts the result by the regime classifier’s confidence, and it is zero whenever the router declines to take a side. The modelled probability that the published position beats the benchmark over the stated horizon is published separately, beside it. Neither is a price target, a guarantee, or a recommendation.',
   'SHAP attributions explain the model, not the market. They are exact with respect to this ensemble and carry no causal claim.',
   'The three temporal agents are trained on a bounded in-process budget so the platform installs without a GPU. Their capacity is deliberately small.',
   'Options-derived features are unavailable for symbols without a listed chain, and those feature blocks read zero rather than being imputed.',
@@ -529,14 +541,17 @@ export function trainModelBundle(dataset: TrainingDataset, options: TrainOptions
   /*
    * How much each agent's output actually moves with its input.
    *
-   * The 60m TFT was returning 0.7711 for every symbol in the universe — a spread
-   * of 7.6e-4 across validation sequences, against 0.35 for the LSTM — so it was
-   * contributing a constant positive bias to the router's aggregate and every one
-   * of the 67 names came out long. A collapsed agent is not a neutral one: it
-   * votes, with conviction, for whatever its bias happens to be.
+   * The 60m TFT returns ~0.492 for every symbol in the universe — a spread of
+   * 1.4e-3 across validation sequences, against 0.17 for the LSTM — so whatever
+   * it contributes to the router's aggregate is a constant, identical for all 67
+   * names. An earlier fit put that constant on the other side of a coin flip and
+   * every one of the 67 came out long at once. A collapsed agent is not a neutral
+   * one: it votes, with conviction, for whatever its bias happens to be.
    *
    * The spread is measured here, published on the model card, and read by the
-   * router, which gives an agent that does not discriminate no weight.
+   * router, which gives an agent that does not discriminate no weight. The
+   * figures above describe the seeded model; the model card publishes whatever
+   * this measurement actually returns.
    */
   const discrimination = {
     lstm: probabilitySpread(lstm, validSamples),

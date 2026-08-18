@@ -10,11 +10,12 @@
 
 import { z } from 'zod';
 import { handler, ok, parseQuery, pendingSetup, resourceNotFound } from '@/lib/api/respond';
+import { formatRaw } from '@/lib/engine/compute';
 import { getSignal } from '@/lib/engine/service';
 import { resolveMarketProvider } from '@/lib/market/provider';
 import { requireSpec } from '@/lib/market/universe';
 import { MLOFI_LEVELS } from '@/lib/quant/orderflow';
-import { shapWaterfall } from '@/lib/quant/shap';
+import { rankContributions, shapWaterfall } from '@/lib/quant/shap';
 import { domainForFeature } from '@/lib/engine/narrative';
 import { featureDefinition } from '@/lib/engine/features';
 
@@ -78,6 +79,17 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
   }
 
   /*
+   * The attributed set, ranked exactly once.
+   *
+   * `shapWaterfall` ranks internally to build its remainder row, and the header
+   * count below has to come from the same set or the page contradicts itself —
+   * see `attributedInputs`. `rankContributions` is pure (one map, one filter,
+   * one sort over ~89 values), so hoisting it costs nothing and guarantees the
+   * two numbers are derived from one ranking.
+   */
+  const ranked = rankContributions(explanation);
+
+  /*
    * The published share is the driver's own `share`, not a second one computed
    * here.
    *
@@ -98,6 +110,16 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
     group: d.group,
     domain: domainForFeature(d.featureKey, d.group),
     unit: featureDefinition(d.featureKey)?.unit ?? 'ratio',
+    /*
+     * The registry's own rendering of the value, not the raw number.
+     *
+     * The page used to format this itself from `featureValueRaw` and the unit,
+     * which is a second implementation of a decision the registry already makes
+     * per feature — so the VALUE cell and the sentence beside it, which goes
+     * through `formatRaw`, disagreed on the same quantity in the same row. One
+     * formatter, one string, published once.
+     */
+    featureValueFormatted: formatRaw(d.featureKey, d.value),
   }));
 
   return ok({
@@ -144,8 +166,18 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
      * twelve — while the waterfall beside it showed "73 other drivers". Sending
      * the real total lets the page say "top 12 of 81" instead of calling twelve
      * of eighty-one "all".
+     *
+     * The total is the *ranked* count, not `explanation.values.length`. Those
+     * are not the same number: `rankContributions` drops features whose φ is
+     * numerically zero (|φ| ≤ 1e-9), and for MSFT that is 8 of 89. Publishing
+     * the unfiltered 89 put "Top 12 of 89 attributed inputs" directly above a
+     * waterfall reading "8 named + 73 other drivers" — 81 — on the same screen.
+     * A reader who adds up the bars beside the header is doing the arithmetic
+     * the page invites, and it has to come out. Relaxing the 1e-9 filter would
+     * reconcile them the wrong way round, by re-admitting eight features that
+     * contribute exactly nothing as waterfall rows.
      */
-    attributedInputs: explanation.values.length,
+    attributedInputs: ranked.length,
     agents: signal.agents,
     router: {
       action: router.action,
@@ -171,7 +203,16 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
       rationale: s.rationale,
       levels: s.levels,
     })),
-    features: signal.features,
+    /*
+     * Without the `normalised` rank.
+     *
+     * That field is an ECDF rank against the cross-section, and there is no
+     * cross-section on this path: `computeFeatures` writes 0.5 as a placeholder
+     * and only the universe sweep fills it in. Publishing 0.5 for all of them
+     * put a column of identical "50th percentile" values on the page, which
+     * reads as a measurement and is not one.
+     */
+    features: signal.features.map(({ normalised: _rank, ...rest }) => rest),
     artefacts: {
       price: features.artefacts.price,
       previousClose: features.artefacts.previousClose,

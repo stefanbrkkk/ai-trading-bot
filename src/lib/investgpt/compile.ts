@@ -25,7 +25,7 @@
 
 import { FEATURE_DEFINITIONS, type FeatureDefinition } from '@/lib/engine/features';
 import { SECTORS, getSpec } from '@/lib/market/universe';
-import { SNAPSHOT_TABLE } from '@/lib/investgpt/catalog';
+import { SNAPSHOT_TABLE, tableSpec } from '@/lib/investgpt/catalog';
 import type { RegimeLabel, Sector, SignalDirection } from '@/lib/domain/types';
 
 /** Parameterised SQL. Values are never interpolated into the statement text. */
@@ -74,6 +74,86 @@ const COMPARATORS: readonly { phrases: readonly string[]; op: '>' | '<' | '>=' |
   { phrases: ['not equal to', 'other than', 'excluding', '!=', '<>'], op: '!=' },
   { phrases: ['equal to', 'equals', 'exactly', 'is', '=='], op: '=' },
 ];
+
+/** The comparator a negated comparison means instead. */
+const NEGATED_COMPARATOR: Readonly<Record<string, '>' | '<' | '>=' | '<=' | '=' | '!='>> = {
+  '>': '<=',
+  '<': '>=',
+  '>=': '<',
+  '<=': '>',
+  '=': '!=',
+  '!=': '=',
+};
+
+/**
+ * Words that invert the predicate they govern.
+ *
+ * The comparator table above already carries "not below", "not above", "no less
+ * than" and "other than", so a negated *number* written one of those four ways
+ * has always compiled correctly. Everything else negated did not, and it failed
+ * in the one way this compiler is built to make impossible: silently, and with
+ * every surface agreeing. "Which names are not optionable?" emitted
+ * `optionable = 1`; "Which stocks are not in the Technology sector?" emitted
+ * `sector IN ('Technology')`; "stocks that are not bullish" emitted
+ * `direction = 'long'`. In each case the SQL, the structured plan, the English
+ * readback and the row set all said the same thing, and all of them said the
+ * opposite of the question. Nothing landed in `notes` and nothing landed in
+ * `unparsed`, so a user checking the compiler's work — which is the entire reason
+ * the statement is published — found a clean parse of a question nobody asked.
+ *
+ * A negation the compiler cannot express is reported rather than dropped. A
+ * negation it can express inverts the predicate and says so in `notes`.
+ */
+const NEGATION_CUES =
+  /\b(?:not|non|no|never|without|excluding|exclude|except|other than|apart from|outside|isn't|aren't|doesn't|don't)\b/g;
+
+/**
+ * What may sit between a negation cue and the phrase it negates.
+ *
+ * Scope is the hard part, not detection. A fixed lookback window of a few dozen
+ * characters reads "names that are not oversold in the technology sector" as a
+ * negated *sector*, which would replace one silent misreading with another. So a
+ * cue only binds to a phrase when everything between them is grammatical
+ * filler — articles, prepositions, copulas, hyphens. A single content word in the
+ * gap means the negation belongs to that word, and this phrase is not negated.
+ */
+const NEGATION_FILLER =
+  /^[\s\-–—]*(?:(?:an?|the|any|all|is|are|be|being|been|in|on|of|to|for|from|within|inside|part|currently|those|these|that|which|it|they|them)[\s\-–—]+)*$/;
+
+/**
+ * The negation cue governing the phrase starting at `at`, or null.
+ *
+ * The cue text is returned rather than a boolean so the compiler can quote the
+ * user's own word back in `notes`. "Read \"not\" as excluding Technology" is
+ * checkable; a filter that merely happens to be right is not.
+ */
+function negationCueFor(lower: string, at: number): string | null {
+  let cue: string | null = null;
+  for (const match of lower.slice(0, at).matchAll(NEGATION_CUES)) {
+    const gap = lower.slice((match.index ?? 0) + match[0].length, at);
+    if (NEGATION_FILLER.test(gap)) cue = match[0];
+  }
+  return cue;
+}
+
+/**
+ * Negates a predicate, keeping rows whose value is unknown.
+ *
+ * SQL's three-valued logic is the trap here. `direction != 'long'` is *false* for
+ * a symbol carrying no signal at all, so the naive negation of "bullish names" is
+ * not "every other name" — it silently drops the whole unranked tail. A user who
+ * screens both halves of a partition and finds they do not add up to the universe
+ * has been given two correct-looking answers and no way to tell which one lied.
+ * The snapshot view declares its nullability, so the compiler reads it rather
+ * than guessing: a NOT NULL column negates plainly, and a nullable one admits its
+ * NULLs explicitly.
+ */
+function negatePredicate(column: string, bounds: readonly string[]): string {
+  const spec = tableSpec(SNAPSHOT_TABLE);
+  const nullable = spec?.columns.find((candidate) => candidate.name === column)?.nullable ?? true;
+  const inner = `NOT (${bounds.join(' AND ')})`;
+  return nullable ? `(${column} IS NULL OR ${inner})` : inner;
+}
 
 /** Words that mean "sort descending" / "sort ascending". */
 const SUPERLATIVE_DESC = [
@@ -380,11 +460,19 @@ export function compileQuestion(question: string): CompiledQuery {
   };
 
   const sectors = new Set<Sector>();
+  const excludedSectors = new Set<Sector>();
+  let sectorCue: string | null = null;
   for (const [phrase, sector] of Object.entries(sectorAliases).sort((a, b) => b[0].length - a[0].length)) {
     const at = lower.indexOf(phrase);
     if (at < 0) continue;
     if (!claim(at, at + phrase.length)) continue;
-    sectors.add(sector);
+    const cue = negationCueFor(lower, at);
+    if (cue === null) {
+      sectors.add(sector);
+    } else {
+      excludedSectors.add(sector);
+      sectorCue = cue;
+    }
   }
   if (sectors.size > 0) {
     const list = [...sectors];
@@ -394,6 +482,16 @@ export function compileQuestion(question: string): CompiledQuery {
       plan: { column: 'sector', operator: 'IN', value: list.join(', '), source: 'sector reference' },
       project: ['sector'],
     });
+  }
+  if (excludedSectors.size > 0) {
+    const list = [...excludedSectors];
+    clauses.push({
+      sql: `sector NOT IN (${list.map(() => '?').join(', ')})`,
+      params: list,
+      plan: { column: 'sector', operator: 'NOT IN', value: list.join(', '), source: 'negated sector reference' },
+      project: ['sector'],
+    });
+    notes.push(`Read "${sectorCue ?? 'not'}" as excluding ${list.join(', ')} rather than selecting it.`);
   }
 
   // ── Phase 1b: capitalisation buckets ─────────────────────────────────────
@@ -413,14 +511,28 @@ export function compileQuestion(question: string): CompiledQuery {
       bounds.push('market_cap < ?');
       params.push(bucket.max);
     }
+    const cue = negationCueFor(lower, at);
     clauses.push({
-      sql: bounds.length === 1 ? (bounds[0] as string) : `(${bounds.join(' AND ')})`,
+      sql:
+        cue === null
+          ? bounds.length === 1
+            ? (bounds[0] as string)
+            : `(${bounds.join(' AND ')})`
+          : negatePredicate('market_cap', bounds),
       params,
-      plan: { column: 'market_cap', operator: 'in band', value: bucket.label, source: phrase },
+      plan: {
+        column: 'market_cap',
+        operator: cue === null ? 'in band' : 'outside band',
+        value: bucket.label,
+        source: cue === null ? phrase : `${cue} ${phrase}`,
+      },
       project: ['market_cap'],
     });
+    const bandText = `${bucket.min === null ? 'below' : `from $${(bucket.min / 1e9).toFixed(bucket.min < 1e9 ? 1 : 0)}B`}${bucket.min !== null && bucket.max !== null ? ' to ' : ''}${bucket.max === null ? ' and above' : `$${(bucket.max / 1e9).toFixed(bucket.max < 1e9 ? 1 : 0)}B`}`;
     notes.push(
-      `Interpreted "${phrase}" as market capitalisation ${bucket.min === null ? 'below' : `from $${(bucket.min / 1e9).toFixed(bucket.min < 1e9 ? 1 : 0)}B`}${bucket.min !== null && bucket.max !== null ? ' to ' : ''}${bucket.max === null ? ' and above' : `$${(bucket.max / 1e9).toFixed(bucket.max < 1e9 ? 1 : 0)}B`}.`,
+      cue === null
+        ? `Interpreted "${phrase}" as market capitalisation ${bandText}.`
+        : `Interpreted "${cue} ${phrase}" as market capitalisation outside the ${bucket.label} band (${bandText}).`,
     );
     break;
   }
@@ -441,12 +553,21 @@ export function compileQuestion(question: string): CompiledQuery {
     if (GENERIC_BAND_WORDS.has(phrase) && featureNear(lower, at, phrase.length)) continue;
 
     if (!claim(at, at + phrase.length)) continue;
+    const cue = negationCueFor(lower, at);
     clauses.push({
-      sql: 'direction = ?',
+      sql: cue === null ? 'direction = ?' : negatePredicate('direction', ['direction = ?']),
       params: [entry.value],
-      plan: { column: 'direction', operator: '=', value: entry.value, source: phrase },
+      plan: {
+        column: 'direction',
+        operator: cue === null ? '=' : '!=',
+        value: entry.value,
+        source: cue === null ? phrase : `${cue} ${phrase}`,
+      },
       project: ['direction'],
     });
+    if (cue !== null) {
+      notes.push(`Read "${cue} ${phrase}" as any signal direction other than ${entry.value}, including symbols carrying no signal.`);
+    }
     break;
   }
 
@@ -455,22 +576,44 @@ export function compileQuestion(question: string): CompiledQuery {
     if (phrase === undefined) continue;
     const at = lower.indexOf(phrase);
     if (!claim(at, at + phrase.length)) continue;
+    const cue = negationCueFor(lower, at);
     clauses.push({
-      sql: 'regime = ?',
+      sql: cue === null ? 'regime = ?' : negatePredicate('regime', ['regime = ?']),
       params: [entry.value],
-      plan: { column: 'regime', operator: '=', value: entry.value, source: phrase },
+      plan: {
+        column: 'regime',
+        operator: cue === null ? '=' : '!=',
+        value: entry.value,
+        source: cue === null ? phrase : `${cue} ${phrase}`,
+      },
       project: ['regime'],
     });
+    if (cue !== null) {
+      notes.push(`Read "${cue} ${phrase}" as any regime other than ${entry.value}, including symbols with no classified regime.`);
+    }
     break;
   }
 
-  if (/\boptionable\b|\bwith options\b|\blisted options\b/.test(lower)) {
+  /**
+   * `optionable` is a boolean and NOT NULL, so its negation is the other value
+   * rather than a NOT wrapper — `optionable = 0` reads plainly in the published
+   * statement and partitions the universe exactly.
+   */
+  const optionable = /\boptionable\b|\bwith options\b|\blisted options\b/.exec(lower);
+  if (optionable !== null) {
+    const cue = negationCueFor(lower, optionable.index);
     clauses.push({
-      sql: 'optionable = 1',
+      sql: cue === null ? 'optionable = 1' : 'optionable = 0',
       params: [],
-      plan: { column: 'optionable', operator: '=', value: 'true', source: 'optionable' },
+      plan: {
+        column: 'optionable',
+        operator: '=',
+        value: cue === null ? 'true' : 'false',
+        source: cue === null ? optionable[0] : `${cue} ${optionable[0]}`,
+      },
       project: ['optionable'],
     });
+    if (cue !== null) notes.push(`Read "${cue} ${optionable[0]}" as excluding symbols that have listed options.`);
   }
 
   // ── Phase 1d: explicit symbols ───────────────────────────────────────────
@@ -491,16 +634,39 @@ export function compileQuestion(question: string): CompiledQuery {
     ),
   ];
   if (tickers.length > 0 && tickers.length <= 24) {
+    // A question can name symbols on both sides of a negation ("AAPL and MSFT but
+    // not NVDA"), so the tickers are partitioned rather than negated wholesale.
+    const included: string[] = [];
+    const excluded: string[] = [];
+    let tickerCue: string | null = null;
     for (const ticker of tickers) {
       const at = original.indexOf(ticker);
       if (at >= 0) claim(at, at + ticker.length);
+      const cue = at < 0 ? null : negationCueFor(lower, at);
+      if (cue === null) {
+        included.push(ticker);
+      } else {
+        excluded.push(ticker);
+        tickerCue = cue;
+      }
     }
-    clauses.push({
-      sql: `symbol IN (${tickers.map(() => '?').join(', ')})`,
-      params: tickers,
-      plan: { column: 'symbol', operator: 'IN', value: tickers.join(', '), source: 'explicit tickers' },
-      project: ['symbol'],
-    });
+    if (included.length > 0) {
+      clauses.push({
+        sql: `symbol IN (${included.map(() => '?').join(', ')})`,
+        params: included,
+        plan: { column: 'symbol', operator: 'IN', value: included.join(', '), source: 'explicit tickers' },
+        project: ['symbol'],
+      });
+    }
+    if (excluded.length > 0) {
+      clauses.push({
+        sql: `symbol NOT IN (${excluded.map(() => '?').join(', ')})`,
+        params: excluded,
+        plan: { column: 'symbol', operator: 'NOT IN', value: excluded.join(', '), source: 'excluded tickers' },
+        project: ['symbol'],
+      });
+      notes.push(`Read "${tickerCue ?? 'not'}" as excluding ${excluded.join(', ')} rather than selecting ${excluded.length === 1 ? 'it' : 'them'}.`);
+    }
   }
 
   // ── Phase 2: numeric comparisons ─────────────────────────────────────────
@@ -541,6 +707,20 @@ export function compileQuestion(question: string): CompiledQuery {
     const claimStart = start + Math.max(0, subjectAt);
     if (!claim(claimStart, start + whole.length)) continue;
 
+    /**
+     * A comparator can be negated by a word standing outside it.
+     *
+     * The table above spells out "not below" and "not above" as comparators in
+     * their own right, which covers those two phrasings and leaves every other
+     * one inverted: "conviction not greater than 60" compiled to
+     * `conviction > 60`. The scanner already knows where the comparator starts,
+     * so the same scope test the categorical phases use answers this too, and the
+     * operator flips rather than the question.
+     */
+    const comparatorAt = lower.indexOf(comparatorText.toLowerCase(), start + subject.length);
+    const negationCue = comparatorAt < 0 ? null : negationCueFor(lower, comparatorAt);
+    const operator = negationCue === null ? comparator.op : (NEGATED_COMPARATOR[comparator.op] ?? comparator.op);
+
     // `market_cap` in the view is dollars, and a user writing "market cap above
     // 10" almost certainly means billions rather than ten dollars.
     let effective = value;
@@ -549,10 +729,34 @@ export function compileQuestion(question: string): CompiledQuery {
       notes.push(`Interpreted "market cap ${comparatorText} ${quantityText.trim()}" as ${comparatorText} $${value}B.`);
     }
 
+    /**
+     * The quoted span is the claim, not the regex match.
+     *
+     * `whole` starts wherever the 60-character subject window happened to begin,
+     * which is not a word boundary and frequently not even a word: on the
+     * platform's own example chip, "Which optionable large cap names have a 25
+     * delta risk reversal below -2?", the window cannot reach index 0 and the
+     * match starts at index 2, so the query inspector rendered the filter's
+     * provenance as ← "ich optionable large cap names have a 25 delta risk
+     * reversal below -2". `claimStart` is already the start of the phrase that
+     * resolved to this column, and it is what the reader is being shown evidence
+     * for, so the span is quoted from there.
+     */
+    if (negationCue !== null) {
+      notes.push(
+        `Read "${negationCue} ${comparatorText.trim()}" as ${operator}, so the filter is ${resolved.column} ${operator} ${effective}.`,
+      );
+    }
+
     clauses.push({
-      sql: `${resolved.column} ${comparator.op} ?`,
+      sql: `${resolved.column} ${operator} ?`,
       params: [effective],
-      plan: { column: resolved.column, operator: comparator.op, value: String(effective), source: whole.trim() },
+      plan: {
+        column: resolved.column,
+        operator,
+        value: String(effective),
+        source: original.slice(claimStart, start + whole.length).trim(),
+      },
       project: [resolved.column],
     });
   }
@@ -595,14 +799,28 @@ export function compileQuestion(question: string): CompiledQuery {
       }
       if (bounds.length === 0) continue;
 
+      const cue = negationCueFor(lower, at);
       clauses.push({
-        sql: bounds.length === 1 ? (bounds[0] as string) : `(${bounds.join(' AND ')})`,
+        sql:
+          cue === null
+            ? bounds.length === 1
+              ? (bounds[0] as string)
+              : `(${bounds.join(' AND ')})`
+            : negatePredicate(definition.sqlColumn, bounds),
         params,
-        plan: { column: definition.sqlColumn, operator: 'in band', value: band.state, source: phrase },
+        plan: {
+          column: definition.sqlColumn,
+          operator: cue === null ? 'in band' : 'outside band',
+          value: band.state,
+          source: cue === null ? phrase : `${cue} ${phrase}`,
+        },
         project: [definition.sqlColumn],
       });
+      const bandText = `${Number.isFinite(band.min) ? band.min : '−∞'} to ${Number.isFinite(band.max) ? band.max : '∞'}`;
       notes.push(
-        `Read "${phrase}" as ${definition.label} in its published ${band.state} band (${Number.isFinite(band.min) ? band.min : '−∞'} to ${Number.isFinite(band.max) ? band.max : '∞'}).`,
+        cue === null
+          ? `Read "${phrase}" as ${definition.label} in its published ${band.state} band (${bandText}).`
+          : `Read "${cue} ${phrase}" as ${definition.label} outside its published ${band.state} band (${bandText}), including symbols with no value for it.`,
       );
     }
   }

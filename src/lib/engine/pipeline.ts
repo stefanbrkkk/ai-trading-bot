@@ -5,7 +5,7 @@
  * the sub-150ms tick-to-trade budget from Phase 3:
  *
  *   1. ingest        — bars, book, option chain and alt-data for the instant
- *   2. features      — the 80-feature vector (compute.ts)
+ *   2. features      — the full registry feature vector (compute.ts)
  *   3. regime        — Hurst / ADF / ADX classification
  *   4. agents        — the 60m TFT, 15m BiLSTM and 5m LSTM, published through the
  *                      Hierarchical State Clock's sequence barrier
@@ -19,6 +19,13 @@
  * The stage order matters: the agents publish *before* the router reads, and the
  * router's abort/skip verdicts are respected by the fusion step rather than
  * being advisory.
+ *
+ * Stage 2 used to write the vector's width out as a literal, and the field
+ * comment ninety lines below wrote a different one for the same vector, so the
+ * file disagreed with itself and both numbers disagreed with the registry.
+ * Neither sentence names a width any more: `MODEL_FEATURE_COUNT` is exported
+ * from the registry, and prose cannot be kept in agreement with a number it
+ * repeats.
  */
 
 import { type ComputedFeatures, computeFeatures } from './compute';
@@ -46,7 +53,7 @@ import {
   evaluateStrategies,
   resolveStrategyConflicts,
 } from './strategies';
-import { type ShapExplanation, localAccuracyError } from '@/lib/quant/shap';
+import { type ShapExplanation, localAccuracyError, rankContributions } from '@/lib/quant/shap';
 import { rogersSatchellVolatility, closes, last, resample } from '@/lib/quant/indicators';
 import { clamp } from '@/lib/quant/stats';
 import { AGENT_DISCRIMINATION_FLOOR } from './model';
@@ -65,6 +72,17 @@ import type {
 
 /** Phase 3 mandates a sub-150ms tick-to-trade budget. */
 export const LATENCY_BUDGET_MS = 150;
+
+/**
+ * How many drivers the narrative publishes, and how small a share still earns a
+ * sentence.
+ *
+ * Named once because `rankContributions` is applied twice against it — once to
+ * size the evidence for the Insufficient Data Protocol, once to translate the
+ * drivers the page shows — and two copies of the pair would let the gate count a
+ * different list than the one it gates.
+ */
+const DRIVER_SELECTION = { topK: 12, minShare: 0.002 } as const;
 
 export interface PipelineInput {
   symbol: string;
@@ -93,8 +111,8 @@ export interface PipelineResult {
   strategies: StrategyEvaluation[];
   drivers: TranslatedDriver[];
   /**
-   * The exact TreeSHAP decomposition, all 89 values, with the ensemble's own
-   * `baseValue` and `rawPrediction`.
+   * The exact TreeSHAP decomposition — one value per registry feature — with the
+   * ensemble's own `baseValue` and `rawPrediction`.
    *
    * Published because the API was rebuilding a waterfall from the twelve
    * *translated* drivers with `baseValue: 0`, which is a different object: it
@@ -209,6 +227,19 @@ export function runPipeline(
   latency.mark('regime');
 
   // ── 4. Agents, published under the sequence barrier ──────────────────────
+  /*
+   * A fresh clock per run, which makes the barrier structural on this path
+   * rather than live.
+   *
+   * `runPipeline` is request-scoped, so every production call ticks a clock that
+   * has never ticked before and publishes the 5m agent at sequence 0 — and
+   * `readMacroForTick` returns early when the required sequence is −1, without
+   * consulting either upstream sequence. The ordering contract is therefore
+   * expressed and type-checked here, and enforced from tick 1 onwards, but this
+   * path never reaches tick 1: `clock.barrierViolations` is pinned at 0 by
+   * construction, not by the agents behaving. Making it live means holding one
+   * clock per symbol across requests, alongside `symbolCache` in service.ts.
+   */
   const clock = new HierarchicalStateClock();
   const sequence = clock.tick();
   const history = [...featureHistory, features];
@@ -248,14 +279,18 @@ export function runPipeline(
    * An agent that does not discriminate carries no conviction into the router.
    *
    * `discrimination` is the standard deviation of each agent's probability across
-   * the validation split, measured at training time. The 60m TFT scored 7.6e-4 —
-   * it returned 0.7711 for every symbol in the universe — and because that
-   * constant sits well above a coin flip it voted "long, with conviction" on
-   * everything, which is how all 67 tradable names came out long at once.
+   * the validation split, measured at training time. On the bundled seed the 60m
+   * TFT scores 1.4e-3 against 0.17 for the 5m LSTM: it returns ~0.492 for
+   * whatever it is shown, so its vote is one fixed offset applied to all 67
+   * names rather than a reading of any of them. An earlier fit made that plain
+   * by landing its constant well above a coin flip, where the same fixed vote
+   * carried the whole universe long at once.
    *
    * Zeroing its conviction is not a correction of its opinion; it is a refusal to
    * treat a constant as an opinion. The router's own guard handles the case where
-   * every agent collapses, and /transparency publishes the figures.
+   * every agent collapses, and /transparency publishes the measured figures — so
+   * the values quoted here describe the seeded model and are not a contract; the
+   * floor below is.
    */
   const discrimination = model.training.discrimination;
   const agentWeight = (spread: number): number => (spread >= AGENT_DISCRIMINATION_FLOOR ? 1 : 0);
@@ -290,6 +325,31 @@ export function runPipeline(
 
   // ── 8/9. Direction, strategies, translation ──────────────────────────────
   const direction = resolveDirection(router, probability);
+  const price = features.artefacts.price;
+
+  /*
+   * The published direction is settled before anything reads it.
+   *
+   * The Insufficient Data Protocol used to be evaluated *after* the driver
+   * sentences and the levels had been built from `direction`, and only the
+   * `Signal` literal at the bottom applied it. A signal the gate flattened
+   * therefore published FLAT above a full set of directional driver prose —
+   * "3% of this bullish conviction is driven by a primary downtrend" under a
+   * headline saying the model holds no directional conviction, which is the
+   * exact contradiction the flat branch of `composeGenericNarrative` exists to
+   * prevent, and a long-shaped trade plan besides.
+   *
+   * `rankContributions` decides how many drivers there are and does not consult
+   * the direction, so the count the gate needs is available before the
+   * translation that consumes the direction. Everything downstream reads
+   * `publishedDirection`; `direction` is not used again.
+   */
+  const evidence = features.raw.alt_evidence ?? 0;
+  const insufficient = isInsufficientEvidence(
+    evidence,
+    rankContributions(explanation, DRIVER_SELECTION).length,
+  );
+  const publishedDirection: SignalDirection = insufficient ? 'flat' : direction;
 
   const strategyContext: StrategyContext = {
     symbol: input.symbol,
@@ -311,27 +371,23 @@ export function runPipeline(
   latency.mark('strategies');
 
   const drivers = translateExplanation(explanation, {
-    signalDirection: direction,
-    topK: 12,
-    minShare: 0.002,
+    signalDirection: publishedDirection,
+    ...DRIVER_SELECTION,
   });
   latency.mark('translate');
 
   // ── 10. Fuse ─────────────────────────────────────────────────────────────
-  const directionalProbability = direction === 'short' ? 1 - probability : probability;
-  const stratScore = direction === 'short' ? strategyConviction.short : strategyConviction.long;
+  const directionalProbability = publishedDirection === 'short' ? 1 - probability : probability;
+  const stratScore =
+    publishedDirection === 'short' ? strategyConviction.short : strategyConviction.long;
   const conviction = fuseConviction({
     directionalProbability,
     aggregateDirection: Math.abs(router.aggregateDirection),
     strategyConviction: stratScore,
     regimeConfidence: regime.confidence,
-    direction,
+    direction: publishedDirection,
     routerAction: router.action,
   });
-
-  const price = features.artefacts.price;
-  const evidence = features.raw.alt_evidence ?? 0;
-  const insufficient = isInsufficientEvidence(evidence, drivers.length);
 
   /*
    * A strategy supplies this signal's levels only if it agrees with the direction
@@ -349,21 +405,30 @@ export function runPipeline(
    * target would be incoherent" — so one wrong input poisoned both numbers.
    *
    * When the winner disagrees, the signal names no strategy and falls back to
-   * ATR-derived levels, which are always built from `direction`. That the
-   * strategy fired at all is still published in `strategiesFired`, with its own
-   * direction, so the disagreement is visible rather than resolved silently.
+   * ATR-derived levels, which are always built from the published direction.
+   * That the strategy fired at all is still published in `strategiesFired`, with
+   * its own direction, so the disagreement is visible rather than resolved
+   * silently. A flat signal never adopts a strategy's levels either: no strategy
+   * fires flat, so the comparison below cannot match one.
    */
   const alignedStrategy =
-    conflict.winner !== null && conflict.winner.direction === direction ? conflict.winner : null;
-  const levels = alignedStrategy?.levels ?? defaultLevels(price, features.artefacts.atr, direction);
-  const expectedReturn = deriveExpectedReturn(tftOut.expectedReturn, price, levels, direction);
+    conflict.winner !== null && conflict.winner.direction === publishedDirection
+      ? conflict.winner
+      : null;
+  const levels = publishedLevels(
+    publishedDirection,
+    price,
+    features.artefacts.atr,
+    alignedStrategy?.levels ?? null,
+  );
+  const expectedReturn = deriveExpectedReturn(tftOut.expectedReturn, price, levels, publishedDirection);
 
   const thesis = insufficient
     ? INSUFFICIENT_DATA_THESIS
-    : composeThesis(input.symbol, drivers, direction, conviction);
+    : composeThesis(input.symbol, drivers, publishedDirection, conviction);
   const counterThesis = insufficient
     ? 'Evidence is insufficient to identify a material opposing driver.'
-    : composeCounterThesis(drivers, direction);
+    : composeCounterThesis(drivers, publishedDirection);
 
   const agents: AgentInference[] = [
     toAgentInference(model.tft.spec, tftOut, sequence),
@@ -387,7 +452,7 @@ export function runPipeline(
     id: signalId(input.symbol, input.now),
     symbol: input.symbol,
     generatedAt: input.now,
-    direction: insufficient ? 'flat' : direction,
+    direction: publishedDirection,
     conviction: insufficient ? 0 : conviction,
     probability: insufficient ? 0.5 : directionalProbability,
     horizonDays,
@@ -434,12 +499,33 @@ function toAgentInference(
 }
 
 /**
- * The router's verdict is authoritative on direction when it emitted one; the
- * tree model only decides when the router held, aborted or skipped.
+ * The router picks the side; the tree model holds a veto over it.
+ *
+ * The router resolves three agents on three timeframes and can emit EXECUTE_LONG
+ * or EXECUTE_SHORT while the GBDT — the only component fitted directly on the
+ * "beats the benchmark" label — reads the other way. Taking its verdict
+ * unconditionally published four directional rows whose own probability was
+ * below a coin flip: LULU short at 42.4%, GS short at 43.5%, MA short at 43.8%,
+ * SPG long at 43.1%. `Signal.probability` is the probability the *published
+ * position* beats the benchmark — stage 10 stores `1 − p` on a short — so each
+ * of those rows advertised a trade the platform's own number said would not
+ * work, beside a conviction score computed from that same number.
+ *
+ * A disagreement between two lines of evidence is not settled by ranking them.
+ * It publishes flat, which is what the noise-floor path below already does when
+ * the evidence is thin, and the router panel and `strategiesFired` still show
+ * what each side said. `probability === 0.5` is not a disagreement, so it is not
+ * vetoed.
+ *
+ * Takes only the action it reads, so the veto can be exercised directly rather
+ * than through a whole `RouterDecision`.
  */
-function resolveDirection(router: RouterDecision, probability: number): SignalDirection {
-  if (router.action === 'EXECUTE_LONG') return 'long';
-  if (router.action === 'EXECUTE_SHORT') return 'short';
+export function resolveDirection(
+  router: Pick<RouterDecision, 'action'>,
+  probability: number,
+): SignalDirection {
+  if (router.action === 'EXECUTE_LONG') return probability >= 0.5 ? 'long' : 'flat';
+  if (router.action === 'EXECUTE_SHORT') return probability <= 0.5 ? 'short' : 'flat';
   if (router.action === 'ABORT_TOXIC_FLOW' || router.action === 'SKIP' || router.action === 'NEUTRAL') return 'flat';
   // HOLD: the agents are inside the noise floor, so defer to the tree model, but
   // only when it is meaningfully off a coin flip.
@@ -483,10 +569,19 @@ export function fuseConviction(inputs: ConvictionInputs): number {
   return Math.round(clamp(raw * regimeAdjustment, 0, 1) * 1000) / 10;
 }
 
+/**
+ * ATR-derived levels for a signal that has a side.
+ *
+ * `direction` is deliberately narrowed to the two directional values. It used to
+ * accept the full `SignalDirection` and derive its sign as
+ * `direction === 'short' ? -1 : 1`, which reads 'flat' as long — see
+ * `flatLevels` for what that published. Narrowing the parameter is what makes
+ * that call unrepresentable rather than merely absent.
+ */
 function defaultLevels(
   price: number,
   atrValue: number,
-  direction: SignalDirection,
+  direction: 'long' | 'short',
 ): Signal['levels'] {
   const a = Math.max(atrValue, price * 0.005);
   const sign = direction === 'short' ? -1 : 1;
@@ -496,6 +591,64 @@ function defaultLevels(
     invalidation: price - sign * 1.5 * a,
     target1: price + sign * 2.25 * a,
     target2: price + sign * 4 * a,
+  };
+}
+
+/**
+ * The level set a signal publishes: the aligned strategy's when it has one, the
+ * ATR-derived default when it does not, and `flatLevels` when it took no side.
+ *
+ * One function so that "flat" is decided in exactly one place. This was a `??`
+ * chain at the call site with no flat branch at all, which is how a signal with
+ * no direction came to publish a directional plan.
+ */
+export function publishedLevels(
+  direction: SignalDirection,
+  price: number,
+  atrValue: number,
+  strategyLevels: Signal['levels'] | null,
+): Signal['levels'] {
+  if (direction === 'flat') return flatLevels(price, atrValue);
+  return strategyLevels ?? defaultLevels(price, atrValue, direction);
+}
+
+/**
+ * Levels for a signal that has no side.
+ *
+ * An invalidation and a target are directional statements, and `defaultLevels`
+ * took any non-short direction as long — so every flat name published a complete
+ * bullish trade plan under a FLAT badge and an expected return of +0.00%. BAC,
+ * at a reference price of 31.41: invalidation 30.28, target 1 33.11 (+5.4%),
+ * target 2 34.43 (+9.6%), drawn on the price chart as four annotations and
+ * listed in the "Published levels" panel directly beneath a thesis reading "the
+ * model holds no directional conviction on BAC". Thirteen of the sixty-seven
+ * names on the measured sweep were flat, and all thirteen were long-shaped.
+ *
+ * A flat signal publishes the one band it actually has — the entry zone, which
+ * is symmetric about the reference price and asserts no side — and collapses the
+ * three directional levels onto the reference price itself. That is the only
+ * finite value which claims no move in either direction, and it keeps
+ * `deriveExpectedReturn`'s target leg at the +0.00% the signal publishes beside
+ * it, so the two numbers still derive from each other.
+ *
+ * Collapsing rather than omitting is a storage constraint, not a preference. The
+ * display layer is already built for absence: `price()` renders '—' for a
+ * non-finite value and `PriceChart` skips any level failing `Number.isFinite`.
+ * But `signals.invalidation`, `.target1` and `.target2` are `REAL NOT NULL`,
+ * SQLite has no NaN, and binding one aborts the insert — which would take down
+ * the universe write in `persist.ts` and the seed with it. Publishing "no level"
+ * rather than "a level equal to the price" needs those three columns made
+ * nullable, `Signal['levels']` widened to `number | null`, and the levels panel
+ * on the symbol page hidden when the direction is flat.
+ */
+function flatLevels(price: number, atrValue: number): Signal['levels'] {
+  const a = Math.max(atrValue, price * 0.005);
+  return {
+    entryZoneLow: price - 0.25 * a,
+    entryZoneHigh: price + 0.25 * a,
+    invalidation: price,
+    target1: price,
+    target2: price,
   };
 }
 

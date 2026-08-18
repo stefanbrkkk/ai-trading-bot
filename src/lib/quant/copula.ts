@@ -756,7 +756,14 @@ export function sampleCVine(model: CVineModel, uniforms: readonly number[]): num
 /**
  * Systemic joint-downside probability: P(all streams below their q-quantile),
  * estimated from the fitted vine copula cdf via Monte-Carlo on the vine sampler.
- * This is the "market downturn" co-movement number the risk panel reports.
+ *
+ * Not what the risk panel reports, despite what this docstring used to say. The
+ * joint-downside figure on `/portfolio` comes from `vineTailSummary` below —
+ * `/api/risk/tail` carries a header explaining why the Monte-Carlo route was
+ * dropped (12 s at eight holdings, and 0 hits in 10,000 draws at twelve, so the
+ * estimator has no resolution at the tail it is asked about). This is retained
+ * as the reference estimator for that comparison, and is the first thing a
+ * maintainer tracing the published number will read, so it has to say so.
  */
 export function jointTailProbability(
   model: CVineModel,

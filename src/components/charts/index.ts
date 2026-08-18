@@ -22,8 +22,17 @@ export type { AttentionStripProps } from './AttentionStrip';
 export { CalibrationPlot } from './CalibrationPlot';
 export type { CalibrationBin, CalibrationPlotProps } from './CalibrationPlot';
 
-// Conviction — the dial, its compact ring variant and the shared geometry.
-export { CONVICTION_GEOMETRY, ConvictionDial, ConvictionRing } from './ConvictionDial';
+// Conviction — the dial.
+//
+// `ConvictionRing` and `CONVICTION_GEOMETRY` used to be published from here too.
+// Neither had a consumer anywhere in the repository, and both carried docstrings
+// naming consumers that did not exist — a "compact ring for table rows and the
+// publication list" that the publication list does not render, and a geometry
+// object "exported so the unit tests can assert the mandated circumference"
+// which no test imported. A barrel that claims to *be* the public API cannot
+// also be a place where surface accumulates unread; the mandated geometry itself
+// lives in `lib/ui/svg` and is asserted in tests/fix-components.test.ts.
+export { ConvictionDial } from './ConvictionDial';
 export type { ConvictionDialProps } from './ConvictionDial';
 
 // Decay — signal half-life profiles against a horizon.

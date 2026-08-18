@@ -30,7 +30,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { PageHeader, PageShell } from '@/components/PageState';
+import { useActiveSymbol } from '@/components/TerminalProvider';
+import { Announce, PageHeader, PageShell } from '@/components/PageState';
 import {
   Badge,
   Button,
@@ -113,9 +114,63 @@ interface RouteResponse {
 
 type OrderType = '' | 'market' | 'limit' | 'stop' | 'stop_limit';
 
+/**
+ * How long a price field may get.
+ *
+ * The quantity field has been capped at nine characters since it was written;
+ * the two price fields were not capped at all, and an uncapped price is how a
+ * mathematical symbol reached the mandated rejection copy. 305 digits in the
+ * limit field against a nine-digit quantity overflowed the notional inside the
+ * risk engine to `Infinity`, and `formatUsd` handed that to `toLocaleString`,
+ * which renders it "∞" — so the page published "Order notional of $∞ exceeds the
+ * per-order ceiling of $100,000.00.", three times, while the Notional tile in
+ * the same view read "—" because `JSON.stringify` had turned the same Infinity
+ * into null. Twenty-two digits was enough for the softer version of the same
+ * fault: `toFixed` switches to exponential at 1e21, so the reference-price
+ * sentence read "Notional priced at 1.1111111111111111e+21 (your limit)".
+ *
+ * Twelve digits times a nine-digit quantity is under 1e21, so neither the
+ * overflow nor the exponential notation is reachable from this form any more.
+ * The order was refused correctly in every one of those cases — this was always
+ * display copy — but copy is the product here, and "$∞" is not a price.
+ */
+const PRICE_MAX_LENGTH = 12;
+
+/**
+ * Keeps a price field to digits and at most one decimal point.
+ *
+ * The filter was `replace(/[^\d.]/g, '')`, which happily accepted "1.2.3" —
+ * `Number('1.2.3')` is NaN, `JSON.stringify` sends null, and the server answered
+ * the well-formed "Enter a limit price." for a field the user could see they had
+ * filled in. Dropping the second point at the keystroke keeps the field and the
+ * value it stands for the same thing.
+ */
+function priceInput(value: string): string {
+  const digitsAndPoints = value.replace(/[^\d.]/g, '');
+  const first = digitsAndPoints.indexOf('.');
+  if (first === -1) return digitsAndPoints;
+  return digitsAndPoints.slice(0, first + 1) + digitsAndPoints.slice(first + 1).replace(/\./g, '');
+}
+
 export default function OrderTicketPage() {
   const params = useParams<{ symbol: string }>();
-  const symbol = (params.symbol ?? '').toUpperCase();
+  /**
+   * Clamped to the same 12 characters the order APIs already enforce.
+   *
+   * `/api/orders/preflight`, `/api/orders/submit` and `/api/intent` all bound the
+   * symbol at `z.string().min(1).max(12)`, and the unknown-symbol refusal below
+   * echoes this value into an eyebrow and a lede. Unclamped, 300 characters in
+   * the URL rendered as one unbreakable word 2959px long: the document measured
+   * 3187px at a 1440px viewport and the entire page scrolled sideways, `max-w-2xl`
+   * on the lede notwithstanding — a run with no spaces in it has no break
+   * opportunity to take. The published universe tops out at five characters, so
+   * nothing legitimate is truncated, and the client now refuses at the same
+   * length the server does rather than at a second one.
+   */
+  const symbol = (params.symbol ?? '').toUpperCase().slice(0, 12);
+  // Publishes the symbol to the terminal store, so the footer's FOCUS field
+  // names what this route is showing instead of reading NONE.
+  useActiveSymbol(symbol);
 
   const me = useApi<MeResponse>('/auth/me');
 
@@ -136,6 +191,22 @@ export default function OrderTicketPage() {
 
   const [preflight, setPreflight] = useState<PreflightResponse | null>(null);
   const [preflightError, setPreflightError] = useState<string | null>(null);
+  /**
+   * The idempotency key this ticket will route under.
+   *
+   * IDEMPOTENCY is one of the pre-trade controls the ticket displays, and it read
+   * PASS on every order while being unable to fire: the route minted a fresh
+   * random key per request when the caller sent none, and a fresh random key
+   * cannot collide with anything. The control was armed with a value guaranteed
+   * to pass.
+   *
+   * Minted here instead, once per authorising pre-flight, and cleared by the same
+   * effect that invalidates the pre-flight when any ticket field changes. So a
+   * second click on an unchanged, already-routed ticket — the double-submit this
+   * control exists to catch — carries the key the first click used and is
+   * refused DUPLICATE_ORDER, while a genuinely different order carries a new one.
+   */
+  const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
 
   const [routed, setRouted] = useState<RouteResponse | null>(null);
@@ -159,6 +230,7 @@ export default function OrderTicketPage() {
     setPreflightError(null);
     setRouted(null);
     setRouteError(null);
+    setIdempotencyKey(null);
   }, [quantity, orderType, side, limitPrice, stopPrice, timeInForce, account]);
 
   const runPreflight = useCallback(
@@ -166,6 +238,9 @@ export default function OrderTicketPage() {
       if (!ready || checking) return;
       setChecking(true);
       setPreflightError(null);
+      // A new authorisation, so a new key. `crypto.randomUUID` is available in
+      // every browser this product supports and in the E2E runtime.
+      setIdempotencyKey(`ord_${crypto.randomUUID()}`);
       try {
         setPreflight(
           await request<PreflightResponse>('/orders/preflight', {
@@ -236,6 +311,7 @@ export default function OrderTicketPage() {
             account,
             intentToken: minted.intentToken,
             click,
+            ...(idempotencyKey === null ? {} : { idempotencyKey }),
           },
         }),
       );
@@ -390,7 +466,8 @@ export default function OrderTicketPage() {
                     type="text"
                     inputMode="decimal"
                     value={limitPrice}
-                    onChange={(e) => setLimitPrice(e.target.value.replace(/[^\d.]/g, ''))}
+                    maxLength={PRICE_MAX_LENGTH}
+                    onChange={(e) => setLimitPrice(priceInput(e.target.value))}
                   />
                 </Field>
               ) : null}
@@ -402,7 +479,8 @@ export default function OrderTicketPage() {
                     type="text"
                     inputMode="decimal"
                     value={stopPrice}
-                    onChange={(e) => setStopPrice(e.target.value.replace(/[^\d.]/g, ''))}
+                    maxLength={PRICE_MAX_LENGTH}
+                    onChange={(e) => setStopPrice(priceInput(e.target.value))}
                   />
                 </Field>
               ) : null}
@@ -427,12 +505,31 @@ export default function OrderTicketPage() {
 
             <Divider className="my-5" />
 
+            {/*
+              In-flight is `busy`, never `disabled`.
+
+              Both buttons used to fold the request flag into `disabled`, which is
+              the exact case the Button primitive documents and exists to prevent:
+              `disabled` on the element that currently has focus hands focus to
+              `<body>`. Measured on both — focus the button, press Enter, and
+              `document.activeElement` was BODY from 30 ms right through to the
+              end of the request and past it, because React clears the attribute
+              15 ms after the blur and nothing puts focus back. A keyboard user
+              lost their place in the middle of routing an order, and a screen
+              reader stopped narrating the control it was on. `busy` keeps the
+              element focusable, marks it `aria-disabled`/`aria-busy`, swallows
+              the activation and dims it identically, so focus survives the round
+              trip. `disabled` stays for the genuinely unavailable cases — an
+              incomplete form, no session, no pre-flight — where nobody is focused
+              on the control at the moment it flips.
+            */}
             <div className="flex flex-wrap items-center gap-3">
               <Button
                 id="preflight-button"
                 variant="default"
                 size="lg"
-                disabled={!ready || checking || !signedIn}
+                busy={checking}
+                disabled={!ready || !signedIn}
                 onClick={runPreflight}
               >
                 {checking ? 'Checking…' : 'Run pre-trade checks'}
@@ -441,7 +538,8 @@ export default function OrderTicketPage() {
                 id="execute-button"
                 variant="primary"
                 size="lg"
-                disabled={preflight?.allowed !== true || routing || !signedIn}
+                busy={routing}
+                disabled={preflight?.allowed !== true || !signedIn}
                 onClick={execute}
               >
                 {routing ? 'Transmitting…' : 'Execute'}
@@ -476,6 +574,23 @@ export default function OrderTicketPage() {
                 title={preflight.allowed ? 'All checks passed' : 'The order would be rejected'}
                 action={<Badge tone={preflight.allowed ? 'sage' : 'burgundy'}>{preflight.allowed ? 'clear' : 'blocked'}</Badge>}
               />
+
+              {/*
+                The outcome, out loud.
+
+                A rejection announces itself — `Notice tone="error"` carries
+                `role="alert"`, and it is the only live region this page had. A
+                pass announced nothing at all: the panel simply appeared, with
+                focus still where the click left it, so the one result a reader
+                waited for was the one the platform said nothing about. Announcing
+                the heading rather than the whole panel keeps the alert's mandated
+                copy the thing that carries the reason.
+              */}
+              <Announce>
+                {preflight.allowed
+                  ? 'Pre-trade checks passed. Execute is now available.'
+                  : 'The order would be rejected. See the pre-trade controls for the check that stopped it.'}
+              </Announce>
 
               {preflight.firstFailure !== null ? (
                 <Notice tone="error" title={preflight.firstFailure.code} className="mt-4">
@@ -519,6 +634,20 @@ export default function OrderTicketPage() {
                 title={routed.routed ? 'Order transmitted' : 'Order not transmitted'}
                 action={<Badge tone={routed.routed ? 'sage' : 'burgundy'}>{routed.routed ? 'routed' : routed.code}</Badge>}
               />
+
+              {/*
+                The one outcome in the product that must never be silent. A
+                transmitted order has reached a broker, and until this the page
+                reported that by changing a heading nothing was announcing and
+                nothing was focused on. The order id goes into the announcement
+                because it is the only handle the reader has on what was just
+                sent.
+              */}
+              <Announce>
+                {routed.routed
+                  ? `Order transmitted. Order id ${routed.orderId ?? 'unavailable'}.`
+                  : 'Order not transmitted.'}
+              </Announce>
 
               {!routed.routed ? (
                 <Notice tone="error" className="mt-4" title={routed.code}>

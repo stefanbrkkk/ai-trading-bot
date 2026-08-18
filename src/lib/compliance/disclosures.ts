@@ -195,7 +195,8 @@ export const TOS_CLAUSES: TosClause[] = [
     title: 'Immutable audit trail',
     body:
       'Every interaction that results in an order is recorded in an append-only ledger, including the authenticated ' +
-      'user, a millisecond-precision timestamp, the originating IP address and browser user agent, the coordinates of ' +
+      'user, a millisecond-precision timestamp, the browser user agent, the originating IP address where the ' +
+      'deployment sits behind a trusted proxy that attests to it and “unattributed” where it does not, the coordinates of ' +
       'the physical click, the exact payload transmitted to the broker, and the broker’s response status and body. ' +
       'These records cannot be modified or deleted.',
     basis:
@@ -290,9 +291,10 @@ export const PRIVACY_POLICY_SECTIONS: { title: string; body: string }[] = [
   {
     title: 'What is collected',
     body:
-      'Account email and display name; a salted password hash (never the password); session tokens; the IP address and ' +
-      'browser user agent of each request; and, for any order you submit, the click coordinates, timestamps, payload ' +
-      'and broker response required by the audit obligations described in the Terms.',
+      'Account email and display name; a salted password hash (never the password); a digest of each session token ' +
+      '(never the token itself); the browser user agent of each request, and its IP address only where the deployment ' +
+      'sits behind a trusted proxy that attests to it; and, for any order you submit, the click coordinates, timestamps, ' +
+      'payload and broker response required by the audit obligations described in the Terms.',
   },
   {
     title: 'What is not collected',

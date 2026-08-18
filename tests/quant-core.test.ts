@@ -5,7 +5,9 @@
  * *independent* of the implementation, it is. TreeSHAP is checked against an
  * exhaustive enumeration of the Shapley definition; Black-Scholes against put-call
  * parity and against a finite-difference of its own price function; PCA against
- * hand-constructed eigenvectors; SABR against the ATM limit of its own formula.
+ * hand-constructed eigenvectors; SABR's ATM branch against a separate
+ * transcription of Hagan (2002) eq. (2.17b) and against its own general branch
+ * evaluated just off the money.
  *
  * Asserting against recorded output would pass just as reliably and would prove
  * nothing — a wrong implementation happily reproduces its own wrong numbers.
@@ -284,12 +286,40 @@ describe('SABR', () => {
   it('agrees with the ATM closed form at the money', () => {
     const forward = 100;
     const tau = 0.5;
-    // Hagan's ATM expansion is a distinct code path from the general formula, so
-    // their agreement at K = F is a real cross-check rather than a tautology.
-    expect(sabrImpliedVol(forward, forward, tau, params)).toBeCloseTo(
-      sabrAtmVol(forward, tau, params),
-      9,
-    );
+    /*
+     * This used to compare `sabrImpliedVol(F, F, T, p)` with
+     * `sabrAtmVol(F, T, p)` under a comment calling it "a real cross-check
+     * rather than a tautology". It was exactly a tautology: `sabrAtmVol` is one
+     * line, `return sabrImpliedVol(forward, forward, tau, p)`, so both sides
+     * were the same call and the assertion could not fail. The ATM branch was
+     * consequently uncovered — flipping its `1 + B·T` correction to `1 − B·T`
+     * moved σ_ATM from 0.0301664 to 0.0298336 and left all five SABR tests
+     * green, as did dropping the correction term entirely.
+     *
+     * The branch is the z/x(z) → 1 series limit of the general branch, so there
+     * are two genuinely independent things to check it against, and both catch
+     * the sign flip by 3.3e-4.
+     */
+    const atm = sabrImpliedVol(forward, forward, tau, params);
+
+    // 1. The general branch, evaluated just off the money. The offset has to
+    //    clear the implementation's own |ln(F/K)| < 1e-9 guard, or the call
+    //    routes back into the branch under test and restores the tautology.
+    expect(atm).toBeCloseTo(sabrImpliedVol(forward, forward * (1 + 1e-8), tau, params), 8);
+
+    // 2. An independent transcription of Hagan (2002) eq. (2.17b) at K = F,
+    //    where (F·K)^(1−β) = F^(2(1−β)) and (F·K)^((1−β)/2) = F^(1−β).
+    const { alpha, beta, rho, nu } = params;
+    const oneMinusBeta = 1 - beta;
+    const correction =
+      ((oneMinusBeta * oneMinusBeta) / 24) * ((alpha * alpha) / forward ** (2 * oneMinusBeta)) +
+      (rho * beta * nu * alpha) / (4 * forward ** oneMinusBeta) +
+      ((2 - 3 * rho * rho) / 24) * nu * nu;
+    expect(atm).toBeCloseTo((alpha / forward ** oneMinusBeta) * (1 + correction * tau), 12);
+
+    // `sabrAtmVol` is a delegation rather than a second implementation, and
+    // pinning that is what makes the two assertions above the real check.
+    expect(sabrAtmVol(forward, tau, params)).toBe(atm);
   });
 
   it('produces a smile: implied vol rises away from the money', () => {

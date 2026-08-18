@@ -215,6 +215,64 @@ export default function AdminPage() {
           It is restricted to accounts with the administrator role, and the restriction is enforced server-side on every
           request rather than by hiding this page.
         </Notice>
+
+        {/*
+          The refusal used to be the entire page: a header, an 88px notice, and
+          then 459px of nothing — 63% of the content region at 1440, against 1–9%
+          on every other route in the product. Worse than the empty space, it
+          left a reader unable to tell "you may not read this" from "this is not
+          built yet", which is the one reading a locked door should never invite.
+
+          Nothing below is privileged. It is the same description of the console
+          that the module docstring at the top of this file carries, and it names
+          no account and no telemetry — the three routes it describes each
+          re-check the role server-side on every request, which is what makes it
+          safe to say what is behind them.
+        */}
+        <Panel className="mt-5">
+          <PanelHeader
+            eyebrow="What the console holds"
+            title="Three controls, every one of them platform-wide"
+            detail="Described here so the refusal is legible rather than blank. Reading or operating any of it requires the administrator role."
+          />
+          <div className="mt-4 space-y-5">
+            <div>
+              <p className="font-mono text-2xs uppercase tracking-institutional text-parchment-faint">Kill switch</p>
+              <p className="mt-1.5 text-[0.8125rem] leading-relaxed text-parchment-dim">
+                Halts order routing for every user on the platform and attempts to cancel every working order. It is a
+                two-step control with a mandatory typed reason, and the reason is published wherever the halt is
+                surfaced — including the banner at the top of the terminal.
+              </p>
+            </div>
+            <div>
+              <p className="font-mono text-2xs uppercase tracking-institutional text-parchment-faint">
+                Forensic telemetry
+              </p>
+              <p className="mt-1.5 text-[0.8125rem] leading-relaxed text-parchment-dim">
+                The audit feed and the per-order timestamp chain: click coordinates, IP addresses, user agents, service
+                identities and raw broker payloads, for every user rather than for your own account. That is exactly the
+                evidence a regulator would ask for, and exactly the data no user should be able to read about another.
+              </p>
+            </div>
+            <div>
+              <p className="font-mono text-2xs uppercase tracking-institutional text-parchment-faint">Entitlements</p>
+              <p className="mt-1.5 text-[0.8125rem] leading-relaxed text-parchment-dim">
+                Subscription state, the live-routing unlock, and the administrator role itself. Live routing needs both
+                an active subscription and an explicit unlock, and every change made here is written to the audit trail
+                with the administrator&rsquo;s account against it.
+              </p>
+            </div>
+          </div>
+          <Divider className="my-5" />
+          <p className="text-[0.75rem] leading-relaxed text-parchment-faint">
+            The role is granted in exactly two ways. The account whose address matches{' '}
+            <code className="font-mono text-2xs text-parchment-dim">AURELIUS_ADMIN_EMAIL</code> is minted as an
+            administrator when it signs up — an unset variable means this deployment has no administrator at all, which
+            is the safe reading of silence — or an existing administrator grants the role from the entitlements panel.
+            There is no request form on this page: a control that halts routing for every user is not one an
+            unprivileged screen should offer to escalate into.
+          </p>
+        </Panel>
       </PageShell>
     );
   }

@@ -9,14 +9,14 @@ else about the platform changes.
 
 ```bash
 npm install
-npm run build       # trains the ensemble on first build (~3 min), then compiles
+npm run build       # compiles, then trains the ensemble on first build (~3 min)
 npm start           # http://localhost:3000
 ```
 
 For development, `npm run dev` after a `npm run seed`. `.data/` is git-ignored, so a
 fresh clone has no trained ensemble; `npm run build` trains one if the deployment has
 none and skips it otherwise. Set `AURELIUS_SKIP_SEED=1` to opt out — the platform
-still runs, and the five routes that need the engine say what to run instead of
+still runs, and the six routes that need the engine say what to run instead of
 failing.
 
 ---
@@ -70,14 +70,17 @@ append-only DDL runs on Postgres by registering one adapter.
 npm run dev          # dev server on :3000
 npm run seed         # full seed (~3 min) — trains and persists everything
 npm run seed:fast    # reduced budget (~20s) — for CI and E2E
-npm run verify       # typecheck → lint → 248 unit tests → build → 44 E2E tests
+npm run verify       # typecheck → lint → unit tests → build → E2E suite
 ```
 
 The E2E suite seeds its own data directory on first run, so `npm run e2e` works on a
 clone with nothing set up. Hosting is a long-running Node process (`npm start`): the
 store is an embedded SQLite file and the trained ensemble is a file on disk, so a
-per-request serverless runtime is the wrong shape for it. Point `DATABASE_URL` at
-Postgres to change that.
+per-request serverless runtime is the wrong shape for it. The append-only DDL is
+Postgres-ready, but moving the store there takes a `registerDriverFactory('postgres', …)`
+call in `src/lib/db/client.ts`, and this build ships no such factory: set `DATABASE_URL`
+without one and the process logs a warning once and keeps serving from the embedded
+ledger.
 
 Everything is deterministic in `AURELIUS_SEED`. Two machines running the same seed
 produce byte-identical signals, which is what makes a published attribution auditable
@@ -85,14 +88,16 @@ months later rather than merely plausible at the time.
 
 ### Optional configuration
 
-Every variable in `.env.example` is optional and blank by default.
+Every variable in `.env.example` is optional. The values below are the defaults
+already in effect rather than placeholders to fill in; what is blank is every
+credential, and a blank credential is exactly what selects the deterministic path.
 
 ```bash
 AURELIUS_LLM_PROVIDER=deterministic   # anthropic | openai | deepseek
 ANTHROPIC_API_KEY=                    # supply one to switch to live inference
 AURELIUS_MARKET_PROVIDER=simulator    # alpaca | polygon
 AURELIUS_BROKER=paper                 # alpaca
-DATABASE_URL=                         # blank → embedded SQLite
+DATABASE_URL=                         # embedded SQLite; Postgres needs a driver factory
 ```
 
 Provider resolution treats an unset and an empty credential as the same thing, so
@@ -158,15 +163,16 @@ deciding whether to trust a strategy is the one it did *not* clear.
 The same principle applies to the three temporal agents, and it caught something
 worth reporting. Each one's **discrimination** — the standard deviation of its
 predicted probability across the held-out split — is measured at training time
-and published on the model card. The 60m Temporal Fusion Transformer scores about
-6e-6: it returns the same number for every symbol in the universe. So the router
+and published on the model card. The 60m Temporal Fusion Transformer scores 0.0014,
+an order of magnitude below the 0.01 floor: it returns essentially the same number
+(~0.49) for whatever it is shown, across the universe. So the router
 gives it no weight, and the transparency page shows why in the same table as its
 loss, because a collapsed agent reports a perfectly ordinary loss — a constant
 prediction on a balanced set is unremarkable by that measure and only the spread
 gives it away.
 
 All three agents also came out of training with a mean predicted probability near
-0.75 against a 49.5% base rate, which made every one of the 67 names publish as
+0.75 against a 49.4% base rate, which made every one of the 67 names publish as
 long. Each now carries a logit offset fitted on the validation split, which moves
 the distribution onto the base rate without disturbing the relative ordering the
 network learned. The published list is a mixture of long, short and flat, and
@@ -190,11 +196,13 @@ snapshot each deny rather than waving the order through.
 - Price collar, stop-price sanity, margin check
 - Platform-wide kill switch, with the reason published
 
-`POST /api/orders/submit` is the only code path that can reach a broker, and it has
-no caller other than the HTTP route. The order flow is: mint an authorisation from a
-physical click → risk engine consumes the token → persist the authorised order →
-dispatch → record all six mandatory audit fields with the click → API → broker-ACK
-timestamp chain.
+`broker.submitOrder` has exactly one caller in the whole codebase — the handler
+behind `POST /api/orders/submit` — so there is no second place a trade can
+originate. The other routes holding a broker only read it (`getAccount`,
+`getPositions`) or, in the admin kill switch, cancel what is already working. The
+order flow is: mint an authorisation from a physical click → risk engine consumes
+the token → persist the authorised order → dispatch → record all six mandatory
+audit fields with the click → API → broker-ACK timestamp chain.
 
 ---
 
@@ -206,8 +214,10 @@ Ask in English; get inspectable SQL.
 "Which optionable large cap names have a 25 delta risk reversal below -2?"
 ```
 
-1. **CSR-RAG pruning** takes 829 catalog surfaces down to 10–46 columns before any
-   generation, then expands over the foreign-key graph.
+1. **CSR-RAG pruning** takes 829 catalog surfaces down to at most 46 columns before
+   any generation, then expands over the foreign-key graph. The ceiling is a
+   constant in the pruner; the eight example questions the page ships land
+   between 8 and 46.
 2. **A deterministic compiler** — not a fallback, the default — translates the
    question into a parameterised SELECT. Qualitative predicates compile to the
    feature registry's own published state bands, so the SQL agrees with the state
@@ -266,7 +276,7 @@ using only what you knew then" an answerable question.
 ## Testing
 
 ```
-248 unit tests   (vitest)
+465 unit tests   (vitest)
  44 E2E tests    (Playwright, real Chromium)
 ```
 
@@ -309,9 +319,21 @@ src/lib/investgpt/    Catalog, pruner, NL→SQL compiler, validator, executor.
 src/lib/rag/          Corpus, embeddings, hybrid retrieval, claim grounding.
 src/lib/ai/           Language-model seam. Deterministic by default.
 src/lib/compliance/   Verbatim disclosures, terms, prohibited copy.
-src/components/charts/  17 hand-written SVG charts.
+src/components/charts/  15 hand-written SVG charts + tooltip and hover context.
 src/app/              16 pages and 31 API routes.
+public/fonts/         Self-hosted OFL 1.1 typefaces, with their licence.
 ```
+
+The invariants a change has to preserve — the module surface to import rather than
+re-implement, the determinism and zero-configuration rules, the compliance controls
+that are not negotiable — are in [docs/BUILD_CONTRACT.md](docs/BUILD_CONTRACT.md).
+Several source comments cite it by name; this is the file they mean.
+
+Source comments also cite the originating product specification by section — `Phase
+1 §4`, `Phase 5 §1`, and so on. That specification is not part of this package and
+is not needed to read the code: every citation restates the requirement it is
+pointing at, in the same comment, in words. The section number is provenance, kept
+so a reader can tell a design constraint apart from an implementation preference.
 
 ---
 

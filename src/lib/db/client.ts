@@ -6,6 +6,14 @@
  * platform boots with no external service. `DATABASE_URL` is the switch that a
  * future Neon/Postgres driver registers against — see `driver.ts` for why the
  * seam exists.
+ *
+ * Setting `DATABASE_URL` on its own does *not* move the store. No Postgres
+ * factory ships in this build, so `resolveMode()` treats a Postgres URL with no
+ * registered driver as a misconfiguration: it warns once and keeps serving from
+ * the embedded ledger rather than failing the process or pretending to have
+ * switched. Moving to Postgres is one `registerDriverFactory('postgres', …)`
+ * call — the DDL and every repository are already driver-agnostic — and that
+ * call has to exist.
  */
 
 import { mkdirSync, rmSync } from 'node:fs';
@@ -272,6 +280,10 @@ factories.set('embedded', () => new EmbeddedSqliteDriver(databaseFile()));
  * The seam. Registering a `'postgres'` factory is all that is required to move
  * the identical DDL and repositories onto Neon; nothing else in the codebase
  * references a concrete database.
+ *
+ * Nothing in this build calls it with `'postgres'` — the embedded factory below
+ * is the only registration that ships. That is the whole reason `resolveMode()`
+ * has a fallback branch to warn from.
  */
 export function registerDriverFactory(mode: DbMode, factory: DriverFactory): void {
   factories.set(mode, factory);

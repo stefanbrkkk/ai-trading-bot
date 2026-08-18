@@ -74,7 +74,7 @@ const S = (
 });
 
 /**
- * 67 tradable names plus the benchmark, across all eleven GICS sectors plus the benchmark, chosen so the
+ * 67 tradable names plus the benchmark, across all eleven GICS sectors, chosen so the
  * screener has genuine cross-sectional dispersion: mega-cap low-vol, high-beta
  * growth, deep-value cyclicals, utilities, and a handful of illiquid small caps
  * that exercise the ADV liquidity limiter.

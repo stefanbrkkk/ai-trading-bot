@@ -23,8 +23,12 @@
 import type { SqlDriver } from '@/lib/db/driver';
 import { FEATURE_DEFINITIONS } from '@/lib/engine/features';
 
-/** Bumped whenever the statement list below changes shape. */
-export const SCHEMA_VERSION = 2;
+/**
+ * Bumped whenever the statement list below changes shape. 3 adds the
+ * append-only triggers on `audit_events`, `tos_acceptances`, `risk_decisions`,
+ * `orders` and `order_telemetry`.
+ */
+export const SCHEMA_VERSION = 3;
 
 /** Default SPIFFE identity for rows written outside an authenticated agent. */
 const UNATTRIBUTED_SPIFFE = 'spiffe://aurelius/unattributed';
@@ -88,6 +92,11 @@ const LEDGER_TABLES: readonly string[] = [
  * that RAISE(ABORT). These are part of the schema, not a convention: a fresh
  * ledger is immutable from its first byte, and `assertAppendOnly()` proves it by
  * actually attempting both operations.
+ *
+ * This pair covers the two bitemporal facet tables only. The evidence tables the
+ * disclosures make the same promise about — audit, consent, risk and order rows —
+ * are guarded by `EVIDENCE_TRIGGERS` below, which has to be a separate list
+ * because those tables are created further down the DDL.
  */
 export const APPEND_ONLY_TRIGGERS: readonly string[] = [
   `CREATE TRIGGER IF NOT EXISTS trg_efs_no_update
@@ -122,6 +131,156 @@ export const APPEND_ONLY_TRIGGER_NAMES: readonly string[] = [
 export const APPEND_ONLY_TABLES: readonly string[] = [
   'entity_facet_snapshots',
   'entity_facet_deltas',
+];
+
+/**
+ * The same enforcement for the evidence tables outside the bitemporal ledger.
+ *
+ * The two facet tables above were the only rows anything actually protected, and
+ * they are not the rows an opposing attorney asks about. `audit_events` holds the
+ * six mandatory fields for every routed order, `order_telemetry` the
+ * click→API→broker timeline, `tos_acceptances` the non-repudiation record of
+ * consent, `risk_decisions` the proof that an order passed the engine — and the
+ * terms of service and the privacy policy both tell the user, verbatim, that
+ * order and audit records "cannot be modified or deleted, including on request,
+ * because their evidentiary value depends on immutability".
+ *
+ * That was a convention, not a control. Against the shipped store a plain
+ * `UPDATE audit_events SET ip_address = …` succeeded, as did `DELETE FROM
+ * audit_events`, `UPDATE orders SET notional_cents = 1` and `DELETE FROM
+ * tos_acceptances` — which is precisely the "could have been easily altered"
+ * argument the mandate quoted above says the enforcement exists to defeat. None
+ * of those rows are mirrored into the ledger either: only `broker/state.ts`
+ * writes facet snapshots, so nothing else was standing behind the promise.
+ *
+ * Two of the five are frozen by column rather than outright, because they carry
+ * live execution state as well as evidence:
+ *
+ *   • `orders` legitimately advances through its lifecycle — `updateOrderExecution`
+ *     writes `updated_at`, `status`, the fill fields and the broker's reply. So the
+ *     trigger freezes the columns that describe the *instruction*: who ordered what,
+ *     at what size, on whose authorisation. A fill may be recorded; the order that
+ *     was placed may not be rewritten.
+ *   • `order_telemetry` is inserted at dispatch and amended once when the broker
+ *     acknowledges — the `ON CONFLICT (order_id) DO UPDATE` in
+ *     `insertOrderTelemetry`, which touches exactly `broker_acknowledged`,
+ *     `broker_status` and `broker_body`. Everything else, including the click
+ *     coordinates and the raw outbound payload, is frozen.
+ *
+ * `intent_tokens` deliberately gets no trigger: single-use is *implemented* by
+ * writing `consumed_at` after minting, and expired unconsumed tokens are purged,
+ * so freezing it would break the control it looks like it should protect.
+ *
+ * These are a second list rather than more entries in `APPEND_ONLY_TRIGGERS`
+ * because a trigger cannot be created before its table: the ledger pair is
+ * spliced in directly after `LEDGER_TABLES`, while these can only run once the
+ * identity, execution and governance sections have been applied. See
+ * `SCHEMA_STATEMENTS`, where they are last before the views.
+ */
+export const EVIDENCE_TRIGGERS: readonly string[] = [
+  `CREATE TRIGGER IF NOT EXISTS trg_audit_no_update
+     BEFORE UPDATE ON audit_events
+   BEGIN
+     SELECT RAISE(ABORT, 'audit_events is append-only: UPDATE is forbidden');
+   END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_audit_no_delete
+     BEFORE DELETE ON audit_events
+   BEGIN
+     SELECT RAISE(ABORT, 'audit_events is append-only: DELETE is forbidden');
+   END`,
+
+  `CREATE TRIGGER IF NOT EXISTS trg_tos_no_update
+     BEFORE UPDATE ON tos_acceptances
+   BEGIN
+     SELECT RAISE(ABORT, 'tos_acceptances is append-only: UPDATE is forbidden');
+   END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_tos_no_delete
+     BEFORE DELETE ON tos_acceptances
+   BEGIN
+     SELECT RAISE(ABORT, 'tos_acceptances is append-only: DELETE is forbidden');
+   END`,
+
+  `CREATE TRIGGER IF NOT EXISTS trg_risk_no_update
+     BEFORE UPDATE ON risk_decisions
+   BEGIN
+     SELECT RAISE(ABORT, 'risk_decisions is append-only: UPDATE is forbidden');
+   END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_risk_no_delete
+     BEFORE DELETE ON risk_decisions
+   BEGIN
+     SELECT RAISE(ABORT, 'risk_decisions is append-only: DELETE is forbidden');
+   END`,
+
+  // Column-scoped: the fill and broker-reply columns advance, the instruction
+  // does not. `BEFORE UPDATE OF …` fires for an ordinary UPDATE and for an
+  // upsert's DO UPDATE alike, so there is no route around it.
+  `CREATE TRIGGER IF NOT EXISTS trg_orders_no_rewrite
+     BEFORE UPDATE OF id, user_id, symbol, side, type, quantity, limit_price, stop_price,
+                      time_in_force, account, notional_cents, created_at, signal_id,
+                      risk_decision_id, intent_token, broker_request_json, correlation_id
+     ON orders
+   BEGIN
+     SELECT RAISE(ABORT, 'orders: the placed instruction is immutable; only execution state may be updated');
+   END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_orders_no_delete
+     BEFORE DELETE ON orders
+   BEGIN
+     SELECT RAISE(ABORT, 'orders is append-only: DELETE is forbidden');
+   END`,
+
+  `CREATE TRIGGER IF NOT EXISTS trg_telemetry_no_rewrite
+     BEFORE UPDATE OF order_id, client_click, server_received, risk_completed,
+                      broker_dispatched, spiffe_id, ip_address, user_agent, click_json,
+                      raw_payload
+     ON order_telemetry
+   BEGIN
+     SELECT RAISE(ABORT, 'order_telemetry: forensic fields are immutable; only the broker acknowledgement may be amended');
+   END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_telemetry_no_delete
+     BEFORE DELETE ON order_telemetry
+   BEGIN
+     SELECT RAISE(ABORT, 'order_telemetry is append-only: DELETE is forbidden');
+   END`,
+];
+
+export const EVIDENCE_TRIGGER_NAMES: readonly string[] = [
+  'trg_audit_no_update',
+  'trg_audit_no_delete',
+  'trg_tos_no_update',
+  'trg_tos_no_delete',
+  'trg_risk_no_update',
+  'trg_risk_no_delete',
+  'trg_orders_no_rewrite',
+  'trg_orders_no_delete',
+  'trg_telemetry_no_rewrite',
+  'trg_telemetry_no_delete',
+];
+
+/**
+ * The evidence tables and, for the two that are frozen by column, the columns
+ * that may still be written. An empty `mutableColumns` means the whole row is
+ * frozen against both UPDATE and DELETE.
+ */
+export const EVIDENCE_TABLES: readonly { table: string; mutableColumns: readonly string[] }[] = [
+  { table: 'audit_events', mutableColumns: [] },
+  { table: 'tos_acceptances', mutableColumns: [] },
+  { table: 'risk_decisions', mutableColumns: [] },
+  {
+    table: 'orders',
+    mutableColumns: [
+      'updated_at',
+      'status',
+      'filled_quantity',
+      'average_fill_price',
+      'broker_status',
+      'broker_response_json',
+      'broker_order_id',
+    ],
+  },
+  {
+    table: 'order_telemetry',
+    mutableColumns: ['broker_acknowledged', 'broker_status', 'broker_body'],
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -470,6 +629,16 @@ const SIGNAL_TABLES: readonly string[] = [
   // structurally identical for every subscriber. UNIQUE (session_date, rank)
   // makes a per-user variant impossible to represent, so the impersonal
   // distribution guarantee is enforced by the schema rather than by review.
+  //
+  // Nothing writes it, deliberately. `engine/service.ts` sets out why the Top 5
+  // is derived on every call and never cached to disk — three revisions of a
+  // cache key each survived a change the key did not name, and the front page
+  // contradicted the symbol page it linked to by up to twenty-five conviction
+  // points. The repository functions that used to fill this table were removed
+  // with that decision; the DDL is kept so a store written by an older build
+  // still migrates cleanly, and because the shape is the contract any future
+  // publication archive would have to honour. It is empty by design, not by
+  // accident.
   `CREATE TABLE IF NOT EXISTS publications (
     id             TEXT    PRIMARY KEY,
     session_date   TEXT    NOT NULL,
@@ -1069,6 +1238,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
   ...WORKSPACE_TABLES,
   ...RAG_TABLES,
   ...GOVERNANCE_TABLES,
+  // Last, because every table they guard has to exist first.
+  ...EVIDENCE_TRIGGERS,
   ...VIEW_STATEMENTS,
 ];
 
@@ -1193,15 +1364,15 @@ export function migrate(db: SqlDriver): MigrationReport {
 
 /**
  * Drops every object this schema owns, in reverse dependency order. Used by
- * `resetDb()` for drivers where deleting a file is not an option. The
- * append-only triggers fire on row DELETE, not on DROP TABLE, so the ledger
+ * `resetDb()` for drivers where deleting a file is not an option. Both trigger
+ * families fire on row DELETE, not on DROP TABLE, so the ledger and evidence
  * tables come down cleanly — and only ever through this deliberate path.
  */
 export function dropAllObjects(db: SqlDriver): void {
   for (const view of [...VIEW_NAMES].reverse()) {
     db.exec(`DROP VIEW IF EXISTS ${view}`);
   }
-  for (const trigger of APPEND_ONLY_TRIGGER_NAMES) {
+  for (const trigger of [...APPEND_ONLY_TRIGGER_NAMES, ...EVIDENCE_TRIGGER_NAMES]) {
     db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
   }
   for (const table of [...TABLE_NAMES].reverse()) {

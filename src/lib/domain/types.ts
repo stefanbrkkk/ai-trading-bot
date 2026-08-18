@@ -128,7 +128,17 @@ export interface FeatureValue {
   group: FeatureGroup;
   /** Raw value in the feature's native unit. */
   value: number;
-  /** ECDF-normalised value on (0, 1) against the cross-sectional distribution. */
+  /**
+   * ECDF-normalised value on (0, 1) against the cross-sectional distribution.
+   *
+   * Only meaningful on rows produced by the universe sweep, which is the only
+   * place a cross-section exists to rank against — `getUniverseSnapshot` runs
+   * `applyCrossSectionalNormalisation` over the whole book. A single-symbol
+   * computation has a population of one, so this carries the 0.5 placeholder
+   * `computeFeatures` writes rather than a rank, and the single-symbol signal
+   * endpoint strips the field rather than publish a constant that reads like a
+   * measurement.
+   */
   normalised: number;
   unit: FeatureUnit;
   /** Discretised state label, e.g. STATE_OVERSOLD. */
@@ -529,7 +539,7 @@ export interface BacktestMetrics {
   expectancy: number;
   averageWin: number;
   averageLoss: number;
-  /** Largest win / largest loss. */
+  /** Average win / average loss — the same b the Kelly fraction uses. */
   payoffRatio: number;
   totalReturn: number;
   cagr: number;

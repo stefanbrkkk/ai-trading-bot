@@ -1,4 +1,14 @@
-/* Self-hosted variable fonts (latin + latin-ext subsets). Generated once; no build-time network access required. */
+/*
+ * Self-hosted variable fonts (latin + latin-ext subsets). Generated once; no
+ * build-time network access required.
+ *
+ * Inter, JetBrains Mono and Playfair Display are (c) their respective project
+ * authors and are licensed under the SIL Open Font License 1.1, which requires
+ * the licence and the copyright notice to travel with the font software. The
+ * subsetter stripped the licence out of the binaries — nameID 13 is absent from
+ * all eight .woff2 — so both live in /fonts/OFL.txt instead, served from the same
+ * directory as the fonts this file loads.
+ */
 @font-face {
   font-family: 'Playfair Display';
   font-style: italic;

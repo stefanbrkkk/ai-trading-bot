@@ -3,7 +3,7 @@
 /**
  * The limit order book as a mirrored depth ladder.
  *
- * MASTER §2.2 / Phase 1 §3: "While retail traders look at Level 1 Bid/Ask sizes,
+ * The requirement, quoted: "While retail traders look at Level 1 Bid/Ask sizes,
  * Aurelius constructs a Multi-Level Order Flow Imbalance vector across M depth
  * levels of the limit order book." This component is the visual half of that
  * claim — it shows the whole visible book at once, and it shows *why* the deeper

@@ -1,7 +1,7 @@
 /**
  * SABR stochastic-volatility model and the 25-delta risk reversal.
  *
- * MASTER §2.2 / Phase 1 §3: "Extrapolate implied volatility using the SABR
+ * The requirement, quoted: "Extrapolate implied volatility using the SABR
  * Model. Extract the 25-Delta Risk Reversal to quantify institutional tail-risk
  * pricing." The dynamics are
  *

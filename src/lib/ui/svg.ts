@@ -238,14 +238,6 @@ export function extent(values: readonly number[], padRatio = 0.06): [number, num
   return [min - pad, max + pad];
 }
 
-/** Symmetric extent around zero — used wherever the sign is the message. */
-export function symmetricExtent(values: readonly number[], padRatio = 0.1): [number, number] {
-  let max = 0;
-  for (const v of values) if (Number.isFinite(v)) max = Math.max(max, Math.abs(v));
-  const limit = max === 0 ? 1 : max * (1 + padRatio);
-  return [-limit, limit];
-}
-
 /**
  * "Nice" tick values for an axis — powers of 1, 2, 5 × 10ⁿ. Produces round
  * numbers a trader can read at a glance instead of arbitrary interval boundaries.
@@ -372,32 +364,6 @@ export function bandPath(upper: readonly Point[], lower: readonly Point[], smoot
   const top = smooth ? smoothPath(up) : linePath(up);
   const bottom = smooth ? smoothPath(down) : linePath(down);
   return `${top} L${round((down[0] as Point).x)} ${round((down[0] as Point).y)} ${bottom.replace(/^M/, 'L')} Z`;
-}
-
-/** Rounded rectangle, for the waterfall bars and ladder cells. */
-export function roundedRectPath(x: number, y: number, width: number, height: number, radius: number): string {
-  const r = Math.max(0, Math.min(radius, Math.abs(width) / 2, Math.abs(height) / 2));
-  const x0 = width < 0 ? x + width : x;
-  const w = Math.abs(width);
-  return (
-    `M${round(x0 + r)} ${round(y)} H${round(x0 + w - r)} A${round(r)} ${round(r)} 0 0 1 ${round(x0 + w)} ${round(y + r)} ` +
-    `V${round(y + height - r)} A${round(r)} ${round(r)} 0 0 1 ${round(x0 + w - r)} ${round(y + height)} ` +
-    `H${round(x0 + r)} A${round(r)} ${round(r)} 0 0 1 ${round(x0)} ${round(y + height - r)} ` +
-    `V${round(y + r)} A${round(r)} ${round(r)} 0 0 1 ${round(x0 + r)} ${round(y)} Z`
-  );
-}
-
-/** Circular arc path used by the conviction ring when it is drawn as a path. */
-export function arcPath(cx: number, cy: number, radius: number, startAngle: number, endAngle: number): string {
-  const start = polar(cx, cy, radius, startAngle);
-  const end = polar(cx, cy, radius, endAngle);
-  const largeArc = Math.abs(endAngle - startAngle) > Math.PI ? 1 : 0;
-  const sweep = endAngle > startAngle ? 1 : 0;
-  return `M${round(start.x)} ${round(start.y)} A${round(radius)} ${round(radius)} 0 ${largeArc} ${sweep} ${round(end.x)} ${round(end.y)}`;
-}
-
-export function polar(cx: number, cy: number, radius: number, angle: number): Point {
-  return { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) };
 }
 
 /**

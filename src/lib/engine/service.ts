@@ -387,6 +387,10 @@ export interface PublicationItem {
 export interface Publication {
   /** New York calendar date of the publication. */
   publicationDate: string;
+  /**
+   * The instant the list was evaluated at — identical to the `generatedAt` on
+   * every signal it contains, and to `UniverseSnapshot.computedAt`.
+   */
   publishedAt: number;
   items: PublicationItem[];
   /** The mandated neutral framing sentence. */
@@ -470,7 +474,26 @@ export async function getPublication(options: EngineOptions = {}): Promise<Publi
 
   const publication: Publication = {
     publicationDate,
-    publishedAt: sessionOpen(now),
+    /*
+     * The instant the list was evaluated at, which is the instant every signal in
+     * it carries.
+     *
+     * This was `sessionOpen(now)` — 09:30 ET of the publication's NY date — while
+     * `now` is the last completed session close and is threaded into `buildInput`
+     * and stamped onto each signal as `generatedAt`. So the terminal's header
+     * announced "AUG 17, 2026 / 09:30 ET" above a list whose every card linked to
+     * a page reading "Generated Aug 17, 2026, 16:00 ET", from a model whose card
+     * says it was fitted at 22:39 ET: a publication timestamped six and a half
+     * hours before its own contents existed. `publishedAt` is typed and rendered
+     * as an instant, and the NY calendar date it does not have to carry is
+     * already carried by `publicationDate` above.
+     *
+     * `snapshot.computedAt` is `now` on both the cache-hit and cold paths, and is
+     * named here rather than `now` because the coupling to the signals is the
+     * whole point: whatever instant the snapshot was evaluated at is the instant
+     * the publication is stamped with.
+     */
+    publishedAt: snapshot.computedAt,
     items,
     notice: composePublicationNotice(items.map((i) => i.symbol)),
     neutralityNotice: NEUTRALITY_NOTICE,

@@ -7,10 +7,15 @@
  * detail. A test that only checked "some message is shown" would let a helpful
  * rewrite quietly void the thing the message exists to establish.
  *
- * The strongest test in the file is the last one: every narrative template the
- * engine can emit is run through the platform's own prohibited-phrase checker. That
- * closes the loop between "we forbid advisory language" and "our own output does
- * not contain it", which is otherwise an assertion nobody verifies.
+ * The strongest tests in the file are the two exhaustive ones: every narrative
+ * template the engine can emit — the per-driver sentences, and the executive thesis
+ * and counter-thesis composed from them — is run through the platform's own
+ * prohibited-phrase checker. That closes the loop between "we forbid advisory
+ * language" and "our own output does not contain it", which is otherwise an
+ * assertion nobody verifies. The thesis pair sat outside that loop for a while:
+ * the tests below composed both and then asserted only on wording and direction,
+ * so the two sentences at the top of every attribution panel were the one narrative
+ * surface no compliance assertion ran over.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -40,6 +45,7 @@ import {
   translateExplanation,
 } from '@/lib/engine/narrative';
 import { FEATURE_DEFINITIONS } from '@/lib/engine/features';
+import type { FeatureState } from '@/lib/engine/features';
 import type { ShapExplanation } from '@/lib/quant/shap';
 
 describe('disclosure bundle', () => {
@@ -430,5 +436,111 @@ describe('narrative direction is signal-relative', () => {
     expect(supporting?.narrative).toContain('bearish conviction');
     const long = translateExplanation(explanation, { signalDirection: 'long' });
     expect(long.find((d) => d.supports)?.narrative).toContain('bullish conviction');
+  });
+
+  /**
+   * The two composed sentences, over every state band of every feature.
+   *
+   * `composeThesis` and `composeCounterThesis` are live emitters — `pipeline.ts`
+   * calls both for every attribution panel — and their sentences are assembled
+   * from a template of their own, not from the per-driver narrative the test above
+   * checks. Neither calls `assertCompliantCopy`, so nothing at runtime reads them
+   * either. Their literal copy ("led by …, reinforced by …", "The strongest
+   * opposing driver is …, subtracting …% of total attribution") was clean when
+   * this was written; the point is that it stays clean when someone edits it.
+   *
+   * Every shape the pair can emit is exercised here: both composers over each band
+   * of each feature in all three published directions, the two-supporting-driver
+   * form that adds the "reinforced by" clause, and the three degenerate branches —
+   * a flat signal, an empty driver list, and a driver list with nothing opposing.
+   * `composeThesis`'s "no single dominant driver" line is the one literal not
+   * covered, because it is unreachable: the empty-list guard above it returns
+   * first, so `drivers[0]` is always defined by the time that branch is tested.
+   */
+  it('emits no prohibited language in any thesis or counter-thesis', () => {
+    /** A value that lands inside the band, so `resolveState` returns this one. */
+    const inBand = (band: FeatureState): number => {
+      if (!Number.isFinite(band.min) && !Number.isFinite(band.max)) return 0;
+      if (!Number.isFinite(band.min)) return band.max - 1;
+      if (!Number.isFinite(band.max)) return band.min + 1;
+      return (band.min + band.max) / 2;
+    };
+
+    const compose = (
+      names: readonly string[],
+      vals: readonly number[],
+      shap: readonly number[],
+      direction: 'long' | 'short' | 'flat',
+    ): { thesis: string; counter: string } => {
+      const drivers = translateExplanation(
+        {
+          values: [...shap],
+          baseValue: 0,
+          rawPrediction: shap.reduce((a, b) => a + b, 0),
+          probability: 0.55,
+          featureNames: [...names],
+          featureValues: [...vals],
+        },
+        { signalDirection: direction },
+      );
+      return {
+        thesis: composeThesis('TEST', drivers, direction, 62),
+        counter: composeCounterThesis(drivers, direction),
+      };
+    };
+
+    for (const definition of FEATURE_DEFINITIONS) {
+      // A second driver carrying the opposite SHAP sign, so both a supporting and
+      // an opposing driver exist whichever direction is published: the feature
+      // under test leads the thesis on one direction and the counter-thesis on
+      // the other, and both templates see every one of its bands.
+      const foil = FEATURE_DEFINITIONS.find((d) => d.key !== definition.key);
+      expect(foil, 'the registry holds more than one feature').toBeDefined();
+      if (foil === undefined) continue;
+      const foilBand = foil.states[0];
+      if (foilBand === undefined) continue;
+
+      for (const band of definition.states) {
+        const names = [definition.key, foil.key];
+        const vals = [inBand(band), inBand(foilBand)];
+        for (const direction of ['long', 'short', 'flat'] as const) {
+          const { thesis, counter } = compose(names, vals, [0.9, -0.7], direction);
+          expect(findProhibitedCopy(thesis), thesis).toHaveLength(0);
+          expect(findProhibitedCopy(counter), counter).toHaveLength(0);
+        }
+      }
+    }
+
+    const first = FEATURE_DEFINITIONS[0];
+    const second = FEATURE_DEFINITIONS[1];
+    expect(first, 'registry is populated').toBeDefined();
+    expect(second, 'registry holds a second feature').toBeDefined();
+    if (first === undefined || second === undefined) return;
+    const pair = [first.key, second.key];
+    const pairValues = [inBand(first.states[0] as FeatureState), inBand(second.states[0] as FeatureState)];
+
+    // Two drivers on the same side: the thesis takes its "reinforced by" form and
+    // the counter-thesis takes the branch where nothing opposes at all.
+    const both = compose(pair, pairValues, [0.9, 0.5], 'long');
+    expect(both.thesis).toContain('reinforced by');
+    expect(both.counter).toContain('No material driver currently opposes');
+    expect(findProhibitedCopy(both.thesis), both.thesis).toHaveLength(0);
+    expect(findProhibitedCopy(both.counter), both.counter).toHaveLength(0);
+
+    // A flat signal claims no stance in either sentence.
+    const flat = compose(pair, pairValues, [0.9, -0.7], 'flat');
+    expect(flat.thesis).toContain('no directional conviction');
+    expect(flat.counter).toContain('No opposing driver is material');
+    expect(findProhibitedCopy(flat.thesis), flat.thesis).toHaveLength(0);
+    expect(findProhibitedCopy(flat.counter), flat.counter).toHaveLength(0);
+
+    // And the empty-driver branches, which a symbol with no attributions reaches.
+    for (const direction of ['long', 'short', 'flat'] as const) {
+      const thesis = composeThesis('TEST', [], direction, 0);
+      const counter = composeCounterThesis([], direction);
+      expect(thesis).toContain('no directional conviction');
+      expect(findProhibitedCopy(thesis), thesis).toHaveLength(0);
+      expect(findProhibitedCopy(counter), counter).toHaveLength(0);
+    }
   });
 });

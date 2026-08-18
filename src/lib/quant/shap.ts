@@ -2,7 +2,7 @@
  * TreeSHAP — exact Shapley values for tree ensembles, plus the FastTreeSHAP-v2
  * style path pre-computation.
  *
- * MASTER §4.2 / Phase 4 §1: "the Python backend completely bypasses standard
+ * The requirement, quoted: "the Python backend completely bypasses standard
  * O(TL2^M) TreeSHAP computations. Instead, it utilizes FastTreeSHAP v2 to
  * pre-compute and cache decision tree paths in memory, and WOODELF, which
  * reduces background SHAP calculations to linear time complexity via
@@ -13,7 +13,10 @@
  *  1. `treeShap` — the exact path-dependent TreeSHAP algorithm of Lundberg,
  *     Erion & Lee (2018), Algorithm 2. Complexity O(T·L·D²) with D the maximum
  *     depth, versus O(T·L·2^M) for naive Shapley enumeration. It satisfies local
- *     accuracy exactly: Σφ_i + E[f] = f(x), which the unit tests assert.
+ *     accuracy exactly: Σφ_i + E[f] = f(x). The per-tree core it loops over,
+ *     `treeShapSingle`, is what tests/quant-core.test.ts checks that identity on
+ *     against an exhaustive enumeration of the Shapley definition; the wrapper
+ *     itself is covered in tests/fix-quant.test.ts.
  *
  *  2. `FastTreeShapExplainer` — the FastTreeSHAP v2 idea: hoist everything that
  *     depends only on the *tree* (not the sample) out of the per-sample loop.
@@ -22,11 +25,17 @@
  *     never re-derives them. Same values as (1), materially less work per row —
  *     which is what keeps the signal pipeline inside its latency budget.
  *
- *  3. `linearTimeApproxShap` — the WOODELF-style linear-time attribution used
- *     for the *background* pass (bulk scoring of the whole universe, where the
- *     exact values are not shown to a user). It walks each tree once, splitting
- *     each internal node's contribution between its children by cover, giving
- *     O(T·L) per sample. Labelled as an approximation everywhere it is used.
+ *  3. `linearTimeApproxShap` — the WOODELF-style linear-time attribution. It
+ *     walks each tree once, splitting each internal node's contribution between
+ *     its children by cover, giving O(T·L) per sample.
+ *
+ *     It is *not* on the shipped scoring path, and this entry used to claim it
+ *     was — "used for the background pass, bulk scoring of the whole universe".
+ *     Both passes run (2): per-symbol attribution is
+ *     `FastTreeShapExplainer.explain` from `engine/pipeline.ts`, and the bulk
+ *     background pass is `globalShapImportance` over the same explainer from
+ *     `engine/model.ts`. Nothing a user reads is approximated. (3) is kept as
+ *     the linear-time reference to compare the exact values against.
  */
 
 import { type DecisionTree, type GbdtModel, type TreeNode, predictRaw, sigmoid } from './gbdt';
@@ -515,7 +524,8 @@ export class FastTreeShapExplainer {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  3. WOODELF-style linear-time approximation for the background pass
+//  3. WOODELF-style linear-time approximation — reference only, not on the
+//     scoring path
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -526,7 +536,9 @@ export class FastTreeShapExplainer {
  * to f(x) − E[f(x)], but it is order-dependent and therefore only an
  * approximation of the Shapley values.
  *
- * Used exclusively for bulk universe scoring, never for anything a user reads.
+ * Not on the shipped scoring path — both the per-symbol and the bulk background
+ * passes run the exact `FastTreeShapExplainer`. Retained as the linear-time
+ * reference implementation to compare the exact values against.
  */
 export function linearTimeApproxShap(model: GbdtModel, row: readonly number[]): ShapExplanation {
   const d = model.featureNames.length;
@@ -613,6 +625,18 @@ export interface WaterfallStep {
   /** Probability equivalent of `cumulative` (logistic objective). */
   cumulativeProbability: number;
   direction: 'positive' | 'negative';
+  /**
+   * |φ_i| / Σ|φ| over the **whole** attribution — the same denominator
+   * `rankContributions` uses, and the same number the driver table and the
+   * narrative sentence print.
+   *
+   * Published here rather than derived in the chart because the chart cannot
+   * derive it: it is handed the top-K rows, so any sum it forms is over a
+   * subset. Recomputing there put three different figures for one driver on one
+   * page — 17% in the waterfall, 12% in the force plot, 11.9% in the table.
+   * One denominator, computed once, at the only place that can see all of it.
+   */
+  share: number;
 }
 
 export function shapWaterfall(explanation: ShapExplanation, topK = 8): {
@@ -624,7 +648,9 @@ export function shapWaterfall(explanation: ShapExplanation, topK = 8): {
 } {
   const ranked = rankContributions(explanation);
   const shown = ranked.slice(0, topK);
-  const restSum = ranked.slice(topK).reduce((a, c) => a + c.shap, 0);
+  const rest = ranked.slice(topK);
+  const restSum = rest.reduce((a, c) => a + c.shap, 0);
+  const restShare = rest.reduce((a, c) => a + c.share, 0);
   const steps: WaterfallStep[] = [];
   let cum = explanation.baseValue;
   for (const c of shown) {
@@ -635,6 +661,7 @@ export function shapWaterfall(explanation: ShapExplanation, topK = 8): {
       cumulative: cum,
       cumulativeProbability: sigmoid(cum),
       direction: c.direction,
+      share: c.share,
     });
   }
   if (Math.abs(restSum) > 1e-9) {
@@ -645,6 +672,12 @@ export function shapWaterfall(explanation: ShapExplanation, topK = 8): {
       cumulative: cum,
       cumulativeProbability: sigmoid(cum),
       direction: restSum >= 0 ? 'positive' : 'negative',
+      /*
+       * The pooled row's share is the sum of the shares it pools, not
+       * |Σφ| / Σ|φ|. Those differ whenever the pooled contributions disagree in
+       * sign, and the column has to add to 100 across the rows shown.
+       */
+      share: restShare,
     });
   }
   return {

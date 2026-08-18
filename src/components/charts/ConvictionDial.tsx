@@ -11,9 +11,12 @@
  * data being revealed".
  *
  * Framer Motion cannot tween the `d` attribute between two shapes with different
- * anchor counts, so Flubber supplies the mixer — `interpolate(a, b, {
- * maxSegmentLength: 0.1 })` inside `useTransform`, exactly as the research
- * specifies.
+ * anchor counts, so Flubber supplies the mixer — `interpolate(ring, axis, {
+ * maxSegmentLength: MORPH_MAX_SEGMENT_LENGTH })`, built once per mount and read
+ * through `useTransform`. This comment used to quote the research's 0.1 for that
+ * granularity, which has not been the shipped value for some time; the constant
+ * in `lib/ui/svg` is 4 and records why, and a docstring naming the number that
+ * was rejected for blocking the main thread for 12.5s is worse than no number.
  *
  * Geometry: r = 84, strokeWidth = 3. `circlePath` already begins at twelve
  * o'clock and runs clockwise, so the arc carries no rotation — an inherited
@@ -25,13 +28,23 @@
  * unconditionally cost 12.5s of blocked main thread on the five-dial publication
  * list, so `MorphingArc` — the only code that touches Flubber — mounts on the
  * first morph and not before. A dial that is never unspooled never loads it.
+ *
+ * Both entrances are gated on the dial's own visibility, the same contract
+ * `reveal.ts` states for every chart in this directory. The dial was the one
+ * chart that never got it, and it showed: on the publication list the fifth
+ * dial sits 197px below the fold at 1440x900 and ran its whole 1.1s sweep and
+ * count-up there, finishing before the reader had scrolled to it. It uses an
+ * IntersectionObserver rather than `whileInView` because neither animation is a
+ * variant — the arc is a `pathLength` motion value and the readout is written
+ * straight to a text node — so there is no variant tree for Framer to propagate
+ * a label down. The threshold is read from `CHART_VIEWPORT` so the dial and the
+ * charts around it latch at the same fraction.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { motion, useMotionValue, useReducedMotion, useTransform, animate, type MotionValue } from 'framer-motion';
 import { interpolate } from 'flubber';
 import {
-  CONVICTION_CIRCUMFERENCE,
   CONVICTION_RADIUS,
   CONVICTION_STROKE,
   MORPH_MAX_SEGMENT_LENGTH,
@@ -39,9 +52,55 @@ import {
   horizontalPath,
 } from '@/lib/ui/svg';
 import { GOLD, GOLD_BRIGHT, OBSIDIAN_EDGE } from '@/lib/ui/format';
+import { CHART_VIEWPORT } from './reveal';
 
 const VIEW = 200;
 const CENTRE = VIEW / 2;
+
+/**
+ * The fraction of the dial that has to be on screen before it draws itself in.
+ *
+ * Taken from the charts' shared viewport contract so the dial latches at the
+ * same moment as the drawings beside it. `CHART_VIEWPORT.amount` is typed to
+ * allow Framer's `'some'` and `'all'` keywords as well as a number, and an
+ * IntersectionObserver threshold can only be a number, so the keywords fall back
+ * to the quarter that `reveal.ts` describes in prose.
+ */
+const REVEAL_THRESHOLD = typeof CHART_VIEWPORT?.amount === 'number' ? CHART_VIEWPORT.amount : 0.25;
+
+/**
+ * True once the element has been at least `REVEAL_THRESHOLD` visible.
+ *
+ * One-shot, matching the `once: true` in the shared viewport contract: an
+ * entrance replayed on every scroll-past is a nervous tic, not a flourish.
+ *
+ * It fails open. Where there is no IntersectionObserver — an old browser, a test
+ * environment — the answer is `true` on the first effect, because a dial frozen
+ * at zero is a wrong number on the screen of a product whose numbers are the
+ * point. This gate decides *when* an animation runs, never whether the figure is
+ * eventually correct.
+ */
+function useRevealed(ref: RefObject<Element | null>): boolean {
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    const element = ref.current;
+    if (element === null || typeof IntersectionObserver === 'undefined') {
+      setRevealed(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setRevealed(true);
+        observer.disconnect();
+      },
+      { threshold: REVEAL_THRESHOLD },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ref]);
+  return revealed;
+}
 
 export interface ConvictionDialProps {
   /** 0–100. */
@@ -65,6 +124,8 @@ export function ConvictionDial({
 }: ConvictionDialProps) {
   const reduceMotion = useReducedMotion();
   const clamped = Math.max(0, Math.min(100, Number.isFinite(score) ? score : 0));
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const revealed = useRevealed(svgRef);
 
   // `pathLength` is animated rather than strokeDashoffset so the arc draws along
   // its own geometry and keeps working after the morph changes that geometry.
@@ -74,9 +135,14 @@ export function ConvictionDial({
       progress.set(clamped / 100);
       return;
     }
+    // Held on the empty track until the dial is actually on screen.
+    if (!revealed) {
+      progress.set(0);
+      return;
+    }
     const controls = animate(progress, clamped / 100, { duration: 1.1, ease: [0.16, 1, 0.3, 1] });
     return () => controls.stop();
-  }, [clamped, progress, reduceMotion]);
+  }, [clamped, progress, reduceMotion, revealed]);
 
   const tickRotation = useTransform(progress, (p) => `rotate(${p * 360} ${CENTRE} ${CENTRE})`);
 
@@ -90,6 +156,13 @@ export function ConvictionDial({
       if (valueRef.current) valueRef.current.textContent = clamped.toFixed(0);
       return;
     }
+    // Same gate as the arc: the count-up and the sweep are one gesture, and a
+    // readout that had already counted to 30 above an empty track would be the
+    // worse half of the bug this fixes.
+    if (!revealed) {
+      if (valueRef.current) valueRef.current.textContent = '0';
+      return;
+    }
     const controls = animate(displayed, clamped, {
       duration: 1.1,
       ease: [0.16, 1, 0.3, 1],
@@ -100,7 +173,7 @@ export function ConvictionDial({
       },
     });
     return () => controls.stop();
-  }, [clamped, displayed, hideValue, reduceMotion]);
+  }, [clamped, displayed, hideValue, reduceMotion, revealed]);
 
   const { ringPath, axisPath } = useMemo(
     () => ({
@@ -141,6 +214,7 @@ export function ConvictionDial({
   return (
     <div className="relative select-none" style={{ width: size, height: size }}>
       <svg
+        ref={svgRef}
         viewBox={`0 0 ${VIEW} ${VIEW}`}
         width={size}
         height={size}
@@ -244,11 +318,28 @@ function MorphingArc({
   axisPath: string;
   progress: MotionValue<number>;
 }) {
-  const mixer = useMemo(
-    () => (a: string, b: string) => interpolate(a, b, { maxSegmentLength: MORPH_MAX_SEGMENT_LENGTH }),
-    [],
+  /*
+   * The interpolator itself is memoised, not the factory that makes one.
+   *
+   * This used to memoise `(a, b) => interpolate(a, b, …)` and hand that to
+   * `useTransform` as a `mixer`, which memoises nothing that matters: the range
+   * overload of `useTransform` calls motion-dom's `interpolate` on every render,
+   * and that eagerly invokes the mixer factory to build its mixers. So Flubber
+   * re-sampled the ring on every render of this component. Measured at 4x CPU
+   * throttle on /terminal/AAPL, one Waterfall/Force press cost exactly 132
+   * `getPointAtLength` calls — ceil(2π·84 / 4), the whole ring — for 80-109 ms,
+   * about two thirds of a 127-165 ms blocked frame, on every single press.
+   *
+   * Building the interpolator once and reading it through the function overload
+   * moves that cost to mount, where the lazy `MorphingArc` boundary above
+   * already keeps it off pages that never morph. The explicit clamp replaces the
+   * clamping the range overload was doing for us (`isClamp` defaults true).
+   */
+  const mix = useMemo(
+    () => interpolate(ringPath, axisPath, { maxSegmentLength: MORPH_MAX_SEGMENT_LENGTH }),
+    [ringPath, axisPath],
   );
-  const morphedPath = useTransform(morphValue, [0, 1], [ringPath, axisPath], { mixer });
+  const morphedPath = useTransform(morphValue, (v: number) => mix(Math.max(0, Math.min(1, v))));
   return (
     <>
       <motion.path
@@ -270,48 +361,3 @@ function MorphingArc({
     </>
   );
 }
-
-/**
- * Compact ring for table rows and the publication list. No morph, no count-up —
- * a 64px ring in a dense list should read instantly, not animate.
- */
-export function ConvictionRing({ score, size = 34 }: { score: number; size?: number }) {
-  const clamped = Math.max(0, Math.min(100, Number.isFinite(score) ? score : 0));
-  const r = 14;
-  const circumference = 2 * Math.PI * r;
-  return (
-    <svg viewBox="0 0 36 36" width={size} height={size} role="img" aria-label={`Conviction ${clamped.toFixed(0)}`}>
-      <circle cx={18} cy={18} r={r} fill="none" stroke={OBSIDIAN_EDGE} strokeWidth={2} />
-      <circle
-        cx={18}
-        cy={18}
-        r={r}
-        fill="none"
-        stroke={GOLD}
-        strokeWidth={2}
-        strokeLinecap="round"
-        strokeDasharray={circumference}
-        strokeDashoffset={circumference * (1 - clamped / 100)}
-        transform="rotate(-90 18 18)"
-      />
-      <text
-        x={18}
-        y={18}
-        textAnchor="middle"
-        dominantBaseline="central"
-        fontSize={10}
-        fill={GOLD}
-        className="tabular"
-      >
-        {clamped.toFixed(0)}
-      </text>
-    </svg>
-  );
-}
-
-/** Exported so the unit tests can assert the mandated circumference. */
-export const CONVICTION_GEOMETRY = {
-  radius: CONVICTION_RADIUS,
-  strokeWidth: CONVICTION_STROKE,
-  circumference: CONVICTION_CIRCUMFERENCE,
-};

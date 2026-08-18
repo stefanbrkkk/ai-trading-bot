@@ -9,6 +9,24 @@ import { nyTime } from '@/lib/ui/format';
 /**
  * The terminal header: identity, market clock, session phase and the engine's own
  * health. Deliberately sterile — no marketing copy, no calls to action.
+ *
+ * Every field in the right-hand cluster reserves the width of its own longest
+ * settled value, and the row reserves its own height, because this header was the
+ * single largest source of layout shift in the product. `health` starts `null`,
+ * so the phase, both provider indicators and the clock all render a 7px em-dash
+ * and then grow to 44–111px when `/api/health` answers; the account menu appears
+ * from a one-character placeholder into a 24px-tall bordered control at the same
+ * moment. Measured with a buffered `layout-shift` observer on a cold context, the
+ * cluster's left edge jumped 362px and the row grew 40px → 45px, taking the whole
+ * document column down 5px with it: 0.198 of CLS from the chrome alone, on every
+ * route, and 12 of 13 routes over the 0.1 budget.
+ *
+ * The reservations are measured, not guessed, and every value set they cover is a
+ * closed union — `ProviderName` in `lib/market/provider`, `ProviderId` in
+ * `lib/ai/config`, `PHASE_LABEL` below — so a new member is the one thing that
+ * can invalidate them. Widths at 10px mono with `tracking-institutional`:
+ * "CLOSING AUCTION" 111, "DETERMINISTIC" 96.2, "SIMULATOR" 66.6, and the clock's
+ * fixed `HH:MM ET` 56.3 at 12px tabular.
  */
 
 interface HealthPayload {
@@ -63,7 +81,11 @@ export function TopBar() {
 
   return (
     <header className="sticky top-0 z-30 border-b border-obsidian-edge bg-vanta-deep/95 backdrop-blur-sm">
-      <div className="flex items-center justify-between gap-6 px-4 py-2.5 lg:px-6">
+      {/* `h-11` rather than `py-2.5`: 44px is the height this row settles at once
+          the account menu has rendered its real control, and a fixed height is
+          what stops the settling from moving every page's first paragraph down
+          five pixels. */}
+      <div className="flex h-11 items-center justify-between gap-6 px-4 lg:px-6">
         <div className="flex items-baseline gap-3">
           {/* 63x17 painted; `tap-target` gives it a 44x44 hit region without
               moving the baseline it is aligned on. */}
@@ -87,10 +109,18 @@ export function TopBar() {
 
           <MarketState health={health} />
 
-          <div className="hidden items-center gap-4 md:flex">
+          {/* `lg`, not `md`. Turning this group on at 768 was exactly where the
+              header ran out of room: the tagline arrives at `sm` and the two
+              indicators at `md`, so at 768 the identity block (230px), the gap
+              (24px) and the right cluster (482px) came to 736px against 736px of
+              content width and both blocks wrapped. The header measured 54px
+              instead of 45px from 768 through ~874 on every route. */}
+          <div className="hidden items-center gap-4 lg:flex">
             <Indicator
               label="Data"
               value={health ? health.provider : '—'}
+              /* SIMULATOR, the longest of the three `ProviderName`s, is 66.6px. */
+              reserve="min-w-[4.25rem]"
               live={health?.providerLive ?? false}
               title={
                 health?.providerLive
@@ -101,6 +131,8 @@ export function TopBar() {
             <Indicator
               label="AI"
               value={health ? health.aiProvider : '—'}
+              /* DETERMINISTIC, the longest of the four `ProviderId`s, is 96.2px. */
+              reserve="min-w-[6.125rem]"
               live={health?.aiLive ?? false}
               title={
                 health?.aiLive
@@ -110,7 +142,13 @@ export function TopBar() {
             />
           </div>
 
-          <span className="tabular hidden text-xs text-parchment-dim sm:inline" suppressHydrationWarning>
+          {/* `nyTime` is a fixed-width `HH:MM ET` — 2-digit hour, 2-digit minute,
+              tabular figures — so 3.625rem holds every value it can ever take.
+              `inline-block` because a min-width on an inline box is ignored. */}
+          <span
+            className="tabular hidden min-w-[3.625rem] text-xs text-parchment-dim sm:inline-block"
+            suppressHydrationWarning
+          >
             {health ? nyTime(health.now) : '—'}
           </span>
 
@@ -131,7 +169,11 @@ function MarketState({ health }: { health: HealthPayload | null }) {
         className={cx('inline-block h-1.5 w-1.5 rounded-full', open ? 'bg-sage-bright' : 'bg-parchment-ghost')}
         aria-hidden
       />
-      <span className="font-mono text-2xs uppercase tracking-institutional text-parchment-dim">{phase}</span>
+      {/* CLOSING AUCTION / OPENING AUCTION / MORNING SESSION all measure 111px,
+          the widest any `PHASE_LABEL` gets. */}
+      <span className="min-w-[7rem] font-mono text-2xs uppercase tracking-institutional text-parchment-dim">
+        {phase}
+      </span>
     </div>
   );
 }
@@ -141,16 +183,32 @@ function Indicator({
   value,
   live,
   title,
+  reserve,
 }: {
   label: string;
   value: string;
   live: boolean;
   title: string;
+  /**
+   * Tailwind `min-w-*` holding the widest value this indicator can ever show.
+   *
+   * Passed in rather than derived, because the two indicators draw from two
+   * different closed unions and reserving the wider of them for both would leave
+   * 30px of permanent dead space beside the data provider. A literal at the call
+   * site is also what keeps the class in Tailwind's scan.
+   */
+  reserve: string;
 }) {
   return (
     <div className="flex items-center gap-1.5" title={title}>
       <span className="eyebrow">{label}</span>
-      <span className={cx('font-mono text-2xs uppercase tracking-institutional', live ? 'text-sage-bright' : 'text-parchment-faint')}>
+      <span
+        className={cx(
+          'font-mono text-2xs uppercase tracking-institutional',
+          reserve,
+          live ? 'text-sage-bright' : 'text-parchment-faint',
+        )}
+      >
         {value}
       </span>
     </div>

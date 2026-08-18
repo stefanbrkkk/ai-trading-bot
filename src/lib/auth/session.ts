@@ -29,9 +29,9 @@ import type { ClickProvenance, User } from '@/lib/domain/types';
 export const SESSION_COOKIE = 'aurelius_session';
 /** Sessions last 14 days, matching the paper-sandbox trial length. */
 export const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
-/** The trial window Phase 5 §4 specifies for the paper sandbox. */
+/** The specified trial window for the paper sandbox. */
 export const TRIAL_DAYS = 14;
-/** Subscription price, in cents. MASTER §4.5: $200/month. */
+/** Subscription price, in cents. Specified as $200/month. */
 /**
  * Published monthly price, in cents.
  *
@@ -164,6 +164,15 @@ const TRUST_PROXY_HEADERS = ['1', 'true', 'yes'].includes(
  *
  * Falls back to a marker rather than an empty string, so an audit row never looks
  * like it simply failed to record the field.
+ *
+ * On a deployment without `AURELIUS_TRUST_PROXY` — which is the documented
+ * default, and the shape the platform ships in — that marker is what the address
+ * field records on every row, without exception: there is no attacker-independent
+ * address available to a Next route handler, and the alternative is writing down
+ * whatever the caller typed into a header. Anything the platform publishes about
+ * this field has to say so, which is why the mandatory-audit-field descriptor in
+ * `@/lib/compliance/disclosures` states the "unattributed" case in the same
+ * sentence as the field itself.
  */
 export async function requestContext(): Promise<RequestContext> {
   const h = await headers();
@@ -415,10 +424,23 @@ export interface AcceptTermsResult {
 /**
  * Records clickwrap acceptance.
  *
- * The server re-checks `scrolledToBottom` and the click's `trusted` flag rather
- * than trusting the client's word: the enforceability of the agreement rests on
- * being able to show the user was presented with the terms and affirmatively
- * accepted them, so an assertion that arrives without those markers is rejected.
+ * `scrolledToBottom` and the click's `trusted` flag are attestations the browser
+ * makes, and this function refuses an acceptance that does not carry both, so
+ * they are always present in the record and an acceptance missing them is never
+ * written. What the record establishes is that the client asserted a scrolled,
+ * physically-clicked acceptance under an authenticated session, at a stated
+ * time, against a stated version — durably and immutably.
+ *
+ * It does not establish that the presentation happened, and this docstring used
+ * to say it did ("the server re-checks … rather than trusting the client's
+ * word"). There is nothing here to re-check against: the values are read back
+ * out of the same request body that asserted them, nothing binds the acceptance
+ * to a fetch of the terms, and `scrollDurationMs` is the client's own
+ * measurement. A caller holding a session cookie can post a well-formed
+ * acceptance without ever having rendered the document. Making the stronger
+ * claim true would mean minting a single-use consent nonce when the disclosures
+ * are served — the same shape as the order intent token — requiring it here, and
+ * deriving the presentation interval server-side from mint to acceptance.
  */
 export async function acceptTerms(input: AcceptTermsInput): Promise<AcceptTermsResult> {
   const user = await currentUser();
@@ -440,17 +462,34 @@ export async function acceptTerms(input: AcceptTermsInput): Promise<AcceptTermsR
     acceptedAt,
     ipAddress: ctx.ipAddress,
     userAgent: ctx.userAgent,
-    scrolledToBottom: true,
+    // The value actually asserted, not a literal. It can only be `true` here —
+    // the guard above returns otherwise — but a consent row that hardcodes the
+    // field it is evidence of is worth nothing as evidence.
+    scrolledToBottom: input.scrolledToBottom,
     scrollDurationMs: Math.max(0, Math.round(input.scrollDurationMs)),
     click: input.click,
     deviceFootprint: deviceFootprint(ctx, input.click),
   });
 
+  /*
+   * The live-routing entitlement is carried through, not left out.
+   *
+   * `upsertUser`'s conflict clause writes `live_trading_unlocked` from the bound
+   * parameter unconditionally, and that parameter is `input.liveTradingUnlocked
+   * ?? false` — so omitting the field here does not leave the flag alone, it
+   * clears it. Accepting the terms silently revoked live routing from any
+   * account that had been granted it, and because `hasAcceptedTerms` requires
+   * the *current* version, every version bump forces a re-acceptance and would
+   * revoke it again. The flag is granted and withdrawn by `setLiveTradingUnlocked`,
+   * which is the audited path; a clickwrap write must not be a second, silent
+   * one that only ever moves it downwards.
+   */
   upsertUser({
     id: user.id,
     email: user.email,
     displayName: user.displayName,
     role: user.role,
+    liveTradingUnlocked: user.liveTradingUnlocked,
     tosAcceptedAt: acceptedAt,
     tosVersion: version,
   });
