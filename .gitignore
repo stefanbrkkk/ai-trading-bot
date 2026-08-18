@@ -23,3 +23,10 @@ yarn-error.log*
 .vscode/
 .idea/
 .data/e2e/
+
+# Source research corpus. Kept out of the product repository: it is 30 MB of
+# internal specification, three documents of which are marked STRICTLY
+# CONFIDENTIAL, and the .docx originals embed licensed fonts that are not ours
+# to redistribute. Nothing in src/ reads it — it was reference material for the
+# build, and it does not belong in a repository that changes hands.
+info and research files for coders/

@@ -2,7 +2,8 @@
   "name": "project-aurelius",
   "version": "1.0.0",
   "private": true,
-  "description": "Project Aurelius \u2014 continuous-time multi-timeframe quantitative signal terminal",
+  "license": "UNLICENSED",
+  "description": "Project Aurelius — continuous-time multi-timeframe quantitative signal terminal",
   "engines": {
     "node": ">=22.5.0"
   },
