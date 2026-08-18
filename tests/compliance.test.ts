@@ -31,12 +31,16 @@ import {
   NEUTRALITY_NOTICE,
   PROHIBITED_PHRASES,
   assertCompliantCopy,
+  composeCounterThesis,
   composeGenericNarrative,
   composePublicationNotice,
+  composeThesis,
   findProhibitedCopy,
   hydrateTemplate,
+  translateExplanation,
 } from '@/lib/engine/narrative';
 import { FEATURE_DEFINITIONS } from '@/lib/engine/features';
+import type { ShapExplanation } from '@/lib/quant/shap';
 
 describe('disclosure bundle', () => {
   it('publishes every required block with substantive body text', () => {
@@ -321,16 +325,87 @@ describe('feature registry integrity', () => {
      */
     for (const definition of FEATURE_DEFINITIONS) {
       for (const band of definition.states) {
-        for (const direction of ['positive', 'negative'] as const) {
+        for (const supports of [true, false] as const) {
           for (const signal of ['long', 'short'] as const) {
-            const sentence = composeGenericNarrative(definition, band, 1.25, 12, direction, signal);
+            const sentence = composeGenericNarrative(definition, band, 1.25, 12, supports, signal);
             const first = sentence.charAt(0);
-            expect(/[A-Z0-9]/.test(first), `${definition.key}/${band.state}/${direction}: ${sentence}`).toBe(true);
+            expect(/[A-Z0-9]/.test(first), `${definition.key}/${band.state}/${supports}: ${sentence}`).toBe(true);
             expect(sentence.endsWith('.'), sentence).toBe(true);
             expect(findProhibitedCopy(sentence), sentence).toHaveLength(0);
           }
         }
       }
     }
+  });
+});
+
+/**
+ * The narrative's direction convention, which used to have two of them.
+ *
+ * `composeThesis` and `composeCounterThesis` read a driver as supporting when
+ * its SHAP value agrees with the *published direction*; the per-driver sentence
+ * read it as supporting whenever the SHAP value was positive. Those coincide for
+ * a long signal and invert for a short, so every short published a counter-thesis
+ * that named a driver as its strongest opponent and then, in the next sentence,
+ * credited that same driver with driving the thesis.
+ */
+describe('narrative direction is signal-relative', () => {
+  /*
+   * Real registry keys, taken from the registry, so the translator resolves a
+   * definition and produces a composed sentence rather than the unmapped
+   * fallback. Two positive and two negative SHAP values, so both signal
+   * directions have something supporting and something opposing.
+   */
+  const featureNames = FEATURE_DEFINITIONS.slice(0, 4).map((d) => d.key);
+  const values = [0.9, -0.7, 0.3, -0.2];
+  const explanation: ShapExplanation = {
+    values,
+    baseValue: 0,
+    rawPrediction: values.reduce((a, b) => a + b, 0),
+    probability: 0.57,
+    featureNames,
+    featureValues: FEATURE_DEFINITIONS.slice(0, 4).map((d) => d.states[0]?.max ?? 1),
+  };
+
+  for (const signalDirection of ['long', 'short'] as const) {
+    it(`agrees with itself on a ${signalDirection} signal`, () => {
+      const drivers = translateExplanation(explanation, { signalDirection });
+      const thesis = composeThesis('TEST', drivers, signalDirection, 62);
+      const counter = composeCounterThesis(drivers, signalDirection);
+
+      const supporting = drivers.filter((d) => d.supports);
+      const opposing = drivers.filter((d) => !d.supports);
+      expect(supporting.length, 'some driver supports').toBeGreaterThan(0);
+      expect(opposing.length, 'some driver opposes').toBeGreaterThan(0);
+
+      // `supports` must match the convention the thesis composer uses.
+      for (const d of drivers) {
+        expect(d.supports, `${d.featureKey} shap=${d.shap}`).toBe(
+          signalDirection === 'long' ? d.shap >= 0 : d.shap < 0,
+        );
+      }
+
+      // The driver the counter-thesis names must not also be credited with
+      // driving the conviction. That contradiction is the defect under test.
+      const named = opposing[0];
+      expect(named, 'counter-thesis has a subject').toBeDefined();
+      expect(counter).toContain('opposing');
+      expect(named?.narrative).toContain('headwind');
+      expect(named?.narrative).not.toContain('conviction is driven by');
+
+      // And the driver the thesis leads with must read as supporting.
+      const lead = supporting[0];
+      expect(lead?.narrative).toContain('conviction is driven by');
+      expect(lead?.narrative).not.toContain('headwind');
+      expect(thesis).toContain('led by');
+    });
+  }
+
+  it('uses the stance word that matches the published direction', () => {
+    const short = translateExplanation(explanation, { signalDirection: 'short' });
+    const supporting = short.find((d) => d.supports);
+    expect(supporting?.narrative).toContain('bearish conviction');
+    const long = translateExplanation(explanation, { signalDirection: 'long' });
+    expect(long.find((d) => d.supports)?.narrative).toContain('bullish conviction');
   });
 });

@@ -20,12 +20,21 @@ import type { ReactNode } from 'react';
 import { Button, EmptyState, Notice, Panel, Skeleton } from '@/components/ui/primitives';
 import type { ApiRequestError } from '@/lib/ui/api';
 
-/** Codes whose remedy is a command rather than a retry. */
+/**
+ * Codes whose remedy is a command rather than a retry.
+ *
+ * Every entry is emitted by a route. `MODEL_MISSING` and `STORE_NOT_READY` used
+ * to sit here as well, and nothing has ever raised either — a copy of this map
+ * that is wider than the set of real codes reads as coverage while providing
+ * none, and hides the fact that a genuinely unhandled code falls through to the
+ * raw message.
+ */
 const OPERATIONAL_CODES: Record<string, string> = {
+  // src/app/api/{signals,chart,screener,attribution}/… via `pendingSetup`
   ENGINE_NOT_READY: 'The ensemble has not been trained in this deployment. Run npm run seed, then check again.',
-  MODEL_MISSING: 'No trained model file was found. Run npm run seed, then check again.',
+  // src/app/api/model-card/route.ts
   MODEL_NOT_TRAINED: 'No trained ensemble is present in this deployment. Run npm run seed, then check again.',
-  STORE_NOT_READY: 'The feature store is empty. Run npm run seed, then check again.',
+  // src/app/api/backtest/run/route.ts
   NO_BACKTEST_FIXTURE: 'No seeded backtest is present. Run npm run seed, then check again.',
   ENGINE_NOT_SEEDED: 'Feature history has not been seeded in this deployment. Run npm run seed, then check again.',
 };
@@ -124,9 +133,38 @@ export function AsyncSlot<T>({
       </>
     );
   }
+  /*
+   * Loaded data with a failed refresh is shown, and labelled as stale.
+   *
+   * The error branch above only fires when there is nothing to show. Once data
+   * has arrived, a later failure — a poll, a manual `reload()` — leaves
+   * `state.error` set and `state.data` populated, and this used to fall straight
+   * through to `children`, rendering the last good payload as though it were
+   * current with no indication anything had gone wrong. `lib/ui/api` is explicit
+   * about why that is the dangerous case: "a stale conviction score rendered as
+   * current is a materially misleading number."
+   *
+   * Blanking the panel would be worse — the figures were true when they arrived,
+   * and a reader mid-analysis should not lose them to one dropped request. So
+   * the data stays and the notice says what it is.
+   */
   return (
     <>
-      <Announce>{`${label ?? 'Content'} loaded.`}</Announce>
+      <Announce>
+        {state.error === null
+          ? `${label ?? 'Content'} loaded.`
+          : `${label ?? 'Content'} could not be refreshed. Showing the last values received.`}
+      </Announce>
+      {state.error === null ? null : (
+        <Notice tone="warning" className="mb-5">
+          These figures could not be refreshed ({state.error.message}) and are the last values received. Nothing
+          below reflects anything more recent.{' '}
+          <button type="button" onClick={state.reload} className="underline underline-offset-2 hover:text-parchment">
+            Try again
+          </button>
+          .
+        </Notice>
+      )}
       {children(state.data)}
     </>
   );

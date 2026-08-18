@@ -23,7 +23,7 @@
 
 import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
 import { EquityCurve, MonthlyHeatmap, ReturnDistribution } from '@/components/charts';
-import { COMBINE_THRESHOLDS } from '@/lib/engine/backtest';
+import { COMBINE_THRESHOLDS, PROFIT_FACTOR_NO_LOSSES } from '@/lib/engine/backtest';
 import {
   Badge,
   DataRow,
@@ -205,7 +205,7 @@ export default function BacktestPage() {
                 />
                 <StatTile
                   label="Profit factor"
-                  value={Number.isFinite(m.profitFactor) ? ratio(m.profitFactor, 2) : '∞'}
+                  value={m.profitFactor >= PROFIT_FACTOR_NO_LOSSES ? '∞' : ratio(m.profitFactor, 2)}
                   tone={survivalTone(m.profitFactor, COMBINE_THRESHOLDS.profitFactor)}
                   footnote={`Payoff ${ratio(m.payoffRatio, 2)}`}
                 />

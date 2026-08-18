@@ -116,7 +116,6 @@ export function limitPriceTolerance(referencePrice: number): number {
       return band.clearlyErroneousDeviation * ORDER_ENTRY_COLLAR_MULTIPLIER;
     }
   }
-  // Unreachable: the final band is unbounded. Kept so the function is total.
   /*
      * The multiplier belongs here too. This fallback is reached when `price` is
      * NaN — the loop's comparisons are all false — and it returned the raw FINRA

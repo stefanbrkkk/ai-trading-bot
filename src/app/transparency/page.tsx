@@ -17,7 +17,8 @@
 
 import { useState } from 'react';
 import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
-import { FeatureBars } from '@/components/charts';
+import { CalibrationPlot, FeatureBars } from '@/components/charts';
+import type { CalibrationBin } from '@/components/charts';
 import {
   Badge,
   Button,
@@ -84,6 +85,17 @@ interface ModelCardResponse {
   };
   featureCount: number;
   agentFeatureKeys: string[];
+  /**
+   * The reliability curve, already in the shape the plot takes as props. Empty
+   * on a bundle fitted before the curve was recorded, and `ece` is null on the
+   * same bundles — neither is substituted for.
+   */
+  calibration: {
+    curve: CalibrationBin[];
+    brier: number;
+    ece: number | null;
+    validationSamples: number;
+  };
   fusion: {
     agentEdge: Record<string, number>;
     regimeOverrideThreshold: number;
@@ -213,13 +225,53 @@ export default function TransparencyPage() {
                 </Notice>
               ) : null}
 
+              {/*
+                Placed against the metrics rather than with the attribution
+                charts. The Brier tile above states how far the published
+                probabilities sit from the outcomes; this is the same quantity
+                decomposed, and it is the only figure on the page that can show
+                the model is confidently wrong in one band while scoring
+                acceptably overall.
+              */}
+              <Panel className="mb-5">
+                <PanelHeader
+                  eyebrow="Calibration"
+                  title="Whether a stated probability means what it says"
+                  detail={
+                    data.calibration.curve.length > 0
+                      ? `Each point is one equal-width probability bin, measured on the ${integer(
+                          data.calibration.validationSamples,
+                        )} held-out validation samples — scored once, never fitted. A perfectly calibrated model lies on the dashed diagonal: of the cases it called at 60%, 60% resolved in its favour.`
+                      : 'The bundle in this deployment was fitted before the reliability curve was recorded, so there is nothing measured to plot. Retraining publishes it; nothing is estimated in the meantime.'
+                  }
+                />
+                <div className="scroll-x mt-4">
+                  {/*
+                    `ece` is null on a bundle that predates the measurement, and
+                    the prop is left off rather than passed as 0 — 0 is the score
+                    of a perfectly calibrated model.
+                  */}
+                  <CalibrationPlot
+                    curve={data.calibration.curve}
+                    brier={data.calibration.brier}
+                    ece={data.calibration.ece ?? undefined}
+                  />
+                </div>
+              </Panel>
+
               <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
                 <Panel>
                   <PanelHeader eyebrow="Ensemble" title="Gradient-boosted decision trees" detail={data.card.objective} />
                   <dl className="mt-3 space-y-0.5">
                     <DataRow label="Version" value={data.card.version} />
                     <DataRow label="Fitted at" value={nyDateTime(data.card.createdAt)} />
-                    <DataRow label="Seed" value={integer(data.card.seed)} hint="Every result on this platform is reproducible from it" />
+                    {/* No thousands separators: the seed is an identifier (and in fact a date),
+                        and "20,240,117" reads as twenty million. */}
+                    <DataRow
+                      label="Seed"
+                      value={String(data.card.seed)}
+                      hint="Every result on this platform is reproducible from it"
+                    />
                     <DataRow label="Trees" value={integer(data.card.trees)} />
                     <DataRow label="Leaves" value={integer(data.card.leaves)} />
                     <DataRow label="Max depth" value={integer(data.card.maxDepth)} />
@@ -427,7 +479,11 @@ export default function TransparencyPage() {
                 <PanelHeader
                   eyebrow="Feature registry"
                   title={`${integer(shown.length)} of ${integer(data.count)} features`}
-                  detail={`${integer(data.modelFeatureCount)} are consumed by the ensemble; the rest are published for inspection and are queryable.`}
+                  detail={
+                    data.modelFeatureCount >= data.count
+                      ? `Every one of them is consumed by the ensemble, and every one is queryable from InvestGPT.`
+                      : `${integer(data.modelFeatureCount)} are consumed by the ensemble; the rest are published for inspection and are queryable.`
+                  }
                   action={
                     <div className="flex flex-wrap gap-1.5">
                       {/*

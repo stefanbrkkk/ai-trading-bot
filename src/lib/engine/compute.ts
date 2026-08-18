@@ -200,7 +200,22 @@ export function computeFeatures(input: ComputeInput): ComputedFeatures {
 
   const ema20 = ema(closeSeries, 20);
   const ema50 = ema(closeSeries, 50);
-  const ema200 = ema(closeSeries, Math.min(200, Math.max(50, Math.floor(closeSeries.length * 0.7))));
+  /*
+   * A fixed 200, because the feature is named `ema_50_200_spread`.
+   *
+   * The period used to be `min(200, max(50, floor(length × 0.7)))`, which makes
+   * it a function of how much history the caller happened to pass. Inference
+   * requests 400 bars and got a true EMA-200; the training set builds each sample
+   * from `idx + 1` bars, so early samples were fitted on an EMA-182 or shorter
+   * and written under the same feature key. That is train/serve skew inside one
+   * column — precisely what the dataset module's header promises does not happen
+   * — and it is invisible, because both paths produce a plausible number.
+   *
+   * `ema` seeds from the available history and is defined on a short series, so a
+   * short window now yields an honest early-life EMA-200 rather than a different
+   * indicator wearing its name.
+   */
+  const ema200 = ema(closeSeries, 200);
   const slope20 = trendSlope(closeSeries, 20);
   const adxResult = adx(dailyBars, 14);
   const aroonResult = aroon(dailyBars, 25);

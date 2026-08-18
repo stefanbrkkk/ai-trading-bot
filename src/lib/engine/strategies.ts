@@ -36,6 +36,7 @@ import {
   sma,
 } from '@/lib/quant/indicators';
 import { EPS, clamp, mean, stdev } from '@/lib/quant/stats';
+import { OU_ENTRY_Z, OU_EXIT_Z } from '@/lib/domain/thresholds';
 import type { ComputedFeatures } from './compute';
 import type { StrategyFamily } from './regime';
 
@@ -131,9 +132,9 @@ export const STRATEGY_PARAMS = {
   /** Breakout: index must not have moved more than this in either direction. */
   breakoutIndexStabilityPct: 0.5,
   breakoutIndexWindowMinutes: 30,
-  /** OU reversion band and exit. */
-  ouEntryZ: 2.0,
-  ouExitZ: 0.5,
+  /** OU reversion band and exit. Shared with the oscillator that draws them. */
+  ouEntryZ: OU_ENTRY_Z,
+  ouExitZ: OU_EXIT_Z,
   ouHalfLifeMin: 2,
   ouHalfLifeMax: 14,
   /** Skew oscillator. */

@@ -76,7 +76,7 @@ const REGIMES: readonly { value: RegimeLabel; label: string }[] = [
   { value: 'trending_bear', label: 'Trending bear' },
   { value: 'mean_reverting', label: 'Mean reverting' },
   { value: 'high_volatility', label: 'High volatility' },
-  { value: 'low_volatility_drift', label: 'Low-vol drift' },
+  { value: 'low_volatility_drift', label: 'Low-volatility drift' },
   { value: 'illiquid', label: 'Illiquid' },
 ];
 

@@ -29,7 +29,15 @@
 
 'use client';
 
-import { useEffect, useState, type ComponentProps, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react';
 import { motion } from 'framer-motion';
 import { useParams } from 'next/navigation';
 import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
@@ -37,6 +45,7 @@ import {
   AttentionStrip,
   ConvictionDial,
   DecayCurve,
+  DepthLadder,
   FeatureBars,
   LatencyBar,
   PriceChart,
@@ -53,6 +62,7 @@ import {
   useSetHoveredDriver,
 } from '@/components/charts/DriverHover';
 import type { AggregatedStream } from '@/lib/quant/decay';
+import type { OrderBookSnapshot } from '@/lib/quant/orderflow';
 import {
   Badge,
   Button,
@@ -73,7 +83,7 @@ import { useApi } from '@/lib/ui/api';
 import {
   duration,
   fractionAsPercent,
-  halfLife,
+  sessionHalfLife,
   integer,
   nyDateTime,
   percent,
@@ -185,6 +195,8 @@ interface SignalResponse {
   counterThesis: string;
   modelVersion: string;
   attributionResidual: number;
+  /** Features the explanation attributes, before the driver list is capped. */
+  attributedInputs: number;
   latency: { stages: { stage: string; ms: number }[]; totalMs: number; budgetMs: number; withinBudget: boolean };
   xaiBreakdown: Record<Domain, unknown[]>;
   contributions: Contribution[];
@@ -231,6 +243,26 @@ interface SignalResponse {
       rSquared: number;
       meanReverting: boolean;
     };
+    /**
+     * The PCA-filtered order-flow signal. `pc1Loadings` is one loading per depth
+     * level, in the same level order as `book` below, which is what lets the
+     * ladder draw the two against each other.
+     */
+    mlofi: {
+      intent: number;
+      pc1Z: number;
+      pc1ExplainedVariance: number;
+      pc1Loadings: number[];
+      levels: number[];
+      queueImbalance: number;
+      depthImbalance: number;
+    };
+    /*
+     * The depth snapshot the MLOFI vector was computed from — the engine's own
+     * shape, imported rather than re-declared for the same reason `levels` is.
+     * Null when the publisher received no book; the ladder renders that itself.
+     */
+    book: OrderBookSnapshot | null;
     /** Calibrated smile parameters; null for a name with no listed options. */
     sabr: { alpha: number; beta: number; rho: number; nu: number; rmse: number; converged: boolean } | null;
     /** Decay-weighted alt-data aggregates, one per stream present for this name. */
@@ -363,27 +395,159 @@ function AttributionPane({
   );
 }
 
+/**
+ * Which decomposition the attribution panel is showing.
+ *
+ * In a context rather than in the page for the same reason the hover key is: the
+ * conviction dial's morph is driven by this toggle too, and holding the state at
+ * the route meant one press re-rendered nine charts, a twelve-row table and four
+ * stat grids to change two of them. Measured at 4x CPU throttle that was a
+ * 328-523 ms gap between the click and the next painted frame — on a control
+ * whose whole job is to feel like flipping a switch.
+ */
+const ViewContext = createContext<AttributionView>('waterfall');
+const SetViewContext = createContext<(view: AttributionView) => void>(() => {});
+
+type AttributionView = 'waterfall' | 'force';
+
+function AttributionViewProvider({ children }: { children: ReactNode }) {
+  const [view, setView] = useState<AttributionView>('waterfall');
+  const set = useCallback((next: AttributionView) => setView(next), []);
+  return (
+    <SetViewContext.Provider value={set}>
+      <ViewContext.Provider value={view}>{children}</ViewContext.Provider>
+    </SetViewContext.Provider>
+  );
+}
+
+/** Both pieces of interaction state this page shares between its panels. */
+function SymbolPageState({ children }: { children: ReactNode }) {
+  return (
+    <DriverHoverProvider>
+      <AttributionViewProvider>{children}</AttributionViewProvider>
+    </DriverHoverProvider>
+  );
+}
+
+/** The dial unspools into an axis when the force plot is showing. */
+function MorphingConvictionDial(props: WithoutMorph<ComponentProps<typeof ConvictionDial>>) {
+  return <ConvictionDial {...props} morph={useContext(ViewContext) === 'force' ? 1 : 0} />;
+}
+
+type WithoutMorph<T> = Omit<T, 'morph'>;
+
+/**
+ * The whole attribution panel, including the toggle that drives it.
+ *
+ * A component rather than inline JSX so the toggle's state change stops at this
+ * panel's boundary instead of re-rendering the route around it.
+ */
+function AttributionPanel({
+  waterfall,
+  steps,
+  forceContributions,
+  residual,
+}: {
+  waterfall: SignalResponse['waterfall'];
+  steps: ComponentProps<typeof ShapWaterfall>['steps'];
+  forceContributions: ComponentProps<typeof ShapForcePlot>['contributions'];
+  residual: number;
+}) {
+  const view = useContext(ViewContext);
+  const setView = useContext(SetViewContext);
+  const idleReady = useIdleMount();
+
+  return (
+    <Panel>
+      <PanelHeader
+        eyebrow="Attribution"
+        title={view === 'waterfall' ? 'Additive decomposition' : 'Net displacement'}
+        detail={
+          view === 'waterfall'
+            ? 'Exact TreeSHAP. The bars sum to the model output; the residual below reports the arithmetic.'
+            : 'The same decomposition as one displacement from the base rate. Segment length is share of total attribution.'
+        }
+        action={
+          <div className="flex gap-1.5">
+            <Button
+              size="sm"
+              variant={view === 'waterfall' ? 'primary' : 'ghost'}
+              onClick={() => setView('waterfall')}
+              aria-pressed={view === 'waterfall'}
+            >
+              Waterfall
+            </Button>
+            <Button
+              size="sm"
+              variant={view === 'force' ? 'primary' : 'ghost'}
+              onClick={() => setView('force')}
+              aria-pressed={view === 'force'}
+            >
+              Force
+            </Button>
+          </div>
+        }
+      />
+      <div className="scroll-x mt-4">
+        <AttributionPane active={view === 'waterfall'} mounted={idleReady || view === 'waterfall'}>
+          <HoveredShapWaterfall
+            baseValue={waterfall.baseValue}
+            finalValue={waterfall.finalValue}
+            baseProbability={waterfall.baseProbability}
+            finalProbability={waterfall.finalProbability}
+            steps={steps}
+          />
+        </AttributionPane>
+        <AttributionPane active={view === 'force'} mounted={idleReady || view === 'force'}>
+          <HoveredShapForcePlot
+            baseValue={waterfall.baseValue}
+            baseProbability={waterfall.baseProbability}
+            finalProbability={waterfall.finalProbability}
+            contributions={forceContributions}
+          />
+        </AttributionPane>
+      </div>
+      <Divider className="my-4" />
+      <StatGrid columns={3}>
+        <StatTile
+          label="Base rate"
+          value={fractionAsPercent(waterfall.baseProbability)}
+          footnote="E[f(x)] over the K-Means background"
+        />
+        <StatTile
+          label="Model output"
+          value={fractionAsPercent(waterfall.finalProbability)}
+          tone="gold"
+          footnote="f(x) after every contribution"
+        />
+        <StatTile
+          label="Local-accuracy residual"
+          value={residual.toExponential(2)}
+          tone={Math.abs(residual) < 1e-9 ? 'sage' : 'burgundy'}
+          footnote={
+            Math.abs(residual) < 1e-9
+              ? 'Exact to floating-point precision'
+              : 'Non-zero: the explanation does not fully account for the prediction'
+          }
+        />
+      </StatGrid>
+    </Panel>
+  );
+}
+
 export default function SymbolPage() {
   const params = useParams<{ symbol: string }>();
   const symbol = (params.symbol ?? '').toUpperCase();
 
   const signal = useApi<SignalResponse>(symbol.length > 0 ? `/signals/${symbol}` : null);
   /**
-   * The series are a separate request on purpose: 180 bars plus four overlay
+   * The series are a separate request on purpose: 180 bars plus five overlay
    * series is an order of magnitude more payload than the signal, and the
    * attribution below renders without it. Fetching them together would make the
    * whole page wait for the part of it that is heaviest.
    */
   const series = useApi<ChartSeriesResponse>(symbol.length > 0 ? `/chart/${symbol}` : null);
 
-  /**
-   * One hover key shared by the waterfall, the force plot and the driver table.
-   * Lifted to the page rather than held per-chart because the point of the
-   * highlight is cross-referencing: a driver is only meaningful once you can see
-   * its bar, its segment and its sentence at the same time.
-   */
-  const [view, setView] = useState<'waterfall' | 'force'>('waterfall');
-  const idleReady = useIdleMount();
 
   return (
     <PageShell wide>
@@ -424,7 +588,7 @@ export default function SymbolPage() {
            * four stat grids that used to re-render on every mousemove.
            */
           return (
-            <DriverHoverProvider>
+            <SymbolPageState>
               <PageHeader
                 eyebrow={`${data.assetIdentifier} · ${REGIME_LABELS[data.regime]}`}
                 title={`${data.assetIdentifier} attribution`}
@@ -485,11 +649,10 @@ export default function SymbolPage() {
                         Driven by the same state as the toggle, so the two can
                         never disagree about which view is showing.
                       */}
-                      <ConvictionDial
+                      <MorphingConvictionDial
                         score={data.convictionScore}
                         size={220}
                         caption={`${data.horizonDays}-day horizon`}
-                        morph={view === 'force' ? 1 : 0}
                       />
                     </div>
                     <dl className="mt-5 space-y-0.5">
@@ -529,80 +692,12 @@ export default function SymbolPage() {
 
                 {/* ── Attribution ──────────────────────────────────────── */}
                 <div className="space-y-5">
-                  <Panel>
-                    <PanelHeader
-                      eyebrow="Attribution"
-                      title={view === 'waterfall' ? 'Additive decomposition' : 'Net displacement'}
-                      detail={
-                        view === 'waterfall'
-                          ? 'Exact TreeSHAP. The bars sum to the model output; the residual below reports the arithmetic.'
-                          : 'The same decomposition as one displacement from the base rate. Segment length is share of total attribution.'
-                      }
-                      action={
-                        <div className="flex gap-1.5">
-                          <Button
-                            size="sm"
-                            variant={view === 'waterfall' ? 'primary' : 'ghost'}
-                            onClick={() => setView('waterfall')}
-                            aria-pressed={view === 'waterfall'}
-                          >
-                            Waterfall
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant={view === 'force' ? 'primary' : 'ghost'}
-                            onClick={() => setView('force')}
-                            aria-pressed={view === 'force'}
-                          >
-                            Force
-                          </Button>
-                        </div>
-                      }
-                    />
-                    <div className="scroll-x mt-4">
-                      <AttributionPane active={view === 'waterfall'} mounted={idleReady || view === 'waterfall'}>
-                        <HoveredShapWaterfall
-                          baseValue={data.waterfall.baseValue}
-                          finalValue={data.waterfall.finalValue}
-                          baseProbability={data.waterfall.baseProbability}
-                          finalProbability={data.waterfall.finalProbability}
-                          steps={steps}
-                        />
-                      </AttributionPane>
-                      <AttributionPane active={view === 'force'} mounted={idleReady || view === 'force'}>
-                        <HoveredShapForcePlot
-                          baseValue={data.waterfall.baseValue}
-                          baseProbability={data.waterfall.baseProbability}
-                          finalProbability={data.waterfall.finalProbability}
-                          contributions={forceContributions}
-                        />
-                      </AttributionPane>
-                    </div>
-                    <Divider className="my-4" />
-                    <StatGrid columns={3}>
-                      <StatTile
-                        label="Base rate"
-                        value={fractionAsPercent(data.waterfall.baseProbability)}
-                        footnote="E[f(x)] over the K-Means background"
-                      />
-                      <StatTile
-                        label="Model output"
-                        value={fractionAsPercent(data.waterfall.finalProbability)}
-                        tone="gold"
-                        footnote="f(x) after every contribution"
-                      />
-                      <StatTile
-                        label="Local-accuracy residual"
-                        value={data.attributionResidual.toExponential(2)}
-                        tone={Math.abs(data.attributionResidual) < 1e-9 ? 'sage' : 'burgundy'}
-                        footnote={
-                          Math.abs(data.attributionResidual) < 1e-9
-                            ? 'Exact to floating-point precision'
-                            : 'Non-zero: the explanation does not fully account for the prediction'
-                        }
-                      />
-                    </StatGrid>
-                  </Panel>
+                  <AttributionPanel
+                    waterfall={data.waterfall}
+                    steps={steps}
+                    forceContributions={forceContributions}
+                    residual={data.attributionResidual}
+                  />
 
                   {/* ── Driver table ───────────────────────────────────── */}
                   <Panel padded={false}>
@@ -799,7 +894,11 @@ export default function SymbolPage() {
                       <DataRow label="μ (equilibrium)" value={price(Math.exp(data.artefacts.ou.mu))} />
                       <DataRow
                         label="Half-life"
-                        value={data.artefacts.ou.halfLife === null ? 'not reverting' : halfLife(data.artefacts.ou.halfLife)}
+                        value={
+                          data.artefacts.ou.halfLife === null
+                            ? 'not reverting'
+                            : sessionHalfLife(data.artefacts.ou.halfLife)
+                        }
                       />
                       <DataRow label="σ (diffusion)" value={ratio(data.artefacts.ou.sigma)} />
                       <DataRow label="Equilibrium σ" value={sigma(data.artefacts.ou.equilibriumSigma)} />
@@ -829,6 +928,45 @@ export default function SymbolPage() {
                         />
                       </div>
                     ) : null}
+                  </Panel>
+
+                  {/*
+                    The book, beside the vector that was read off it.
+
+                    The ladder carries the PC1 loadings in its own right-hand
+                    gutter, so which depth levels drive the scalars beneath it is
+                    visible rather than taken on faith. That is the whole reason
+                    the two are in one panel: published apart, the intent reading
+                    would be a number with no book behind it.
+                  */}
+                  <Panel>
+                    <PanelHeader
+                      eyebrow="Order flow"
+                      title="The book the MLOFI vector was read from"
+                      detail="The depth snapshot the vector was computed from, ten levels a side — not a later quote of the same symbol. Opacity falls with depth because price impact does: size resting five ticks from the touch does not support the price the way size at the touch does, so it is not drawn as though it does. The gold bars are the PC1 loadings; only their magnitude is meaningful, since a principal component's sign is arbitrary."
+                    />
+                    <div className="mt-4">
+                      <DepthLadder book={data.artefacts.book} mlofiLoadings={data.artefacts.mlofi.pc1Loadings} />
+                    </div>
+                    <dl className="mt-3 space-y-0.5">
+                      <DataRow
+                        label="Execution intent"
+                        value={ratio(data.artefacts.mlofi.intent)}
+                        hint="tanh of the PC1 z-score, in [-1, 1]. Positive is net buying pressure: the eigenvector's arbitrary sign is oriented against the depth-weighted order-flow imbalance so the reading always points the same way."
+                      />
+                      <DataRow
+                        label="PC1 z-score"
+                        value={sigma(data.artefacts.mlofi.pc1Z)}
+                        hint="Net projection onto the first component as a t-statistic, measured against a neutral book rather than against the window's own mean."
+                      />
+                      <DataRow
+                        label="PC1 explained variance"
+                        value={fractionAsPercent(data.artefacts.mlofi.pc1ExplainedVariance)}
+                        hint="Share of the order-flow matrix's variance the first component accounts for. A low share means the depth levels are not moving together, so the single scalar carries correspondingly less of the book."
+                      />
+                      <DataRow label="Queue imbalance" value={ratio(data.artefacts.mlofi.queueImbalance)} />
+                      <DataRow label="Depth imbalance" value={ratio(data.artefacts.mlofi.depthImbalance)} />
+                    </dl>
                   </Panel>
 
                   {/*
@@ -925,8 +1063,12 @@ export default function SymbolPage() {
               <Panel className="mt-5">
                 <PanelHeader
                   eyebrow="Feature vector"
-                  title={`All ${integer(contributions.length)} attributed inputs`}
-                  detail="Normalised to the cross-sectional ECDF, so a bar's length is the symbol's percentile against the universe rather than a raw magnitude."
+                  title={
+                    data.attributedInputs > contributions.length
+                      ? `Top ${integer(contributions.length)} of ${integer(data.attributedInputs)} attributed inputs`
+                      : `All ${integer(contributions.length)} attributed inputs`
+                  }
+                  detail="Signed share of total attribution: a bar's length is the driver's percentage of Σ|φ|, and its side is whether it pushed the model's probability up or down. Same quantity as the SHARE column above, drawn."
                 />
                 <div className="scroll-x mt-4">
                   <HoveredFeatureBars
@@ -949,7 +1091,7 @@ export default function SymbolPage() {
                 Model {data.modelVersion} · attribution exact to {Math.abs(data.attributionResidual).toExponential(1)} ·
                 impersonal computation, not investment advice
               </p>
-            </DriverHoverProvider>
+            </SymbolPageState>
           );
         }}
       </AsyncSlot>

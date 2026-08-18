@@ -59,21 +59,33 @@ export interface OrderContextResult {
  *
  * Measured from the actual bar history rather than read from the universe
  * metadata, because the limiter's whole purpose is to reflect *current* tradable
- * liquidity. Returns 0 when the history is unavailable, and the engine fails
- * closed on a zero ADV — the mandate is explicit that a missing ADV must deny.
+ * liquidity rather than the figure the universe was built with.
+ *
+ * The distinction that matters is between "we could not measure" and "we
+ * measured, and it is zero". Those are not the same fact, and treating them
+ * alike is what made this function wrong: `if (measured > 0)` sent both down the
+ * fallback path, so a name that had genuinely stopped trading — halted,
+ * delisted, or simply never printing — was handed the published figure from the
+ * universe spec and passed the participation check as though it were liquid.
+ *
+ * So a measurement is now trusted whenever one was possible, zero included, and
+ * the published figure is reached only when there is no history to measure. The
+ * engine denies on a zero ADV, which is what the mandate requires; that arm is
+ * now reachable, where before the fallback made it dead code for every symbol in
+ * the universe.
  */
 async function resolveAdv(symbol: string, now: number): Promise<number> {
   try {
     const provider = resolveMarketProvider();
     const bars = await provider.dailyBars(symbol, { limit: ADV_LOOKBACK_DAYS + 5, endAt: now });
-    const measured = averageDailyVolume(bars, ADV_LOOKBACK_DAYS);
-    if (measured > 0) return measured;
+    if (bars.length > 0) return averageDailyVolume(bars, ADV_LOOKBACK_DAYS);
   } catch {
-    // fall through to the published figure
+    // No history to measure — fall through to the published figure.
   }
   try {
     return symbolMeta(requireSpec(symbol)).adv30;
   } catch {
+    // Not in the universe at all. Deny.
     return 0;
   }
 }

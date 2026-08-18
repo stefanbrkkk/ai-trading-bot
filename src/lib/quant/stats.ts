@@ -101,11 +101,20 @@ export function skewness(xs: readonly number[]): number {
 }
 
 export function kurtosis(xs: readonly number[]): number {
-  // Excess kurtosis, unbiased (Fisher).
+  /*
+   * Excess kurtosis, unbiased (Fisher).
+   *
+   * The bias correction on the last line takes `g2 = m4/m2² − 3`, and that is a
+   * ratio of *population* moments: `m2` is the mean squared deviation, ddof 0.
+   * Standardising by the sample standard deviation instead multiplied the whole
+   * thing by ((n−1)/n)², biasing the answer low by roughly 2% at n = 100 and 19%
+   * at n = 10 — `kurtosis([1..10])` returned −1.7965 where pandas and scipy both
+   * give −1.2000.
+   */
   const n = xs.length;
   if (n < 4) return 0;
   const m = mean(xs);
-  const s = stdev(xs, 1);
+  const s = stdev(xs, 0);
   if (s < EPS) return 0;
   let acc = 0;
   for (const x of xs) acc += ((x - m) / s) ** 4;
@@ -196,10 +205,27 @@ export function normInv(p: number): number {
       -((((((c[0] as number) * q + (c[1] as number)) * q + (c[2] as number)) * q + (c[3] as number)) * q + (c[4] as number)) * q + (c[5] as number)) /
       ((((((d[0] as number) * q + (d[1] as number)) * q + (d[2] as number)) * q + (d[3] as number)) * q + 1));
   }
-  // One Halley refinement against the high-accuracy cdf.
-  const e = normCdf(x) - p;
-  const u = e * Math.sqrt(2 * Math.PI) * Math.exp((x * x) / 2);
-  return x - u / (1 + (x * u) / 2);
+  /*
+   * No refinement step.
+   *
+   * There used to be a Halley iteration here, "against the high-accuracy cdf".
+   * `normCdf` is Abramowitz & Stegun 7.1.26, whose documented error bound is
+   * |ε| < 1.5e-7 — this file says so where the function is defined — so the step
+   * was correcting an accurate value against an inaccurate one and injecting
+   * ε·√(2π)·e^{x²/2} in the process. Measured against a series/continued-fraction
+   * reference it cost four to five orders of magnitude:
+   *
+   *     p        with Halley   Acklam alone
+   *     0.75     2.1e-07       2.7e-11
+   *     0.975    1.2e-06       3.5e-10
+   *     0.999    2.0e-05       1.5e-09
+   *     0.0001   7.4e-05       3.3e-09
+   *
+   * Acklam's rational approximation is accurate to ~1.15e-9 relative across the
+   * whole domain on its own, which is what the callers here need: the Gaussian
+   * rank transform, the copula h-functions, and the bivariate normal CDF.
+   */
+  return x;
 }
 
 /** Student-t cdf via the regularised incomplete beta function. */

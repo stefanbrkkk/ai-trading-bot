@@ -171,7 +171,17 @@ export async function buildTrainingDataset(
       const relative = symbolReturn - benchReturn;
       const label = relative > 0 ? 1 : 0;
 
-      const labelTime = sessions[future] as number;
+      /*
+       * The instant the label is knowable, on the same clock as `time`.
+       *
+       * `time` is the session open plus 380 minutes — near the close, so the
+       * intraday block is populated — and this was the bare session open, so the
+       * purge in `trainModelBundle` compared an open against an open-plus-380.
+       * A sample whose label is only fixed by the close of the first validation
+       * session read as strictly earlier than that session and survived the
+       * purge, which is precisely the one sample the embargo exists to remove.
+       */
+      const labelTime = (sessions[future] as number) + 380 * 60_000;
       history.entries.push({ time: evaluateAt, labelTime, features, forwardReturn: relative, label });
       processed += 1;
       options.onProgress?.(processed, symbols.length * samplesPerSymbol, symbol);

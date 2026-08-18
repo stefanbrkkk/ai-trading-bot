@@ -404,6 +404,20 @@ export function microstructureMetrics(
  * Volume-synchronised probability of informed trading (VPIN), Easley–López de
  * Prado–O'Hara. Fraction of the bucket volume that is directionally imbalanced,
  * averaged over the last `windowBuckets` volume buckets.
+ *
+ * A trade that spans a bucket boundary is *split* across the buckets it fills,
+ * which is what "volume-synchronised" means: the buckets are equal volume, not
+ * equal trade count. Carrying the whole trade into one bucket and then draining
+ * the counter produced a real bucket followed by empty ones —
+ *
+ *     vpin([{ volume: 300, signedVolume: 300 }], 100)  ->  0.333
+ *
+ * — where three hundred shares of perfectly one-sided flow must read 1.0, and
+ * does when the same shares arrive as three hundred-lots. The error is not
+ * cosmetic: `compute.ts` sizes a bucket at three times mean bar volume, so it
+ * fires on any bar three times the average — a volume spike, which is exactly
+ * the condition toxicity is being measured for — and the number feeds the
+ * router's `ABORT_TOXIC_FLOW` gate.
  */
 export function vpin(
   trades: readonly { volume: number; signedVolume: number }[],
@@ -416,16 +430,30 @@ export function vpin(
   let sell = 0;
   let filled = 0;
   for (const t of trades) {
-    const b = (t.volume + t.signedVolume) / 2;
-    const s = (t.volume - t.signedVolume) / 2;
-    buy += Math.max(b, 0);
-    sell += Math.max(s, 0);
-    filled += t.volume;
-    while (filled >= bucketVolume) {
-      buckets.push({ buy, sell });
-      filled -= bucketVolume;
-      buy = 0;
-      sell = 0;
+    const volume = Math.max(0, t.volume);
+    if (volume <= 0) continue;
+    const b = Math.max((volume + t.signedVolume) / 2, 0);
+    const s = Math.max((volume - t.signedVolume) / 2, 0);
+    // Normalised by the clamped mix rather than by `volume`, so a |signedVolume|
+    // larger than the volume it is signing still yields shares that sum to one.
+    const mix = b + s;
+    if (mix <= 0) continue;
+    const buyShare = b / mix;
+    const sellShare = s / mix;
+
+    let remaining = volume;
+    while (remaining > 0) {
+      const take = Math.min(remaining, bucketVolume - filled);
+      buy += take * buyShare;
+      sell += take * sellShare;
+      filled += take;
+      remaining -= take;
+      if (filled >= bucketVolume - EPS) {
+        buckets.push({ buy, sell });
+        buy = 0;
+        sell = 0;
+        filled = 0;
+      }
     }
   }
   const window = buckets.slice(-windowBuckets);

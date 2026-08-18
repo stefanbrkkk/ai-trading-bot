@@ -73,10 +73,6 @@ export type { ForceContribution, ShapForcePlotProps } from './ShapForcePlot';
 export { ShapWaterfall } from './ShapWaterfall';
 export type { ShapWaterfallProps, ShapWaterfallStep } from './ShapWaterfall';
 
-// Sparkline — inline trend line for tables and tiles.
-export { Sparkline } from './Sparkline';
-export type { SparklineProps } from './Sparkline';
-
 // Z-oscillator — z-score against the entry/exit thresholds.
 export { ZOscillator } from './ZOscillator';
 export type { ZOscillatorPoint, ZOscillatorProps } from './ZOscillator';

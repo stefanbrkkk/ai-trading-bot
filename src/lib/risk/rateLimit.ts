@@ -58,9 +58,10 @@ export interface RateLimiterOptions {
  * Deterministic sliding-window limiter.
  *
  * One instance guards the whole process. In a multi-instance deployment the
- * limiter must move behind a shared store, and the `RateLimiterPort`-shaped
- * constructor here (clock plus audit sink) is what makes that substitution a
- * drop-in rather than a rewrite.
+ * limiter must move behind a shared store, and the injected constructor
+ * dependencies here (clock plus audit sink) are what make that substitution a
+ * drop-in rather than a rewrite. There is no `RateLimiterPort` in
+ * `risk/ports.ts` yet; adding one is the shape that change would take.
  */
 export class SlidingWindowRateLimiter {
   private readonly limit: number;

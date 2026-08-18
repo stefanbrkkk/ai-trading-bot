@@ -34,7 +34,7 @@ import {
   StatTile,
 } from '@/components/ui/primitives';
 import { ApiRequestError, request, useApi } from '@/lib/ui/api';
-import { duration, fractionAsPercent, integer, nyDate, relativeTime } from '@/lib/ui/format';
+import { duration, fractionAsPercent, integer, nyDate, ratio, relativeTime } from '@/lib/ui/format';
 import type { ClaimCategory, RagSourceType } from '@/lib/domain/types';
 
 interface Citation {
@@ -362,7 +362,7 @@ export default function ResearchPage() {
                         <span className="font-mono text-2xs text-parchment-faint">authority</span>
                         <Meter value={citation.authority} tone="gold" className="flex-1" />
                         <span className="tabular font-mono text-2xs text-parchment-faint">
-                          {citation.authority.toFixed(2)}
+                          {ratio(citation.authority, 2)}
                         </span>
                       </div>
                       <p className="mt-2 text-[0.75rem] leading-relaxed text-parchment-dim">{citation.snippet}</p>
@@ -388,11 +388,11 @@ export default function ResearchPage() {
                   </div>
                   <div className="flex justify-between gap-3">
                     <dt className="text-parchment-faint">best BM25</dt>
-                    <dd className="text-parchment-dim">{answer.trace.bestBm25.toFixed(2)}</dd>
+                    <dd className="text-parchment-dim">{ratio(answer.trace.bestBm25, 2)}</dd>
                   </div>
                   <div className="flex justify-between gap-3">
                     <dt className="text-parchment-faint">best cosine</dt>
-                    <dd className="text-parchment-dim">{answer.trace.bestDense.toFixed(3)}</dd>
+                    <dd className="text-parchment-dim">{ratio(answer.trace.bestDense, 3)}</dd>
                   </div>
                   <div className="flex justify-between gap-3">
                     <dt className="text-parchment-faint">query terms in corpus</dt>
@@ -450,7 +450,7 @@ export default function ResearchPage() {
                     </span>
                     <Meter value={source.authority} tone="gold" className="flex-1" />
                     <span className="tabular w-20 shrink-0 text-right font-mono text-2xs text-parchment-faint sm:w-24">
-                      {integer(source.documents)} docs · {source.authority.toFixed(2)}
+                      {integer(source.documents)} docs · {ratio(source.authority, 2)}
                     </span>
                   </div>
                 ))}

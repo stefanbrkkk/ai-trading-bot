@@ -60,6 +60,17 @@ export const MAX_ENTRIES_PER_SYMBOL_PER_DAY = 1;
 
 const TRADING_DAYS_PER_YEAR = 252;
 
+/**
+ * The profit factor of a strategy that won every trade it took.
+ *
+ * Gross loss is zero, so the ratio is genuinely infinite, and `Infinity` does not
+ * survive `JSON.stringify` — it becomes `null`, and the previous code turned it
+ * into `0` instead, which reads as "no edge" for a perfect record and failed the
+ * scorecard's "≥ 2.0" row. A large finite sentinel keeps the ordering correct
+ * everywhere the figure is compared or sorted, and the UI renders it as "∞".
+ */
+export const PROFIT_FACTOR_NO_LOSSES = 999;
+
 export interface BacktestBarSlice {
   symbol: string;
   /** Ascending daily bars for the whole test window. */
@@ -120,9 +131,10 @@ export function runBacktest(input: BacktestInput): BacktestResult {
   const evaluableStrategies = requestedStrategies.filter((id) => strategyById(id)?.requiresIntraday !== true);
   if (intradayOnly.length > 0) {
     warnings.push(
-      `Excluded from this daily-bar backtest because their entry rules require intraday bars: ${intradayOnly
+      // Agreement follows the list, which is currently one strategy long.
+      `${intradayOnly.length === 1 ? 'Excluded from this daily-bar backtest because its entry rules require' : 'Excluded from this daily-bar backtest because their entry rules require'} intraday bars: ${intradayOnly
         .map((id) => strategyById(id)?.name ?? id)
-        .join(', ')}. They are evaluated live, not here.`,
+        .join(', ')}. ${intradayOnly.length === 1 ? 'It is' : 'They are'} evaluated live, not here.`,
     );
   }
   if (evaluableStrategies.length === 0) {
@@ -190,7 +202,12 @@ export function runBacktest(input: BacktestInput): BacktestResult {
         const gross = sign * (fill - pos.entryPrice) * pos.quantity;
         const commission = config.commissionPerShare * pos.quantity;
         const net = gross - commission;
-        cash += pos.entryPrice * pos.quantity * (pos.direction === 'long' ? 1 : -1) * 0 + net + pos.entryPrice * pos.quantity;
+        // Return the entry notional to cash and book the trade's net result.
+        // A short's proceeds and its buy-back net out to the same arithmetic, so
+        // both directions close the same way — there used to be a direction term
+        // here multiplied by zero, which read as an unfinished short-side rule
+        // rather than as the no-op it was.
+        cash += net + pos.entryPrice * pos.quantity;
         totalTurnover += fill * pos.quantity;
         trades.push({
           symbol: pos.symbol,
@@ -258,7 +275,7 @@ export function runBacktest(input: BacktestInput): BacktestResult {
         };
 
         const evaluations = evaluateStrategies(ctx, evaluableStrategies);
-        const candidate = pickCandidate(evaluations, regime.label);
+        const candidate = pickCandidate(evaluations);
         if (!candidate) continue;
 
         const conviction = candidate.conviction * regimeMultiplier(regime.label, familyOf(candidate.id)) * 100;
@@ -334,8 +351,16 @@ export function runBacktest(input: BacktestInput): BacktestResult {
   };
 }
 
-function pickCandidate(evaluations: readonly StrategyEvaluation[], regime: BacktestConfig['strategies'][number] | string): StrategyEvaluation | null {
-  void regime;
+/**
+ * The highest-conviction strategy that actually fired.
+ *
+ * The regime is deliberately not a tie-break here. It enters the backtest once,
+ * through `regimeMultiplier`, which scales the conviction each strategy reports
+ * *before* this comparison — so applying it again would count the same
+ * adjustment twice. The parameter used to be taken and discarded with a `void`,
+ * which left the reader to work that out.
+ */
+function pickCandidate(evaluations: readonly StrategyEvaluation[]): StrategyEvaluation | null {
   const fired = evaluations.filter((e) => e.fired && e.levels !== null);
   if (fired.length === 0) return null;
   return fired.reduce((best, e) => (e.conviction > best.conviction ? e : best));
@@ -424,7 +449,17 @@ export function computeMetrics(
   const drawdowns = equityCurve.map((p) => p.drawdown);
   const maxDrawdown = Math.abs(Math.min(0, ...drawdowns));
   const calmar = maxDrawdown < EPS ? 0 : cagr / maxDrawdown;
-  const ulcerIndex = Math.sqrt(mean(drawdowns.map((d) => d * d * 10_000)));
+  /*
+   * Over the traded window, for the same reason the return series is.
+   *
+   * The Ulcer Index is a root-mean-square, so unlike `maxDrawdown` it is diluted
+   * rather than unmoved by the flat warm-up prefix: 260 padding bars at zero
+   * drawdown pull the RMS down by roughly the square root of the padding's share
+   * of the series, which flatters the number in exact proportion to how much
+   * history the run happened to load.
+   */
+  const tradedDrawdowns = traded.map((p) => p.drawdown);
+  const ulcerIndex = Math.sqrt(mean(tradedDrawdowns.map((d) => d * d * 10_000)));
 
   let maxDrawdownDurationDays = 0;
   let currentDuration = 0;
@@ -445,6 +480,15 @@ export function computeMetrics(
   const averageWin = wins.length === 0 ? 0 : grossWin / wins.length;
   const averageLoss = losses.length === 0 ? 0 : grossLoss / losses.length;
   const expectancy = trades.length === 0 ? 0 : winRate * averageWin - (1 - winRate) * averageLoss;
+  /*
+   * `Infinity` when there were wins and no losses, and it stays Infinity.
+   *
+   * The serialisation below used to collapse a non-finite value to 0, so a
+   * strategy that had never lost a trade published a profit factor of zero and
+   * failed the "≥ 2.0" scorecard row — the worst possible reading of the best
+   * possible record. `PROFIT_FACTOR_NO_LOSSES` is carried instead, which is a
+   * number JSON can hold and every consumer can recognise.
+   */
   const profitFactor = grossLoss < EPS ? (grossWin > 0 ? Infinity : 0) : grossWin / grossLoss;
   const payoffRatio =
     losses.length === 0 || wins.length === 0
@@ -475,7 +519,7 @@ export function computeMetrics(
     wins: wins.length,
     losses: losses.length,
     winRate,
-    profitFactor: Number.isFinite(profitFactor) ? profitFactor : 0,
+    profitFactor: Number.isFinite(profitFactor) ? profitFactor : PROFIT_FACTOR_NO_LOSSES,
     expectancy,
     averageWin,
     averageLoss,
@@ -620,17 +664,44 @@ function summariseByStrategy(trades: readonly BacktestTrade[]): BacktestResult['
     .sort((a, b) => b.netPnl - a.netPnl);
 }
 
+/**
+ * Month-by-month returns, chained so that they compound to the total.
+ *
+ * A month's base is the *previous* month's close, not its own first point. Using
+ * the first point inside the month silently discarded the move from the prior
+ * close to it — the overnight or over-weekend gap between the last session of
+ * one month and the first of the next — so the series did not compound to
+ * `totalReturn` and every gap in the run went unreported. An equity of 100 on
+ * 31 January, 110 on 1 February and 120 on 28 February published February as
+ * +9.1% when the month actually returned +20%.
+ *
+ * The first month has no predecessor, so it is measured from its own opening
+ * point, which is the only base that exists.
+ */
 function monthlyReturns(equityCurve: readonly EquityPoint[]): BacktestResult['monthlyReturns'] {
   if (equityCurve.length === 0) return [];
   const buckets = new Map<string, { start: number; end: number; year: number; month: number }>();
+  const order: string[] = [];
+  let previousClose: number | null = null;
   for (const p of equityCurve) {
     const d = new Date(p.time);
     const key = `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}`;
     const existing = buckets.get(key);
-    if (existing) existing.end = p.equity;
-    else buckets.set(key, { start: p.equity, end: p.equity, year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 });
+    if (existing) {
+      existing.end = p.equity;
+    } else {
+      buckets.set(key, {
+        start: previousClose ?? p.equity,
+        end: p.equity,
+        year: d.getUTCFullYear(),
+        month: d.getUTCMonth() + 1,
+      });
+      order.push(key);
+    }
+    previousClose = p.equity;
   }
-  return Array.from(buckets.values())
+  return order
+    .map((key) => buckets.get(key) as { start: number; end: number; year: number; month: number })
     .map((b) => ({ year: b.year, month: b.month, ret: b.start <= 0 ? 0 : (b.end - b.start) / b.start }))
     .sort((a, b) => a.year - b.year || a.month - b.month);
 }

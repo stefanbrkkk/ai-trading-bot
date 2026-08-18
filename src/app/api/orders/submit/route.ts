@@ -244,10 +244,65 @@ export const POST = handler(async (request: Request) => {
     );
   }
 
-  // ── 5. Persist the authorised order before dispatch ──────────────────────
+  // ── 5. Burn the click, then persist the authorised order before dispatch ──
   const quantity = intent.quantity as number;
   const reference = notionalReferencePrice(intent, built.quote);
   const orderId = `ord_${randomUUID()}`;
+
+  /*
+   * One click authorises one order, and this is where that is enforced.
+   *
+   * `consumeIntentToken` is an atomic `UPDATE … WHERE consumed_at IS NULL`, so
+   * two concurrent submissions of the same click can never both succeed. Its
+   * verdict used to be discarded — called for its side effect, after the order
+   * had already been inserted, and never read — which left the guarantee resting
+   * entirely on `verifyIntentToken`'s nonce store. That store defaults to an
+   * in-process `Map`, so a token could be replayed once per worker inside its
+   * 30-second life: any clustered deployment, or a restart between the mint and
+   * the submit, and one click routes several real orders.
+   *
+   * Burning before the insert also means a refused burn leaves nothing behind.
+   */
+  const burn = consumeIntentToken(body.intentToken, {
+    userId: user.id,
+    symbol,
+    now: riskCompleted,
+    orderId,
+  });
+  if (!burn.ok) {
+    insertAuditEvent({
+      eventType: 'order_intent_replayed',
+      userId: user.id,
+      sessionToken,
+      ipAddress: ctx.ipAddress,
+      userAgent: ctx.userAgent,
+      clickX: body.click.clickX,
+      clickY: body.click.clickY,
+      resource: symbol,
+      orderId: null,
+      rawPayload: JSON.stringify({ intent, reason: burn.reason }),
+      brokerStatus: null,
+      brokerBody: null,
+      spiffeId: ROUTER_SPIFFE_ID,
+      correlationId: correlation,
+    });
+    return ok(
+      {
+        routed: false,
+        code: 'INTENT_TOKEN_SPENT',
+        message:
+          burn.reason === 'already_consumed'
+            ? 'This authorisation has already routed an order. Press Execute again to authorise a new one.'
+            : 'This authorisation is no longer valid. Run pre-flight and press Execute again.',
+        check: 'click provenance',
+        observed: burn.reason,
+        limit: null,
+        checks: decision.checks,
+        spiffeId: decision.spiffeId,
+      },
+      { status: 422, correlation },
+    );
+  }
   const pending: Order = {
     id: orderId,
     userId: user.id,
@@ -276,7 +331,6 @@ export const POST = handler(async (request: Request) => {
     correlationId: correlation,
     ...(reference === null ? {} : { notionalCents: Math.round(orderNotionalUsd(intent, reference) * 100) }),
   });
-  consumeIntentToken(body.intentToken, { userId: user.id, symbol, now: riskCompleted, orderId });
 
   // ── 6. Dispatch ──────────────────────────────────────────────────────────
   const broker = getBroker();

@@ -17,15 +17,27 @@ export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, bodySchema);
 
   /*
-   * Rate limited by client address before the credential is touched. Without it
-   * this endpoint served unlimited attempts, which makes an online guess against
-   * a weak password a matter of patience rather than difficulty.
+   * Rate limited before the account is created, so registration cannot be used
+   * to flood the ledger.
+   *
+   * Unlike sign-in there is no per-account key worth having — an attacker picks a
+   * fresh email every time — so the client address is the only useful bucket, and
+   * it is only a real bucket when a trusted proxy attests to it. Without one, all
+   * that is left is a global floodgate. It is set an order of magnitude higher on
+   * purpose: a shared bucket at the per-address limit would let one script lock
+   * every visitor out of registering, which trades a nuisance for an outage.
    */
   const ctx = await requestContext();
-  const verdict = hitRateLimit(`auth:signup:${ctx.ipAddress || 'unknown'}`, {
-    limit: CREDENTIAL_ATTEMPTS_PER_MINUTE,
-    windowMs: CREDENTIAL_WINDOW_MS,
-  });
+  const attributable = ctx.ipAddress !== 'unattributed' && ctx.ipAddress !== 'unavailable';
+  const verdict = attributable
+    ? hitRateLimit(`auth:signup:ip:${ctx.ipAddress}`, {
+        limit: CREDENTIAL_ATTEMPTS_PER_MINUTE,
+        windowMs: CREDENTIAL_WINDOW_MS,
+      })
+    : hitRateLimit('auth:signup:global', {
+        limit: CREDENTIAL_ATTEMPTS_PER_MINUTE * 20,
+        windowMs: CREDENTIAL_WINDOW_MS,
+      });
   if (!verdict.allowed) {
     throw new ApiError('RATE_LIMITED', 'Too many attempts. Wait a minute and try again.', 429, {
       retryAfterMs: Math.max(0, verdict.resetAt - Date.now()),

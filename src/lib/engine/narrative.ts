@@ -110,12 +110,12 @@ export const INSTITUTIONAL_MAPPING_MATRIX: Record<string, MatrixEntry> = {
   },
   'rsi_14|negative|STATE_OVERBOUGHT': {
     template:
-      'Technical overextension (RSI at {val}) acts as a {pct}% headwind against further upside momentum.',
+      'Technical overextension (RSI at {val}) acts as {art} {pct}% headwind against further upside momentum.',
     semanticKey: 'overbought_technical_headwind',
   },
   'rsi_14|negative|STATE_DEEPLY_OVERBOUGHT': {
     template:
-      'Technical overextension (RSI at {val}) acts as a {pct}% headwind against further upside momentum.',
+      'Technical overextension (RSI at {val}) acts as {art} {pct}% headwind against further upside momentum.',
     semanticKey: 'overbought_technical_headwind',
   },
   'inst_13f_score|positive|STATE_ACCUMULATION': {
@@ -157,7 +157,27 @@ export const INSTITUTIONAL_MAPPING_MATRIX: Record<string, MatrixEntry> = {
 
 /** Hydrates {pct} as an integer percent and {val} to one decimal place. */
 export function hydrateTemplate(template: string, pct: number, val: number): string {
-  return template.replace(/\{pct\}/g, String(Math.round(pct))).replace(/\{val\}/g, val.toFixed(1));
+  return template
+    .replace(/\{pct\}/g, String(Math.round(pct)))
+    .replace(/\{val\}/g, val.toFixed(1))
+    // `{art}` is the indefinite article for the percentage that follows it, so a
+    // verbatim row can read "acts as an 8% headwind" without forking the template.
+    .replace(/\{art\}/g, indefiniteArticle(pct));
+}
+
+/**
+ * "a 3% headwind" but "an 8% headwind".
+ *
+ * English takes the article from the *sound* of what follows, and a percentage is
+ * read aloud as its digits, so 8, 11, 18 and the eighties all begin with a vowel
+ * sound. The templates hard-coded "a", which shipped "acts as a 8% headwind" and
+ * "acts as a 18% headwind" to the attribution table.
+ */
+export function indefiniteArticle(pct: number): string {
+  const n = Math.abs(Math.round(pct));
+  if (n === 8 || n === 11 || n === 18) return 'an';
+  if (n >= 80 && n <= 89) return 'an';
+  return 'a';
 }
 
 /**
@@ -169,18 +189,32 @@ export function hydrateTemplate(template: string, pct: number, val: number): str
  *
  * Shape for an opposing driver:
  *   "{predicate} ({label} at {value}) acts as a {pct}% headwind, {implication}."
+ *
+ * `supports` is signal-relative and must be computed by the caller, because a
+ * raw SHAP sign does not answer the question on its own. This took `direction`
+ * and read `positive` as supporting, which is right for a long signal and
+ * exactly backwards for a short: a driver pushing the modelled probability *down*
+ * is what a short thesis rests on. `composeThesis` and `composeCounterThesis`
+ * have always used the signal-relative convention, so on every short signal the
+ * two disagreed and the page contradicted itself in consecutive sentences —
+ *
+ *   "The strongest opposing driver is net institutional distribution …
+ *    subtracting 7% of total attribution. 7% of this bearish conviction is
+ *    driven by net institutional distribution …"
+ *
+ * — the same driver, named as both the leading argument against the thesis and
+ * the thing driving it. Roughly half the published universe is short.
  */
 export function composeGenericNarrative(
   definition: FeatureDefinition,
   state: FeatureState,
   value: number,
   contributionPercent: number,
-  direction: ImpactDirection,
+  supports: boolean,
   signalDirection: 'long' | 'short',
 ): string {
   const pct = Math.round(contributionPercent);
   const formatted = formatFeatureValue(definition, value);
-  const supports = direction === 'positive';
   const stance = signalDirection === 'long' ? 'bullish' : 'bearish';
 
   if (supports) {
@@ -196,11 +230,24 @@ export function composeGenericNarrative(
    * beside eleven sentences that were capitalised correctly.
    */
   const opening = `${state.predicate} (${definition.label} at ${formatted})`;
-  return `${opening.charAt(0).toUpperCase()}${opening.slice(1)} acts as a ${pct}% headwind, ${state.implication}.`;
+  return `${opening.charAt(0).toUpperCase()}${opening.slice(1)} acts as ${indefiniteArticle(pct)} ${pct}% headwind, ${state.implication}.`;
 }
 
 export interface TranslatedDriver extends SignalDriver {
   domain: XaiDomain;
+  /**
+   * Whether this driver argues for the direction that was published.
+   *
+   * Distinct from `direction`, which is the raw SHAP sign. On a short signal a
+   * driver with a negative SHAP value is a *supporting* one.
+   */
+  supports: boolean;
+  /**
+   * What this feature's state means, as a clause. Carried separately from
+   * `narrative` so a composer can use the reasoning without re-stating the
+   * driver's name and value alongside it.
+   */
+  implication: string;
   /** Stable semantic key for the client. */
   semanticKey: string;
   /** contribution_percentage, 0–100. */
@@ -239,7 +286,17 @@ export function translateExplanation(
 
   return ranked.map((c) => {
     const definition = featureDefinition(c.feature);
+    /*
+     * `direction` is the raw sign of the SHAP value in the model's own log-odds
+     * space, and stays raw — it is published as `impact_direction` and is a
+     * statement about the model, not about the trade.
+     *
+     * `supports` is the different question the prose needs: does this driver
+     * argue *for* the direction that was actually published? For a long signal
+     * the two coincide; for a short they are opposites.
+     */
     const direction: ImpactDirection = c.shap >= 0 ? 'positive' : 'negative';
+    const supports = signalDirection === 'long' ? c.shap >= 0 : c.shap < 0;
     const contributionPercentage = clamp(c.share * 100, 0, 100);
 
     if (!definition) {
@@ -257,6 +314,8 @@ export function translateExplanation(
         semanticKey: 'unmapped_feature',
         contributionPercentage,
         fromMatrix: false,
+        supports,
+        implication: 'no registry definition is available for this input.',
       };
     }
 
@@ -266,10 +325,29 @@ export function translateExplanation(
     const matrixKey = `${definition.key}|${direction}|${state.state}`;
     const entry = INSTITUTIONAL_MAPPING_MATRIX[matrixKey];
 
-    // Stage 4: template hydration.
-    const narrative = entry
-      ? hydrateTemplate(entry.template, contributionPercentage, c.value)
-      : composeGenericNarrative(definition, state, c.value, contributionPercentage, direction, signalDirection);
+    /*
+     * Stage 4: template hydration — but only for a driver that supports the
+     * published direction.
+     *
+     * The matrix is keyed on the *SHAP* direction, and its templates state a
+     * stance outright: the `rsi_14|positive|STATE_OVERSOLD` row reads "…% of this
+     * bullish conviction is driven by an exhaustion of sell-side pressure". That
+     * is exactly right for the driver it was written for, and on a short signal
+     * it lands under a headline reading "bearish", asserting the opposite of the
+     * page it is printed on — and `composeCounterThesis` appends this very
+     * sentence after naming the driver as the strongest argument *against* the
+     * thesis.
+     *
+     * An opposing driver therefore takes the generic composition, whose
+     * "acts as a …% headwind" shape is signal-relative by construction. The
+     * institutional phrasing is not lost: the generic composer is built from the
+     * same `state.predicate` and `state.implication` the matrix row draws on, so
+     * the vocabulary is identical and only the framing changes.
+     */
+    const narrative =
+      entry && supports
+        ? hydrateTemplate(entry.template, contributionPercentage, c.value)
+        : composeGenericNarrative(definition, state, c.value, contributionPercentage, supports, signalDirection);
 
     return {
       featureKey: definition.key,
@@ -279,12 +357,15 @@ export function translateExplanation(
       shap: c.shap,
       share: c.share,
       direction,
+      /** Signal-relative: does this driver argue for the published direction? */
+      supports,
+      implication: state.implication,
       state: state.state,
       narrative,
       domain: domainForFeature(definition.key, definition.group),
       semanticKey: entry?.semanticKey ?? `${definition.key}_${state.state.toLowerCase()}`,
       contributionPercentage,
-      fromMatrix: Boolean(entry),
+      fromMatrix: Boolean(entry) && supports,
     };
   });
 }
@@ -337,9 +418,20 @@ export function composeCounterThesis(
   if (!strongest) {
     return 'No material driver currently opposes the model output, which is itself a concentration risk: the thesis rests on a single side of the feature set.';
   }
+  /*
+   * Names the driver once.
+   *
+   * This used to append the driver's whole narrative sentence, which restated
+   * the predicate, the label, the value and the percentage that the first half
+   * had just given — "…is short-horizon selling exhaustion (RSI (2) at 10.0),
+   * subtracting 33% of total attribution. Short-horizon selling exhaustion (RSI
+   * (2) at 10.0) acts as a 33% headwind, favouring a snap-back." Every noun in
+   * that second sentence is already in the first. Only the implication was new,
+   * so only the implication is carried.
+   */
   return `The strongest opposing driver is ${describeDriver(strongest)}, subtracting ${Math.round(
     strongest.contributionPercentage,
-  )}% of total attribution. ${capitalise(strongest.narrative)}`;
+  )}% of total attribution — ${strongest.implication}`;
 }
 
 function describeDriver(driver: TranslatedDriver): string {
@@ -347,10 +439,6 @@ function describeDriver(driver: TranslatedDriver): string {
   if (!definition) return driver.label;
   const state = resolveState(definition, driver.value);
   return `${state.predicate} (${definition.label} at ${formatFeatureValue(definition, driver.value)})`;
-}
-
-function capitalise(s: string): string {
-  return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /**

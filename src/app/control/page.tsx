@@ -140,11 +140,17 @@ export default function ControlPage() {
                 tone={data.engineReady ? 'sage' : 'burgundy'}
                 footnote={data.modelVersion}
               />
+              {/* The phase is only worth a footnote when it says more than the
+                  value already does — outside session hours both read "closed". */}
               <StatTile
                 label="Session"
                 value={data.marketOpen ? 'open' : 'closed'}
                 size="sm"
-                footnote={data.marketPhase.replace(/_/g, ' ')}
+                footnote={
+                  data.marketPhase.replace(/_/g, ' ') === (data.marketOpen ? 'open' : 'closed')
+                    ? 'New York regular session'
+                    : data.marketPhase.replace(/_/g, ' ')
+                }
               />
             </StatGrid>
 

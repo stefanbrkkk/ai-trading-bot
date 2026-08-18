@@ -1800,10 +1800,17 @@ export function resolveState(definition: FeatureDefinition, value: number): Feat
   return definition.states[definition.states.length - 1] as FeatureState;
 }
 
-/** Formats a raw value in its native unit for display. */
+/**
+ * Formats a raw value in its native unit for display.
+ *
+ * The typographic minus, like every other formatter the user's eyes land on.
+ * `toFixed` alone emits U+002D, which put "at -12.16%" inside a narrative
+ * sentence in the same table row as "−12.16%" in the VALUE column — the same
+ * number, twice, with two different glyphs.
+ */
 export function formatFeatureValue(definition: FeatureDefinition, value: number): string {
   if (!Number.isFinite(value)) return '—';
-  const n = value.toFixed(definition.precision);
+  const n = value.toFixed(definition.precision).replace('-', '−');
   switch (definition.unit) {
     case 'percent':
       return `${n}%`;

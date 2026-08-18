@@ -13,7 +13,7 @@
  * stored label drifting from the one the UI renders.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { getDb } from '@/lib/db/client';
 import type { SqlRow, SqlStatement, SqlValue } from '@/lib/db/driver';
@@ -351,6 +351,26 @@ export interface CreateSessionInput {
   userAgent?: string;
 }
 
+/**
+ * What actually goes in the `sessions.token` column.
+ *
+ * The cookie's own value used to, which made the ledger a bearer-credential
+ * store: a single read primitive over the database — a leaked `.data/` backup, a
+ * validator bypass on the query surface — was immediate impersonation of every
+ * signed-in user, no cracking required.
+ *
+ * The digest is enough for every operation the table supports. Lookups are by
+ * exact token, so a preimage-resistant hash of a 32-byte random value is a
+ * perfect substitute for it, and there is nothing to slow down: the token has
+ * full entropy already, so a KDF would only cost latency on every request.
+ *
+ * Applied at this boundary rather than at the call sites so a future caller
+ * cannot forget. The raw token never leaves the cookie.
+ */
+function sessionDigest(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
 export function createSession(input: CreateSessionInput): SessionRecord {
   const createdAt = input.createdAt ?? Date.now();
   stmt(
@@ -358,7 +378,7 @@ export function createSession(input: CreateSessionInput): SessionRecord {
        (token, user_id, created_at, expires_at, last_seen_at, revoked_at, ip_address, user_agent)
      VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
   ).run(
-    input.token,
+    sessionDigest(input.token),
     input.userId,
     createdAt,
     input.expiresAt,
@@ -379,7 +399,7 @@ export function createSession(input: CreateSessionInput): SessionRecord {
 }
 
 export function findSession(token: string): SessionRecord | null {
-  const row = stmt('SELECT * FROM sessions WHERE token = ?').get(token);
+  const row = stmt('SELECT * FROM sessions WHERE token = ?').get(sessionDigest(token));
   return row === undefined ? null : sessionFromRow(row);
 }
 
@@ -387,16 +407,19 @@ export function findSession(token: string): SessionRecord | null {
 export function findActiveSession(token: string, now = Date.now()): SessionRecord | null {
   const row = stmt(
     'SELECT * FROM sessions WHERE token = ? AND revoked_at IS NULL AND expires_at > ?',
-  ).get(token, now);
+  ).get(sessionDigest(token), now);
   return row === undefined ? null : sessionFromRow(row);
 }
 
 export function touchSession(token: string, at = Date.now()): void {
-  stmt('UPDATE sessions SET last_seen_at = ? WHERE token = ?').run(at, token);
+  stmt('UPDATE sessions SET last_seen_at = ? WHERE token = ?').run(at, sessionDigest(token));
 }
 
 export function revokeSession(token: string, at = Date.now()): void {
-  stmt('UPDATE sessions SET revoked_at = ? WHERE token = ? AND revoked_at IS NULL').run(at, token);
+  stmt('UPDATE sessions SET revoked_at = ? WHERE token = ? AND revoked_at IS NULL').run(
+    at,
+    sessionDigest(token),
+  );
 }
 
 export function revokeUserSessions(userId: string, at = Date.now()): number {
@@ -2279,7 +2302,7 @@ export function mintIntentToken(input: MintIntentTokenInput): IntentTokenRecord 
     input.token,
     input.userId,
     input.symbol,
-    input.sessionToken ?? null,
+    input.sessionToken == null ? null : sessionDigest(input.sessionToken),
     input.mintedAt,
     input.expiresAt,
     jsonText(input.click ?? null),
@@ -3160,7 +3183,7 @@ export function insertAuditEvent(input: AuditEventInput): AuditEventRecord {
     record.occurredAt,
     record.eventType,
     record.userId,
-    record.sessionToken,
+    record.sessionToken === null ? null : sessionDigest(record.sessionToken),
     record.ipAddress,
     record.userAgent,
     record.clickX,

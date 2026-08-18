@@ -141,7 +141,7 @@ function buildLayout(props: Required<Pick<SabrSmileProps, 'width' | 'height'>> &
 
   // Markers and quotes join the domain so a 25Δ strike outside the plotted curve
   // can never be scaled off-canvas — an invisible reference line is worse than
-  // none (the precedent `Sparkline` sets for its baseline).
+  // none.
   const strikes = [
     ...fitted.map((p) => p.strike),
     ...quoteList.map((q) => q.strike),

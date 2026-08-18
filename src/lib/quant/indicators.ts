@@ -95,7 +95,21 @@ export function wma(values: readonly number[], period: number): Series {
   return out;
 }
 
-/** Hull moving average: WMA(2·WMA(n/2) − WMA(n), √n). */
+/**
+ * Hull moving average: WMA(2·WMA(n/2) − WMA(n), √n).
+ *
+ * The outer WMA is fed a series whose first `period − 1` entries are NaN, and
+ * those have to be substituted with *something* for the convolution to run. Zero
+ * is the obvious choice and it is a wrong answer that looks like a right one: the
+ * first √n outputs after the warm-up average a real price together with those
+ * zeros, so on a series oscillating around 99 the values at indices 15, 16 and
+ * 17 of `hma(values, 16)` came out as 39.50, 69.11 and 88.89 — three
+ * plausible-looking numbers that are simply the true value scaled by how much of
+ * the window was padding.
+ *
+ * An output is therefore valid only once its whole `sqrtP` window clears the NaN
+ * prefix. Before that it is NaN, which every caller already handles.
+ */
 export function hma(values: readonly number[], period: number): Series {
   const half = Math.max(1, Math.floor(period / 2));
   const sqrtP = Math.max(1, Math.round(Math.sqrt(period)));
@@ -108,7 +122,12 @@ export function hma(values: readonly number[], period: number): Series {
   });
   const clean = raw.map((v) => (Number.isNaN(v) ? 0 : v));
   const smoothed = wma(clean, sqrtP);
-  return smoothed.map((v, i) => (Number.isNaN(raw[i] as number) ? NaN : v));
+  // Index of the last NaN in `raw`; every output whose window reaches at or
+  // before it is contaminated by the substituted zeros.
+  let lastNaN = -1;
+  for (let i = 0; i < raw.length; i += 1) if (Number.isNaN(raw[i] as number)) lastNaN = i;
+  const firstValid = lastNaN + sqrtP;
+  return smoothed.map((v, i) => (i < firstValid || Number.isNaN(raw[i] as number) ? NaN : v));
 }
 
 // ── Momentum / oscillators ──────────────────────────────────────────────────
@@ -273,7 +292,23 @@ export function cci(bars: readonly Bar[], period = 20): Series {
   return out;
 }
 
-/** Money Flow Index — a volume-weighted RSI. */
+/**
+ * Money Flow Index — a volume-weighted RSI.
+ *
+ * Two things it used to get wrong, both in the same degenerate direction as the
+ * bug `rsiFromAverages` documents at length just above.
+ *
+ * An unchanged typical price is *neither* inflow nor outflow. `tp[i] > tp[i-1]`
+ * books every flat period as negative flow, so thirty identical bars with real
+ * volume produced an MFI of 0 — maximally oversold — for a name that had not
+ * moved. Unchanged periods are now excluded from both sides, as the standard
+ * definition requires.
+ *
+ * And zero negative flow is only "maximally overbought" if there was positive
+ * flow to be one-sided about. Thirty flat bars with zero volume have neither,
+ * and returned 100. With no flow in either direction there is no imbalance to
+ * report, so the answer is the neutral 50 that `rsi` gives on the same closes.
+ */
 export function mfi(bars: readonly Bar[], period = 14): Series {
   const tp = typicalPrices(bars);
   const out = nanArray(bars.length);
@@ -281,14 +316,16 @@ export function mfi(bars: readonly Bar[], period = 14): Series {
   const neg: number[] = [0];
   for (let i = 1; i < bars.length; i += 1) {
     const flow = (tp[i] as number) * (bars[i] as Bar).volume;
-    const up = (tp[i] as number) > (tp[i - 1] as number);
-    pos.push(up ? flow : 0);
-    neg.push(up ? 0 : flow);
+    const change = (tp[i] as number) - (tp[i - 1] as number);
+    pos.push(change > 0 ? flow : 0);
+    neg.push(change < 0 ? flow : 0);
   }
   for (let i = period; i < bars.length; i += 1) {
     const p = sum(pos.slice(i - period + 1, i + 1));
     const n = sum(neg.slice(i - period + 1, i + 1));
-    out[i] = n < EPS ? 100 : 100 - 100 / (1 + p / n);
+    if (p < EPS && n < EPS) out[i] = 50;
+    else if (n < EPS) out[i] = 100;
+    else out[i] = 100 - 100 / (1 + p / n);
   }
   return out;
 }

@@ -53,7 +53,7 @@ subsystems consistent.
 - `autograd`, `nn` — the autodiff engine and `LstmAgent / BiLstmAgent / TftAgent`.
 
 ### `@/lib/market/*`
-- `calendar` — `MINUTE, HOUR, DAY, SESSION_OPEN_MINUTES, SESSION_LENGTH_MINUTES, toNewYork, fromNewYork, isoDate, isTradingDay, sessionOpen, sessionClose, sessionMinutes, isMarketOpen, minutesSinceOpen, nextSessionOpen, previousTradingDay, tradingDaysBetween, tradingDayCount, formatNyTime, sessionPhase`.
+- `calendar` — `MINUTE, HOUR, DAY, SESSION_OPEN_MINUTES, SESSION_LENGTH_MINUTES, toNewYork, fromNewYork, isoDate, isTradingDay, sessionOpen, sessionClose, sessionMinutes, isMarketOpen, minutesSinceOpen, nextSessionOpen, previousTradingDay, tradingDaysBetween, tradingDayCount, lastCompletedSessionClose, sessionPhase`.
 - `universe` — `UNIVERSE, UniverseSpec, BENCHMARK_SYMBOL ('SPY'), getSpec, requireSpec, symbolMeta, ALL_SYMBOLS, TRADABLE_SYMBOLS, SECTORS, symbolsInSector`.
 - `simulator` — `MarketSimulator, createDefaultSimulator, SimRegime, DailySeries, strikeIncrement`.
 

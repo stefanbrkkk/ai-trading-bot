@@ -89,6 +89,18 @@ const weightsSchema = z.object({
   shapes: z.array(z.tuple([z.number(), z.number()])),
 });
 
+/**
+ * One equal-width bin of the reliability curve. Kept structurally identical to
+ * the chart's `CalibrationBin` so the model card hands the panel its props
+ * rather than a shape the page has to translate on the way through.
+ */
+const reliabilityBinSchema = z.object({
+  bin: z.number(),
+  meanPredicted: z.number(),
+  observedFrequency: z.number(),
+  count: z.number(),
+});
+
 export const modelBundleSchema = z.object({
   version: z.string(),
   createdAt: z.number(),
@@ -120,11 +132,38 @@ export const modelBundleSchema = z.object({
     discrimination: z
       .object({ lstm: z.number(), bilstm: z.number(), tft: z.number() })
       .default({ lstm: 0, bilstm: 0, tft: 0 }),
+    /*
+     * The reliability curve over the held-out split, and the count-weighted
+     * error across its bins.
+     *
+     * Defaulted for the same reason as `discrimination` above: a bundle
+     * serialised before the calibration panel existed carries neither field, and
+     * it has to keep loading. An existing `.data/models/ensemble.json` therefore
+     * parses to an empty curve, which the panel renders as its own empty state
+     * until the model is next trained — rather than failing validation and
+     * taking the whole deployment down to a setup screen over a chart.
+     *
+     * `ece` defaults to null and not to 0 because 0 is the score of a perfectly
+     * calibrated model: an unmeasured bundle must not be able to claim it.
+     */
+    reliability: z.array(reliabilityBinSchema).default([]),
+    ece: z.number().nullable().default(null),
     elapsedMs: z.number(),
   }),
 });
 
 export type SerialisedModelBundle = z.infer<typeof modelBundleSchema>;
+
+/** One equal-width probability bin of the reliability curve. */
+export interface ReliabilityBin {
+  /** Index into the equal-width partition of [0, 1]. */
+  bin: number;
+  /** Mean predicted probability of the observations that fell in the bin. */
+  meanPredicted: number;
+  /** Fraction of those observations whose label was positive. */
+  observedFrequency: number;
+  count: number;
+}
 
 export interface TrainingMetrics {
   samples: number;
@@ -141,6 +180,10 @@ export interface TrainingMetrics {
   tftValidLoss: number | null;
   /** Std-dev of each agent's predicted probability over the validation split. */
   discrimination: { lstm: number; bilstm: number; tft: number };
+  /** Reliability bins over the validation split. Empty bins are not reported. */
+  reliability: ReliabilityBin[];
+  /** Expected calibration error over those bins; null when it was not measured. */
+  ece: number | null;
   elapsedMs: number;
 }
 
@@ -508,6 +551,22 @@ export function trainModelBundle(dataset: TrainingDataset, options: TrainOptions
   const auc = validX.length > 0 ? rocAuc(validProbs, validY) : rocAuc(trainProbs, trainY);
   const brier = validX.length > 0 ? brierScore(validProbs, validY) : brierScore(trainProbs, trainY);
 
+  /*
+   * Reliability of the same held-out predictions the AUC and the Brier score are
+   * read from. The calibration panel is a projection of these bins; nothing
+   * re-scores the model to draw it.
+   *
+   * Empty bins are dropped rather than published as zero. A bin nothing landed
+   * in carries no observation, and reporting an observed frequency of 0 for it
+   * would put a point on the axis asserting the model was wrong there.
+   *
+   * Unlike the AUC and the Brier score there is no fall back to the training
+   * split when nothing is held out: the panel states the curve is out-of-sample,
+   * so a curve that is not out-of-sample must not exist.
+   */
+  const reliability = validX.length > 0 ? reliabilityCurve(validProbs, validY).filter((b) => b.count > 0) : [];
+  const ece = validX.length > 0 ? expectedCalibrationError(validProbs, validY) : null;
+
   const training: TrainingMetrics = {
     samples: trainX.length,
     validationSamples: validX.length,
@@ -522,6 +581,8 @@ export function trainModelBundle(dataset: TrainingDataset, options: TrainOptions
     bilstmValidLoss: bilstmReport.bestValidLoss,
     tftValidLoss: tftReport.bestValidLoss,
     discrimination,
+    reliability,
+    ece,
     elapsedMs: Date.now() - started,
   };
 
@@ -590,7 +651,7 @@ export function reliabilityCurve(
   probabilities: readonly number[],
   labels: readonly number[],
   bins = 10,
-): { bin: number; meanPredicted: number; observedFrequency: number; count: number }[] {
+): ReliabilityBin[] {
   const buckets = Array.from({ length: bins }, () => ({ sumP: 0, sumY: 0, count: 0 }));
   for (let i = 0; i < probabilities.length; i += 1) {
     const p = probabilities[i] as number;

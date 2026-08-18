@@ -23,7 +23,7 @@
 import { AsyncSlot, PageHeader, PageShell } from '@/components/PageState';
 import { Badge, DataRow, Divider, Notice, Panel, PanelHeader, TableShell, Td, Th } from '@/components/ui/primitives';
 import { useApi, type MeResponse } from '@/lib/ui/api';
-import { integer, nyDateTime } from '@/lib/ui/format';
+import { duration, integer, nyDateTime } from '@/lib/ui/format';
 
 interface DisclosureBundle {
   tosVersion: string;
@@ -251,7 +251,7 @@ export default function CompliancePage() {
                           <span className="font-mono text-2xs text-parchment-faint">{entry.tosVersion}</span>
                         </Td>
                         <Td align="right" numeric>
-                          {(entry.scrollDurationMs / 1000).toFixed(1)}s
+                          {duration(entry.scrollDurationMs)}
                         </Td>
                         <Td align="right" numeric>
                           {entry.clickX}, {entry.clickY}

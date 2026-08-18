@@ -23,8 +23,9 @@ export const GET = handler(async () => {
       'No trained ensemble is present in this deployment.',
     );
   }
+  const card = model.card();
   return ok({
-    card: model.card(),
+    card,
     featureCount: MODEL_FEATURE_KEYS.length,
     agentFeatureKeys: AGENT_FEATURE_KEYS,
     featureGroups: FEATURE_DEFINITIONS.map((f) => ({
@@ -44,6 +45,23 @@ export const GET = handler(async () => {
       macroVolAmplification: MACRO_VOL_AMPLIFICATION,
       aggregateNoiseFloor: AGGREGATE_NOISE_FLOOR,
       kellyFraction: KELLY_FRACTION,
+    },
+    /*
+     * The reliability curve, lifted out of `card.training` into the exact shape
+     * the calibration panel takes as props. It also travels inside the card,
+     * where it belongs as a training metric, but the page should not have to
+     * know which corner of the card a chart's data lives in.
+     *
+     * `curve` is empty for any bundle trained before the curve was recorded, and
+     * `ece` is null on the same bundles. Both are published as measured: the
+     * panel renders its own empty state instead of the platform inventing a
+     * calibration it has not measured.
+     */
+    calibration: {
+      curve: card.training.reliability,
+      brier: card.training.brier,
+      ece: card.training.ece,
+      validationSamples: card.training.validationSamples,
     },
   });
 });

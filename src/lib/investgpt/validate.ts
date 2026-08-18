@@ -210,6 +210,20 @@ function codeTokens(tokens: readonly Token[]): Token[] {
 }
 
 /**
+ * Keywords that end a FROM clause's comma-separated relation list.
+ *
+ * Anything else in that position is a relation or its alias. Kept as its own set
+ * rather than reusing `SQL_KEYWORDS`, because that set includes words like
+ * `DISTINCT` and `CASE` that cannot appear here at all, and a name is only safe to
+ * stop on when stopping is definitely correct.
+ */
+const RELATION_LIST_END: ReadonlySet<string> = new Set([
+  'WHERE', 'GROUP', 'ORDER', 'HAVING', 'LIMIT', 'OFFSET', 'WINDOW',
+  'UNION', 'INTERSECT', 'EXCEPT', 'ON', 'USING',
+  'JOIN', 'LEFT', 'RIGHT', 'INNER', 'OUTER', 'FULL', 'CROSS', 'NATURAL',
+]);
+
+/**
  * Relation names.
  *
  * Extracted positionally — the identifier following FROM or a JOIN — rather than
@@ -222,10 +236,25 @@ function codeTokens(tokens: readonly Token[]): Token[] {
  * handling. A CTE name is collected separately and excluded from the allowlist
  * check, because it refers to a query defined in the same statement rather than to
  * a stored relation.
+ *
+ * The FROM clause is a comma-separated *list*, and reading only the token after
+ * FROM saw only its first element. That is the whole security boundary, so
+ * everything past the first comma was joined without ever being checked:
+ *
+ *     SELECT v.symbol, u.email, u.password_hash
+ *     FROM v_equity_snapshot v, users u          -- `users` never reached the allowlist
+ *
+ * The list is now walked to its end — each element, its optional `schema.` prefix
+ * and its optional alias, then a comma to continue or a clause keyword to stop.
  */
-function extractRelations(tokens: readonly Token[]): { relations: string[]; cteNames: Set<string> } {
+function extractRelations(tokens: readonly Token[]): {
+  relations: string[];
+  cteNames: Set<string>;
+  aliases: Set<string>;
+} {
   const relations: string[] = [];
   const cteNames = new Set<string>();
+  const aliases = new Set<string>();
 
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i] as Token;
@@ -264,23 +293,42 @@ function extractRelations(tokens: readonly Token[]): { relations: string[]; cteN
     const isJoin = token.kind === 'word' && token.value === 'JOIN';
     if (!isFrom && !isJoin) continue;
 
-    const next = tokens[i + 1] as Token | undefined;
-    if (next === undefined) continue;
-    if (next.raw === '(') continue; // subquery — its own FROM is scanned separately
+    let cursor = i + 1;
+    for (;;) {
+      const next = tokens[cursor] as Token | undefined;
+      if (next === undefined) break;
+      if (next.raw === '(') break; // subquery — its own FROM is scanned separately
+      if (next.kind !== 'word' && next.kind !== 'identifier') break;
+      // A bare keyword here is the end of the list, not a relation named WHERE.
+      if (next.kind === 'word' && RELATION_LIST_END.has(next.value)) break;
 
-    if (next.kind === 'word' || next.kind === 'identifier') {
       // Possible schema qualification: name . name
-      const dot = tokens[i + 2] as Token | undefined;
-      const qualified = tokens[i + 3] as Token | undefined;
+      const dot = tokens[cursor + 1] as Token | undefined;
+      const qualified = tokens[cursor + 2] as Token | undefined;
       if (dot?.raw === '.' && qualified !== undefined && (qualified.kind === 'word' || qualified.kind === 'identifier')) {
         relations.push(`${next.raw.toLowerCase()}.${qualified.raw.toLowerCase()}`);
+        cursor += 3;
       } else {
         relations.push(next.kind === 'identifier' ? next.value.toLowerCase() : next.raw.toLowerCase());
+        cursor += 1;
       }
+
+      // Step over `AS alias` or a bare alias, then a comma continues the list.
+      let k = cursor;
+      const maybeAs = tokens[k] as Token | undefined;
+      if (maybeAs?.kind === 'word' && maybeAs.value === 'AS') k += 1;
+      const alias = tokens[k] as Token | undefined;
+      const aliasIsKeyword = alias?.kind === 'word' && RELATION_LIST_END.has(alias.value);
+      if (alias !== undefined && (alias.kind === 'word' || alias.kind === 'identifier') && !aliasIsKeyword) {
+        aliases.add((alias.kind === 'identifier' ? alias.value : alias.raw).toLowerCase());
+        k += 1;
+      }
+      if ((tokens[k] as Token | undefined)?.raw !== ',') break;
+      cursor = k + 1;
     }
   }
 
-  return { relations: [...new Set(relations)], cteNames };
+  return { relations: [...new Set(relations)], cteNames, aliases };
 }
 
 /**
@@ -413,7 +461,7 @@ export function validateSql(sql: string, options: ValidateOptions = {}): Validat
   }
 
   // ── Layer 3: recursive allowlisting ──────────────────────────────────────
-  const { relations, cteNames } = extractRelations(code);
+  const { relations, cteNames, aliases } = extractRelations(code);
   const allowed = options.allowedTables === undefined ? ALLOWED_TABLES : new Set(options.allowedTables.map((name) => name.toLowerCase()));
 
   if (relations.length === 0) {
@@ -443,13 +491,29 @@ export function validateSql(sql: string, options: ValidateOptions = {}): Validat
     }
   }
 
-  // Qualified columns are checked against the relation they name; an alias is not
-  // resolvable without full name resolution, so an unknown qualifier is reported
-  // as a warning rather than an error to avoid rejecting valid aliased SQL.
+  /*
+   * Qualified columns are checked against the relation they name.
+   *
+   * A qualifier that names no known relation used to be skipped outright, on the
+   * grounds that an alias is not resolvable without full name resolution. It is
+   * resolvable: the FROM-list walk above already steps over every alias to find
+   * the next comma, so it can simply record them. Anything that is neither a
+   * catalogued table, a CTE, nor an alias declared in this statement is a
+   * reference to something that is not in scope, and saying so is the point.
+   */
   const { columns, qualified } = extractColumns(code);
   for (const reference of qualified) {
     const known = TABLE_COLUMNS.get(reference.table);
-    if (known === undefined) continue;
+    if (known === undefined) {
+      if (!cteNames.has(reference.table) && !aliases.has(reference.table)) {
+        push(
+          'error',
+          'UNKNOWN_QUALIFIER',
+          `"${reference.table}" is not a relation, a CTE or an alias declared in this query.`,
+        );
+      }
+      continue;
+    }
     if (!known.has(reference.column)) {
       push(
         'error',

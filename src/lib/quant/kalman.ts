@@ -353,7 +353,22 @@ export function dynamicHedgeRatio(
     const step = filter.step(y[i] as number);
     const alpha = step.state[0] as number;
     const beta = step.state[1] as number;
-    const spread = (y[i] as number) - alpha - beta * (x[i] as number);
+    /*
+     * The spread is the *a priori* residual, and it has to be.
+     *
+     * This was `y − α_post − β_post·x`, computed from a state that had already
+     * absorbed `y[i]`, while `spreadSigma` is √S — the standard deviation of the
+     * a priori innovation. Dividing one by the other pairs two different
+     * quantities, and the mismatch grows with the filter's gain: at
+     * `processNoise = 1e-2` the posterior residual collapses to zero by
+     * construction, so a five-unit dislocation on a 300-point cointegrated pair
+     * reported z = 0.0000 — "at fair value" for the largest gap in the series,
+     * on the statistic the OU reversion strategy trades.
+     *
+     * `step.innovation` is the residual `S` is the variance of. It was already
+     * being computed and thrown away.
+     */
+    const spread = (step.innovation as Vector)[0] as number;
     const sigma = Math.sqrt(Math.max((step.innovationCovariance[0] as Vector)[0] as number, EPS));
     out.push({ alpha, beta, spread, spreadSigma: sigma, z: sigma < EPS ? 0 : spread / sigma });
   }

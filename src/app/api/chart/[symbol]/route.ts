@@ -3,7 +3,7 @@
  *
  * Separate from `/api/signals/[symbol]` because the two have different shapes and
  * different costs. A signal payload is small and read on every page; a chart
- * payload is hundreds of bars plus three overlay series, and the terminal fetches
+ * payload is 180 bars plus five overlay series, and the terminal fetches
  * it once per symbol change. Splitting them keeps the common path light.
  *
  * The overlays are computed by the engine, not the client. The Kalman innovation

@@ -37,7 +37,16 @@ import {
   signTone,
 } from '@/components/ui/primitives';
 import { useApi, type MeResponse } from '@/lib/ui/api';
-import { integer, money, nyDateTime, price, signedFractionAsPercent } from '@/lib/ui/format';
+import {
+  fractionAsPercent,
+  integer,
+  money,
+  nyDateTime,
+  price,
+  probability,
+  ratio,
+  signedFractionAsPercent,
+} from '@/lib/ui/format';
 import type { OrderStatus } from '@/lib/domain/types';
 
 interface Position {
@@ -117,6 +126,183 @@ const STATUS_TONE: Record<string, 'sage' | 'burgundy' | 'gold' | 'neutral' | 'gh
   cancelled: 'ghost',
   expired: 'ghost',
 };
+
+interface TailPair {
+  a: string;
+  b: string;
+  family: string;
+  tau: number;
+  lowerTail: number;
+  upperTail: number;
+}
+
+interface TailRiskResponse {
+  available: boolean;
+  reason: string | null;
+  symbols: string[];
+  holdings: number;
+  sessions?: number;
+  quantile?: number;
+  draws?: number;
+  jointTailProbability?: number;
+  independenceBaseline?: number;
+  concentrationMultiple?: number;
+  averageLowerTailDependence?: number;
+  averageUpperTailDependence?: number;
+  logLikelihood?: number;
+  aic?: number;
+  pairs?: TailPair[];
+  notice?: string;
+}
+
+/** Pair-copula families, spelled the way the literature does. */
+const COPULA_LABELS: Record<string, string> = {
+  independence: 'Independence',
+  gaussian: 'Gaussian',
+  student: 'Student-t',
+  clayton: 'Clayton',
+  gumbel: 'Gumbel',
+  frank: 'Frank',
+};
+
+/**
+ * What each family says about the tails, in one clause.
+ *
+ * A family name on its own is jargon. The reason a reader cares which one was
+ * selected is that the families disagree about exactly the thing a correlation
+ * cannot express — whether the pair clusters in the left tail, the right, both
+ * or neither — so the selection is stated as that, not as a label.
+ */
+const COPULA_MEANING: Record<string, string> = {
+  independence: 'no dependence beyond chance',
+  gaussian: 'dependent in the middle, independent in both tails',
+  student: 'clusters in both tails — crashes and rallies together',
+  clayton: 'clusters in the lower tail — falls together, rises apart',
+  gumbel: 'clusters in the upper tail — rises together, falls apart',
+  frank: 'symmetric dependence, no tail clustering',
+};
+
+/**
+ * Joint downside risk across the open book.
+ *
+ * Every other risk figure on this platform is marginal — one symbol's
+ * volatility, one symbol's drawdown — and a portfolio does not fail one symbol
+ * at a time. This is the only panel that answers "what happens if they all go
+ * at once", and it answers it with a C-vine copula rather than a correlation
+ * matrix, because linear correlation is a single number for the whole
+ * distribution and equities are far more dependent in the left tail than it
+ * implies.
+ */
+function TailRiskPanel({ account }: { account: 'paper' | 'live' }) {
+  const tail = useApi<TailRiskResponse>(`/risk/tail?account=${account}`, { pollMs: 60_000 });
+
+  if (tail.loading || tail.data === null) return null;
+  const data = tail.data;
+
+  if (!data.available) {
+    return (
+      <Panel className="mb-5">
+        <PanelHeader
+          eyebrow="Joint downside"
+          title="Co-movement"
+          detail="How the holdings behave when they fall together, rather than one at a time."
+        />
+        <p className="mt-3 text-[0.8125rem] leading-relaxed text-parchment-faint">{data.reason}</p>
+      </Panel>
+    );
+  }
+
+  const multiple = data.concentrationMultiple ?? 0;
+  const quantilePct = fractionAsPercent(data.quantile ?? 0.05, 0);
+
+  return (
+    <Panel className="mb-5">
+      <PanelHeader
+        eyebrow="Joint downside"
+        title="Everything falling at once"
+        detail={`A C-vine copula fitted to ${integer(data.sessions ?? 0)} sessions of log returns across ${integer(
+          data.holdings,
+        )} holdings. It separates each position's own return distribution from the dependence between them, so the number below is co-movement alone — not volatility wearing a different name.`}
+      />
+
+      <StatGrid columns={3} className="mt-4">
+        <StatTile
+          label="Concentration multiple"
+          value={`${ratio(multiple, multiple >= 100 ? 0 : 1)}×`}
+          tone={multiple >= 100 ? 'burgundy' : multiple >= 20 ? 'gold' : 'sage'}
+          footnote="Versus the same book with no dependence"
+        />
+        <StatTile
+          label={`P(all below own ${quantilePct})`}
+          value={probability(data.jointTailProbability ?? 0)}
+          footnote={`${integer(data.draws ?? 0)} seeded draws on the fitted vine`}
+        />
+        <StatTile
+          label="Lower-tail dependence"
+          value={ratio(data.averageLowerTailDependence ?? 0, 3)}
+          footnote="Mean λ‾ across the first-tree edges"
+        />
+      </StatGrid>
+
+      <Divider className="my-4" />
+
+      <p className="text-[0.75rem] leading-relaxed text-parchment-dim">
+        Independence would put that joint probability at{' '}
+        <span className="tabular text-parchment">{probability(data.independenceBaseline ?? 0)}</span>. The fitted
+        dependence makes it <span className="tabular text-gold">{ratio(multiple, multiple >= 100 ? 0 : 1)}×</span>{' '}
+        likelier. That gap is the cost of holding names that move together, and it is invisible to a correlation
+        matrix — correlation is one number for the whole distribution, and these pairs are more dependent in the
+        left tail than in the middle.
+      </p>
+
+      {data.pairs && data.pairs.length > 0 ? (
+        <>
+          <p className="eyebrow mt-5 mb-2">Selected pair copulas</p>
+          <TableShell minWidth={520}>
+            <thead>
+              <tr>
+                <Th>Pair</Th>
+                <Th>Family</Th>
+                <Th align="right">τ</Th>
+                <Th align="right">λ‾</Th>
+                <Th>What it means</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.pairs.map((pair) => (
+                <tr key={`${pair.a}-${pair.b}`}>
+                  <Td>
+                    <span className="font-mono text-parchment">
+                      {pair.a} ~ {pair.b}
+                    </span>
+                  </Td>
+                  <Td>{COPULA_LABELS[pair.family] ?? pair.family}</Td>
+                  <Td align="right" numeric>
+                    {ratio(pair.tau, 2)}
+                  </Td>
+                  <Td align="right" numeric className={pair.lowerTail > 0.2 ? 'text-burgundy-bright' : undefined}>
+                    {ratio(pair.lowerTail, 2)}
+                  </Td>
+                  <Td>
+                    <span className="text-parchment-dim">{COPULA_MEANING[pair.family] ?? '—'}</span>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableShell>
+          <p className="mt-3 text-[0.75rem] leading-relaxed text-parchment-faint">
+            Each family was selected by AIC against the pair&rsquo;s own pseudo-observations, not assumed. Fit
+            log-likelihood {ratio(data.logLikelihood ?? 0, 1)}, AIC {ratio(data.aic ?? 0, 1)}.
+          </p>
+        </>
+      ) : null}
+
+      <Notice tone="legal" className="mt-4">
+        {data.notice}
+      </Notice>
+    </Panel>
+  );
+}
 
 export default function PortfolioPage() {
   const me = useApi<MeResponse>('/auth/me');
@@ -320,6 +506,9 @@ export default function PortfolioPage() {
                   <div className="p-5" />
                 )}
               </Panel>
+
+              {/* ── Joint downside ────────────────────────────────────── */}
+              <TailRiskPanel account={data.account.account === 'live' ? 'live' : 'paper'} />
 
               <Panel className="mb-5">
                 <PanelHeader eyebrow="Broker" title="Route in force" />

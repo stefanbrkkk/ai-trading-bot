@@ -37,7 +37,7 @@ import {
   Th,
 } from '@/components/ui/primitives';
 import { ApiRequestError, request, useApi } from '@/lib/ui/api';
-import { duration, integer, percent } from '@/lib/ui/format';
+import { duration, integer, percent, ratio } from '@/lib/ui/format';
 
 interface SqlValidationIssue {
   severity: 'error' | 'warning';
@@ -286,7 +286,7 @@ export default function InvestGptPage() {
                       {result.pruning.matches.slice(0, 8).map((match) => (
                         <li key={match.key} className="text-[0.75rem] text-parchment-dim" title={match.reason}>
                           <span className="font-mono text-parchment">{match.key}</span>{' '}
-                          <span className="text-parchment-ghost">{match.score.toFixed(2)}</span>
+                          <span className="text-parchment-ghost">{ratio(match.score, 2)}</span>
                         </li>
                       ))}
                     </ul>

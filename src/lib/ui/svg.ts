@@ -12,6 +12,8 @@
  * diverge from the spec.
  */
 
+import { OU_ENTRY_Z, OU_EXIT_Z } from '@/lib/domain/thresholds';
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Mandated geometry
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,9 +137,20 @@ export const BAR_GROW_RIGHT = { transformBox: 'fill-box', transformOrigin: 'righ
  */
 export const MIN_ANIMATED_BAR_WIDTH = 0.5;
 
-/** Z-oscillator reference lines: entry at ±2.0σ, exit band at ±0.5σ. */
-export const Z_ENTRY_THRESHOLD = 2.0;
-export const Z_EXIT_THRESHOLD = 0.5;
+/**
+ * Z-oscillator reference lines, taken from the rule they draw.
+ *
+ * These are the *same numbers* the OU reversion strategy fires on, not numbers
+ * that happen to match it. They used to be independent literals — 2.0 and 0.5
+ * declared here in a UI module, and again as `ouEntryZ`/`ouExitZ` in the engine —
+ * while `engine/service.ts` documented the relationship as a guarantee: "the
+ * oscillator the terminal draws and the threshold the strategy fires on are the
+ * same numbers". They were the same *value*, with nothing linking them, so
+ * retuning the strategy would silently leave the drawn band behind and no test
+ * would notice. Importing makes the guarantee structural.
+ */
+export const Z_ENTRY_THRESHOLD = OU_ENTRY_Z;
+export const Z_EXIT_THRESHOLD = OU_EXIT_Z;
 export const Z_AXIS_LIMIT = 4;
 
 /** Depth ladder: 24px per level, opacity decaying 0.08 per level. */

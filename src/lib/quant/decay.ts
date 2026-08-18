@@ -206,8 +206,21 @@ export function aggregateAllStreams(
 
 /**
  * Composite alt-data score: evidence-weighted blend of the per-stream scores,
- * squashed to [−1, 1]. Streams with more live, higher-authority evidence pull
- * the composite harder — a decayed Reddit spike cannot outvote a fresh Form 4.
+ * squashed to [−1, 1].
+ *
+ * A stream's evidence is `Σ wᵢ` over its events, and each `wᵢ` already carries
+ * the stream's authority multiplier and its decay against age. So the blend is
+ * weighted by authority and by freshness — a *decayed* Reddit spike genuinely
+ * cannot outvote a fresh Form 4, which is what this comment used to claim.
+ *
+ * It is weighted by volume too, and that is worth stating rather than leaving to
+ * be discovered: the sum grows linearly with event count, so a stream can make
+ * up for low authority by being numerous. Two hundred fresh Reddit posts
+ * (authority 0.30) do outvote one fresh Form 4 (authority 1.00), 0.98 of the
+ * share against 0.02. That is the intended reading — two hundred independent
+ * observations are more evidence than one, whatever the per-observation quality
+ * — but it is not what "authority dominates" would mean, and the two were being
+ * conflated here.
  */
 export function compositeAltScore(streams: readonly AggregatedStream[]): {
   score: number;

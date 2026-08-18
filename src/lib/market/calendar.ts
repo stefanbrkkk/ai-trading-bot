@@ -210,11 +210,20 @@ export function tradingDayCount(start: number, end: number): number {
   return tradingDaysBetween(start, end).length;
 }
 
-/** Formats an instant as `HH:MM` New York time. */
-export function formatNyTime(utcMs: number): string {
-  const p = toNewYork(utcMs);
-  return `${String(Math.floor(p.minutes / 60)).padStart(2, '0')}:${String(p.minutes % 60).padStart(2, '0')}`;
-}
+/*
+ * There is deliberately no time *formatter* in this module.
+ *
+ * There was one — `formatNyTime` — and it rendered `HH:MM` from this module's
+ * hand-rolled DST rule, while `nyTime` in `@/lib/ui/format` renders the same
+ * instant through `Intl.DateTimeFormat` with `timeZone: 'America/New_York'`.
+ * Two independent answers to "what time is it in New York", agreeing only for as
+ * long as US law keeps matching the hardcoded second-Sunday-in-March rule, and
+ * nothing called this one.
+ *
+ * The hand-rolled offset stays, because this module's determinism requirement
+ * (see the header) needs it — but it stops at session arithmetic and does not
+ * leak into anything the user reads. Display goes through `@/lib/ui/format`.
+ */
 
 /**
  * Session phase, used by the UI header and by the intraday volatility profile.

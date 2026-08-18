@@ -141,13 +141,38 @@ export interface RequestContext {
 }
 
 /**
- * The IP and user agent, which are two of the six mandatory audit fields. Reads
- * the standard proxy headers in order of trustworthiness and falls back to a
- * marker rather than an empty string, so an audit row never looks like it simply
- * failed to record the field.
+ * Whether forwarding headers may be believed.
+ *
+ * They may not, by default. `X-Forwarded-For` and its cousins are written by the
+ * client and rewritten by each hop, so a deployment that trusts them without a
+ * proxy in front is letting the caller choose their own identity. That is not an
+ * abstract concern here: the value is both the rate-limiter's bucket key and the
+ * `ip_address` column in the audit ledger. Rotating `X-Real-IP: 1.2.3.<n>` gave
+ * every request of a credential-stuffing run its own fresh ten-per-minute
+ * budget, and let the attacker dictate what the compliance record said about
+ * them.
+ *
+ * Set `AURELIUS_TRUST_PROXY=1` only when the app genuinely sits behind a proxy
+ * that overwrites these headers (Vercel, Cloudflare, an ingress controller).
+ */
+const TRUST_PROXY_HEADERS = ['1', 'true', 'yes'].includes(
+  (process.env.AURELIUS_TRUST_PROXY ?? '').trim().toLowerCase(),
+);
+
+/**
+ * The IP and user agent, which are two of the six mandatory audit fields.
+ *
+ * Falls back to a marker rather than an empty string, so an audit row never looks
+ * like it simply failed to record the field.
  */
 export async function requestContext(): Promise<RequestContext> {
   const h = await headers();
+  if (!TRUST_PROXY_HEADERS) {
+    // Next.js does not expose the socket address to a route handler, so with no
+    // trusted proxy there is no attacker-independent address to record. Saying
+    // so is honest; recording a value the caller chose is not.
+    return { ipAddress: 'unattributed', userAgent: h.get('user-agent') ?? 'unavailable' };
+  }
   const forwarded = h.get('x-forwarded-for');
   const ip =
     h.get('cf-connecting-ip') ??
@@ -226,13 +251,29 @@ export async function signUp(input: SignUpInput): Promise<AuthResult> {
   if (findUserByEmail(email)) return { ok: false, error: 'An account already exists for that email address.' };
 
   const { hash, salt } = hashPassword(input.password);
-  const adminEmail = (process.env.AURELIUS_ADMIN_EMAIL ?? 'admin@aurelius.local').toLowerCase();
+  /*
+   * No admin bootstrap unless the operator asked for one, by name.
+   *
+   * This used to fall back to `admin@aurelius.local` — the same address printed
+   * in `.env.example` — and signup is open and unauthenticated. On a deployment
+   * running the documented empty `.env`, the first person to POST that address
+   * to /api/auth/signup was minted an administrator: the platform kill switch,
+   * every user's forensic telemetry, and the live-routing entitlement grant. It
+   * was a race the operator loses by default, because an attacker can register
+   * before the operator gets round to it.
+   *
+   * An unset variable now means "this deployment has no admin", which is the
+   * safe reading of silence. `AURELIUS_ADMIN_EMAIL` must be set deliberately,
+   * and it is matched exactly.
+   */
+  const configuredAdmin = process.env.AURELIUS_ADMIN_EMAIL?.trim().toLowerCase();
+  const isAdmin = configuredAdmin !== undefined && configuredAdmin.length > 0 && email === configuredAdmin;
   const now = Date.now();
 
   const user = upsertUser({
     email,
     displayName: input.displayName?.trim() || email.split('@')[0] || 'Trader',
-    role: email === adminEmail ? 'admin' : 'trader',
+    role: isAdmin ? 'admin' : 'trader',
     passwordHash: hash,
     passwordSalt: salt,
     liveTradingUnlocked: false,

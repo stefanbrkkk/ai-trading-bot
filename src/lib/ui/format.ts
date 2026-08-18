@@ -27,7 +27,15 @@ const INT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 
 export function money(value: number, options: { whole?: boolean } = {}): string {
   if (!Number.isFinite(value)) return '—';
-  return options.whole ? USD_WHOLE.format(value) : USD.format(value);
+  /*
+   * `Intl` emits U+002D HYPHEN-MINUS, and every other formatter in this module
+   * emits U+2212 MINUS SIGN. That meant negative currency was the one quantity in
+   * the product rendered with a different glyph — the backtest blotter showed
+   * "-$118.93" in a column beside "−1.90%", four pixels apart at 11px, and there
+   * was not a single "−$" anywhere in the application.
+   */
+  const formatted = options.whole ? USD_WHOLE.format(value) : USD.format(value);
+  return formatted.replace('-', '−');
 }
 
 export function price(value: number): string {
@@ -63,7 +71,16 @@ export function integer(value: number): string {
   return INT.format(Math.round(value));
 }
 
-/** Compact notation for volumes and market caps: 1.24B, 892M, 34.1K. */
+/**
+ * Compact notation for volumes and market caps: `1.24B`, `892.00M`, `34.1K`, `512`.
+ *
+ * `digits` governs the T/B/M bands only. Below a million the precision is fixed —
+ * one decimal for thousands, none at all for a raw count — because those bands
+ * are share volumes and order sizes, where "512.00 shares" is noise dressed as
+ * precision. The bands really do differ; the previous docstring implied they did
+ * not, and its own example (`892M`) was unreachable at the default of two
+ * decimals.
+ */
 export function compact(value: number, digits = 2): string {
   if (!Number.isFinite(value)) return '—';
   const abs = Math.abs(value);
@@ -101,14 +118,44 @@ export function ratio(value: number, digits = 3): string {
 }
 
 /**
+ * A probability, rendered so that a very small one is still readable.
+ *
+ * Joint-tail probabilities span six orders of magnitude — 3.4e-3 for a
+ * concentrated book, 6.3e-6 for the same book under independence — and neither a
+ * percentage nor a fixed number of decimals can show both. "0.000625%" is a
+ * string a reader counts zeros in; "6.25 × 10⁻⁶" is a number they can compare at
+ * a glance to the one beside it.
+ *
+ * Above a tenth of a percent the exponent is noise, so it reads as a plain
+ * percentage instead — one formatter, chosen by magnitude, so two probabilities
+ * in the same panel are never written in two different systems by accident.
+ */
+export function probability(value: number, digits = 2): string {
+  if (!Number.isFinite(value) || value < 0) return '—';
+  if (value === 0) return '0';
+  if (value >= 0.001) return fractionAsPercent(value, digits);
+  const exponent = Math.floor(Math.log10(value));
+  const mantissa = value / 10 ** exponent;
+  const superscripts: Record<string, string> = {
+    '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+    '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+  };
+  const digitsOfExponent = String(Math.abs(exponent))
+    .split('')
+    .map((d) => superscripts[d] ?? d)
+    .join('');
+  return `${fixed(mantissa, digits)} × 10⁻${digitsOfExponent}`;
+}
+
+/**
  * `toFixed` with the typographic minus, and without a signed zero.
  *
  * Two defects come from `toFixed` alone. It emits U+002D HYPHEN-MINUS while every
  * signed formatter above emits U+2212 MINUS SIGN, so "CAGR −1.90%" and
  * "Sortino -0.10" sat adjacent in the same 11px row with visibly different
  * glyphs. And it rounds −0.004 to "-0.00", which reads as a small negative number
- * when the value is a rounding artefact — the screener's ALT column showed
- * "−0.00" for three names at once.
+ * when the value is a rounding artefact — the screener's 5-day return column
+ * showed "−0.00" for three names at once.
  */
 export function fixed(value: number, digits: number): string {
   if (!Number.isFinite(value)) return '—';
@@ -126,7 +173,24 @@ export function duration(ms: number): string {
   return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
 }
 
-/** Half-life or decay window expressed in the largest sensible unit. */
+/**
+ * A half-life in trading sessions.
+ *
+ * `sessionHalfLife` and `halfLife` are two different quantities and were being
+ * formatted by one function. The Ornstein-Uhlenbeck fit reports ln2/θ in
+ * *sessions* — `engine/strategies.ts` prints the same field as "25.3 days" — and
+ * the symbol page passed it to the millisecond formatter, so a 25.7-session
+ * half-life was read as 25.7 ms and rendered "0 min" on every symbol in the
+ * universe, directly above a hint reading "The half-life above carries the
+ * information."
+ */
+export function sessionHalfLife(sessions: number): string {
+  if (!Number.isFinite(sessions)) return '∞';
+  if (sessions < 1) return `${(sessions * 6.5).toFixed(1)} h`;
+  return `${sessions.toFixed(1)} ${sessions < 2 ? 'session' : 'sessions'}`;
+}
+
+/** Half-life or decay window in milliseconds, in the largest sensible unit. */
 export function halfLife(ms: number): string {
   if (!Number.isFinite(ms)) return '∞';
   const minutes = ms / 60_000;

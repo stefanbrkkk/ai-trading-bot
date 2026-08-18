@@ -11,7 +11,9 @@
 import { z } from 'zod';
 import { ApiError, handler, ok, parseQuery, pendingSetup } from '@/lib/api/respond';
 import { getSignal } from '@/lib/engine/service';
+import { resolveMarketProvider } from '@/lib/market/provider';
 import { requireSpec } from '@/lib/market/universe';
+import { MLOFI_LEVELS } from '@/lib/quant/orderflow';
 import { shapWaterfall } from '@/lib/quant/shap';
 import { domainForFeature } from '@/lib/engine/narrative';
 import { featureDefinition } from '@/lib/engine/features';
@@ -39,6 +41,26 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
   }
 
   const { signal, features, router, strategies, explanation } = result;
+
+  /*
+   * The book the MLOFI vector was computed from.
+   *
+   * The pipeline consumes the depth sequence and publishes only what it derived
+   * from it, so the snapshot itself has to be read back here. It is read at
+   * `features.now` — the pipeline's own evaluation instant, which travels on the
+   * computed features and survives the engine's per-bucket cache — and the depth
+   * model every provider serves the book from is deterministic in that instant.
+   * So this is the same snapshot the PCA was fitted over, not a fresher one that
+   * would leave the published loadings describing a book nobody is looking at.
+   *
+   * A failed read degrades to no book rather than to a 500: the ladder is one
+   * panel of an attribution page, and the decomposition above does not depend on
+   * it.
+   */
+  const books = await resolveMarketProvider()
+    .orderBook(symbol, features.now, MLOFI_LEVELS)
+    .catch(() => []);
+  const book = books[books.length - 1] ?? null;
 
   // Group the drivers into the three mandated domain arrays.
   const byDomain: Record<'technical' | 'fundamental' | 'sentiment', typeof signal.drivers> = {
@@ -109,6 +131,16 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
      * top eight into a labelled remainder, so the bars still sum to f(x).
      */
     waterfall: shapWaterfall(explanation, 8),
+    /**
+     * How many features the explanation actually attributes.
+     *
+     * The page used to head this panel "All {n} attributed inputs" from the
+     * length of the translated driver list, which `translateExplanation` caps at
+     * twelve — while the waterfall beside it showed "73 other drivers". Sending
+     * the real total lets the page say "top 12 of 81" instead of calling twelve
+     * of eighty-one "all".
+     */
+    attributedInputs: explanation.values.length,
     agents: signal.agents,
     router: {
       action: router.action,
@@ -161,6 +193,24 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
         queueImbalance: features.artefacts.mlofi.queueImbalance,
         depthImbalance: features.artefacts.mlofi.depthImbalance,
       },
+      /*
+       * The depth snapshot behind that vector, trimmed to the M levels the
+       * ladder draws and to the two numbers it draws them from.
+       *
+       * Lean on purpose: the engine holds sixty snapshots of the book, and all
+       * sixty are needed to difference the order-flow increments, but exactly one
+       * is needed to show the reader the depth those increments came out of.
+       * Null when no book was received, which the ladder renders as its own
+       * empty state.
+       */
+      book:
+        book === null
+          ? null
+          : {
+              timestamp: book.timestamp,
+              bids: book.bids.slice(0, MLOFI_LEVELS).map((l) => ({ price: l.price, size: l.size })),
+              asks: book.asks.slice(0, MLOFI_LEVELS).map((l) => ({ price: l.price, size: l.size })),
+            },
       micro: features.artefacts.micro,
       sabr: features.artefacts.sabr,
       skew: features.artefacts.skew,

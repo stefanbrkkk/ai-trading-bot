@@ -10,8 +10,8 @@
  *
  * Deliberately fire-and-forget: `register` is awaited before the server accepts
  * traffic, so blocking here would move the seven seconds from the first request
- * to the boot itself, which is worse — it delays the fifteen routes that do not
- * need the engine at all. A request that lands mid-warm simply does what it did
+ * to the boot itself, which is worse — it delays the twenty-one routes that do
+ * not need the engine at all. A request that lands mid-warm simply does what it did
  * before and computes its own snapshot.
  *
  * Failure is silent by design. An unseeded deployment has no ensemble and the

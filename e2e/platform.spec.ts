@@ -144,7 +144,10 @@ async function preflightRoutableOrder(page: Page, quantity: number): Promise<num
   await page.locator('select').nth(1).selectOption('market');
   await page.fill('input[inputmode="numeric"]', String(quantity));
   await page.click('#preflight-button');
-  await expect(page.locator('body')).toContainText(/reference nbbo at/i, { timeout: 15_000 });
+  // The caption names the price the notional was actually computed against — not
+  // the NBBO, which is a different number whenever the order carries its own
+  // limit. Waiting on it is also the signal that the pre-flight round-tripped.
+  await expect(page.locator('body')).toContainText(/notional priced at/i, { timeout: 15_000 });
 
   const ask = await statTile(page, 'Ask');
   expect(ask, 'reference ask').toBeGreaterThan(0);

@@ -53,7 +53,17 @@ const AXIS_TEXT = 9;
 const PRICE_TEXT = 10;
 
 export interface DepthLadderProps {
-  book: OrderBookSnapshot;
+  /**
+   * The depth snapshot to draw.
+   *
+   * Nullable because the caller's is: a publisher that has received no book for
+   * this symbol has nothing to hand over, and the component already answers that
+   * with its own empty state rather than a blank frame. The body has always
+   * guarded with `book?.bids`, so this widens the declaration to what the
+   * implementation already does instead of forcing every caller to synthesise an
+   * empty book to satisfy the type.
+   */
+  book: OrderBookSnapshot | null;
   /** Depth levels M to draw. Defaults to the platform-wide MLOFI_LEVELS. */
   levels?: number;
   /** Target viewBox height. The 24px row pitch is never compressed to fit it. */
@@ -178,7 +188,7 @@ export function DepthLadder({ book, levels, height, mlofiLoadings, width: widthF
   const rowOpacity = (m: number): number => Math.round(Math.max(0.2, 1 - m * LADDER_OPACITY_DECAY) * 100) / 100;
 
   const bothSides = rawBids.length > 0 && rawAsks.length > 0;
-  const spread = bothSides ? spreadBps(book) : NaN;
+  const spread = bothSides && book ? spreadBps(book) : NaN;
   const animated = !reduceMotion;
 
   return (

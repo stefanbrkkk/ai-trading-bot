@@ -117,7 +117,7 @@ export function outer(a: Vector, b: Vector): Matrix {
 /**
  * Gauss–Jordan inverse with partial pivoting.
  * Throws on a singular matrix — callers that expect near-singular input should
- * use `pseudoInverse` or add Tikhonov ridge first.
+ * use `ridgeInverse` or add Tikhonov ridge first.
  */
 export function inverse(a: Matrix): Matrix {
   const n = a.length;

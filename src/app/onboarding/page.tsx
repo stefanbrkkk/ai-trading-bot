@@ -130,7 +130,7 @@ export default function OnboardingPage() {
       <PageHeader
         eyebrow="Required before any order"
         title="Terms, risk disclosures and privacy"
-        lede="Read the whole document. The accept control unlocks when the pane has been scrolled to its end, and the acceptance is recorded with the timestamps and click coordinates of your agreement."
+        lede="Read the whole document. Scrolling the pane to its end unlocks the checkbox below, and ticking it unlocks the accept control; the acceptance is recorded with the timestamps and click coordinates of your agreement."
       />
 
       {me.data?.user === null || me.data?.user === undefined ? (

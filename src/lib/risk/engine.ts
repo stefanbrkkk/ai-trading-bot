@@ -688,12 +688,12 @@ export function evaluateOrder(
     return finalise();
   }
 
-  const notionalUsd = orderNotionalUsd(intent, referencePrice);
   /*
-   * The ceiling is tested against the worst credible fill, not against the
-   * user's own price — see `ceilingReferencePrice`. `notionalUsd` remains the
-   * figure the ticket displays, so what the user is shown is still what they
-   * typed.
+   * Every ceiling — per order, per day — is tested against the worst credible
+   * fill rather than the user's own price. See `ceilingReferencePrice`.
+   *
+   * The ticket displays its own figure from `notionalReferencePrice`, and says
+   * which price that was, so nothing here changes what the user is shown.
    */
   const ceilingNotionalUsd = orderNotionalUsd(
     intent,
@@ -821,7 +821,20 @@ export function evaluateOrder(
   // rejected or previewed order never consumes a user's daily quota.
   if (context.commit !== false) {
     if (idempotencyKey !== null) context.idempotency?.record(idempotencyKey, context.now);
-    context.dailyNotional?.add(context.userId, context.now, notionalUsd);
+    /*
+     * Reserve the same figure the ceiling was tested against.
+     *
+     * The per-day check above projects `usedToday + ceilingNotionalUsd` — the
+     * worse of the stated price and the side of the book a marketable order
+     * would reach — and this line used to reserve `notionalUsd`, the stated
+     * price. Every approved order therefore consumed less quota than it had been
+     * measured against, and the gap compounds: fifty-four sell limits priced
+     * 6% through the bid recorded $498,584 of usage against the $500,000 ceiling
+     * while carrying $530,475 of credible exposure. Checking in one currency and
+     * charging in another is exactly the marketable-limit gap `ceilingReferencePrice`
+     * exists to close, reintroduced a day at a time.
+     */
+    context.dailyNotional?.add(context.userId, context.now, ceilingNotionalUsd);
   }
   return finalise();
 }

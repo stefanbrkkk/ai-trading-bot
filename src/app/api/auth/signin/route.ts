@@ -13,19 +13,33 @@ export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, bodySchema);
 
   /*
-   * Rate limited by client address before the credential is touched. Without it
-   * this endpoint served unlimited attempts, which makes an online guess against
-   * a weak password a matter of patience rather than difficulty.
+   * Rate limited before the credential is touched. Without it this endpoint
+   * served unlimited attempts, which makes an online guess against a weak
+   * password a matter of patience rather than difficulty.
+   *
+   * Keyed on the account first, and on the client address only when there is a
+   * trusted proxy to attest to it. Address alone was the whole control, and an
+   * address is whatever the caller's `X-Real-IP` header says it is: rotating it
+   * per request handed every attempt a fresh budget. The account key cannot be
+   * rotated — it is the thing being attacked — so credential stuffing against one
+   * login is throttled no matter where it comes from.
    */
   const ctx = await requestContext();
-  const verdict = hitRateLimit(`auth:signin:${ctx.ipAddress || 'unknown'}`, {
-    limit: CREDENTIAL_ATTEMPTS_PER_MINUTE,
-    windowMs: CREDENTIAL_WINDOW_MS,
-  });
-  if (!verdict.allowed) {
-    throw new ApiError('RATE_LIMITED', 'Too many attempts. Wait a minute and try again.', 429, {
-      retryAfterMs: Math.max(0, verdict.resetAt - Date.now()),
+  const attributable = ctx.ipAddress !== 'unattributed' && ctx.ipAddress !== 'unavailable';
+  const buckets = [
+    `auth:signin:acct:${body.email.trim().toLowerCase()}`,
+    ...(attributable ? [`auth:signin:ip:${ctx.ipAddress}`] : []),
+  ];
+  for (const bucket of buckets) {
+    const verdict = hitRateLimit(bucket, {
+      limit: CREDENTIAL_ATTEMPTS_PER_MINUTE,
+      windowMs: CREDENTIAL_WINDOW_MS,
     });
+    if (!verdict.allowed) {
+      throw new ApiError('RATE_LIMITED', 'Too many attempts. Wait a minute and try again.', 429, {
+        retryAfterMs: Math.max(0, verdict.resetAt - Date.now()),
+      });
+    }
   }
   const result = await signIn(body.email, body.password);
   // A failed sign-in returns 401 with a single generic message: distinguishing

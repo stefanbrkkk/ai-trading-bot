@@ -87,17 +87,24 @@ export function executeQuery(sql: string, options: ExecuteOptions = {}): Executi
       error: null,
     };
   } catch (error) {
-    // A driver error here is a genuine bug (the validator passed a statement
-    // SQLite rejected) or an un-migrated database. Both are reported to the caller
-    // rather than thrown, so the route can answer with the SQL and the reason
-    // instead of a 500 that hides which query failed.
+    /*
+     * A driver error here is a genuine bug (the validator passed a statement
+     * SQLite rejected) or an un-migrated database. Both are reported to the
+     * caller rather than thrown, so the route can answer with the SQL and a
+     * reason instead of a 500 that hides which query failed.
+     *
+     * The driver's own message is logged, not returned. This endpoint answers
+     * anonymous callers, and SQLite's errors name tables, columns and file paths
+     * — which is a free schema map for anyone probing the validator.
+     */
+    console.error('[investgpt] query execution failed', error);
     return {
       columns: [],
       rows: [],
       rowCount: 0,
       truncated: false,
       elapsedMs: Math.max(0, Date.now() - startedAt),
-      error: error instanceof Error ? error.message : String(error),
+      error: 'The query was rejected by the store. The statement is shown above; the reason is in the server log.',
     };
   }
 }
@@ -125,9 +132,12 @@ export function storeReady(): { ready: boolean; reason: string | null; symbols: 
     }
     return { ready: true, reason: null, symbols };
   } catch (error) {
+    // Same reasoning as above: the operator gets the driver's message, the
+    // anonymous caller gets the action they can take about it.
+    console.error('[investgpt] store probe failed', error);
     return {
       ready: false,
-      reason: `The store is not queryable: ${error instanceof Error ? error.message : String(error)}. Run \`npm run seed\` to create and populate it.`,
+      reason: 'The store is not queryable. Run `npm run seed` to create and populate it.',
       symbols: 0,
     };
   }

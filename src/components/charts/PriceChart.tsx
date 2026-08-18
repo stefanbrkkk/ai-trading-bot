@@ -39,6 +39,7 @@ import {
 } from '@/lib/ui/svg';
 import {
   BURGUNDY,
+  BURGUNDY_BRIGHT,
   CHAMPAGNE,
   GOLD,
   OBSIDIAN_EDGE,
@@ -46,6 +47,7 @@ import {
   PARCHMENT_DIM,
   PARCHMENT_FAINT,
   SAGE,
+  SAGE_BRIGHT,
   compact,
   nyDate,
   price,
@@ -118,6 +120,17 @@ interface VolumeBar {
   colour: string;
 }
 
+/**
+ * A published level: a dashed rule at a price, with its figure beside it.
+ *
+ * `colour` draws the rule and `textColour` draws the label, because the two have
+ * different contrast obligations. A 1px dashed line is a non-text graphic and
+ * clears WCAG at 3:1; a 9px price label is body text and needs 4.5:1. Painting
+ * both from one token put `INVALIDATION 148.83` on screen at 2.35:1 and the two
+ * target prices at 3.40:1 — the invalidation price, unreadable, on the chart the
+ * whole page is about. Every other chart here already draws text from the
+ * `_BRIGHT` tokens; this was the one that did not.
+ */
 interface LevelMark {
   /** Where the line is drawn — the price. */
   y: number;
@@ -125,6 +138,8 @@ interface LevelMark {
   labelY: number;
   label: string;
   colour: string;
+  /** Label fill. Brighter than `colour`: text needs 4.5:1, a rule needs 3:1. */
+  textColour: string;
   dash?: string;
 }
 
@@ -317,13 +332,13 @@ function computeLayout(props: PriceChartProps): Layout | null {
   let entryZone: Layout['entryZone'] = null;
   if (levels) {
     if (Number.isFinite(levels.invalidation)) {
-      levelMarks.push({ y: yPrice(levels.invalidation), labelY: yPrice(levels.invalidation), label: `INVALIDATION ${price(levels.invalidation)}`, colour: BURGUNDY, dash: '5 4' });
+      levelMarks.push({ y: yPrice(levels.invalidation), labelY: yPrice(levels.invalidation), label: `INVALIDATION ${price(levels.invalidation)}`, colour: BURGUNDY, textColour: BURGUNDY_BRIGHT, dash: '5 4' });
     }
     if (Number.isFinite(levels.target1)) {
-      levelMarks.push({ y: yPrice(levels.target1), labelY: yPrice(levels.target1), label: `T1 ${price(levels.target1)}`, colour: SAGE, dash: '5 4' });
+      levelMarks.push({ y: yPrice(levels.target1), labelY: yPrice(levels.target1), label: `T1 ${price(levels.target1)}`, colour: SAGE, textColour: SAGE_BRIGHT, dash: '5 4' });
     }
     if (Number.isFinite(levels.target2)) {
-      levelMarks.push({ y: yPrice(levels.target2), labelY: yPrice(levels.target2), label: `T2 ${price(levels.target2)}`, colour: SAGE, dash: '5 4' });
+      levelMarks.push({ y: yPrice(levels.target2), labelY: yPrice(levels.target2), label: `T2 ${price(levels.target2)}`, colour: SAGE, textColour: SAGE_BRIGHT, dash: '5 4' });
     }
     if (Number.isFinite(levels.entryZoneLow) && Number.isFinite(levels.entryZoneHigh)) {
       const a = yPrice(levels.entryZoneHigh);
@@ -335,6 +350,8 @@ function computeLayout(props: PriceChartProps): Layout | null {
         labelY: top,
         label: `ENTRY ${price(Math.min(levels.entryZoneLow, levels.entryZoneHigh))}–${price(Math.max(levels.entryZoneLow, levels.entryZoneHigh))}`,
         colour: GOLD,
+        // Gold already measures 8.9:1 on obsidian; it is the reference, not an exception.
+        textColour: GOLD,
       });
     }
   }
@@ -683,7 +700,7 @@ export function PriceChart(props: PriceChartProps) {
                   y={mark.labelY - 3}
                   textAnchor="end"
                   fontSize={LEVEL_TEXT}
-                  fill={mark.colour}
+                  fill={mark.textColour}
                   className="tabular"
                 >
                   {mark.label}

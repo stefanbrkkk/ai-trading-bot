@@ -50,13 +50,27 @@ export interface FeatureBarsProps {
   max?: number;
   onHover?: (key: string | null) => void;
   hoveredKey?: string | null;
-  /** Overrides the viewBox height; rows stay at the mandated 20px pitch. */
+  /** Overrides the viewBox height; the row pitch is fixed. */
   height?: number;
   /** Server-render fallback width; the rendered width is measured. */
   width?: number;
 }
 
-const ROW_PITCH = 20;
+/**
+ * Row pitch, which is also the height of a tap target.
+ *
+ * Every row is a `<g role="button" tabIndex={0}>` with pointer and focus
+ * handlers, so WCAG 2.2 SC 2.5.8 applies: 24×24 CSS px, or 24px of spacing
+ * between adjacent target centres. At 20 it failed both — the rows measured
+ * 538×20 on /transparency and 1138×20 on the symbol page, and a 24px circle
+ * centred on one row overlapped its neighbour by four pixels, so the spacing
+ * exception could not rescue it either.
+ *
+ * The bar itself stays at 8px; the extra four pixels are channel. The chart is
+ * 40px taller across a fourteen-row list and every row is now reachable by a
+ * fingertip, which is the trade the criterion exists to force.
+ */
+const ROW_PITCH = 24;
 const BAR_HEIGHT = 8;
 /** Server-render fallback; the rendered width is measured — see `useChartWidth`. */
 const VIEW_WIDTH = 280;

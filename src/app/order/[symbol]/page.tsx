@@ -293,7 +293,7 @@ export default function OrderTicketPage() {
       <PageHeader
         eyebrow={`${symbol} · order ticket`}
         title="Route an order"
-        lede="Every field starts blank and stays blank until you type in it. This platform does not compute a position size, suggest a quantity or pre-select an order type."
+        lede="Quantity and order type start blank and stay blank until you set them. This platform does not compute a position size, suggest a quantity or pre-select an order type. Side, time in force and account carry conventional defaults you can see and change; nothing about them is derived from your account or from a model output."
         action={
           <ButtonLink href={`/terminal/${symbol}`} variant="ghost" size="sm">
             Back to attribution
@@ -598,8 +598,8 @@ export default function OrderTicketPage() {
                 Top of book only, as tiles. A DepthLadder is deliberately not drawn
                 here: pre-flight returns the NBBO, not the L10 book, and rendering a
                 one-level ladder would present a single quote as market depth. The
-                full ladder belongs on the attribution page, where the book behind
-                the MLOFI feature actually is.
+                full ladder is on the attribution page, under "Order flow", drawn
+                from the same depth snapshot the MLOFI vector was computed from.
               */}
               {/*
                 The caption used to say the notional was computed against the NBBO
