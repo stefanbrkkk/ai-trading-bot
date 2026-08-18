@@ -19,6 +19,7 @@
  * executes platform code runs the schema pruner, which is pure over the catalog.
  */
 
+import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -273,4 +274,72 @@ describe('docs/BUILD_CONTRACT.md is addressed to whoever owns the code now', () 
     const citing = sourceFiles(path('src')).filter((f) => readFileSync(f, 'utf8').includes('BUILD_CONTRACT'));
     expect(citing.length).toBeGreaterThan(0);
   });
+});
+
+
+describe('the Testing section counts the suite it is describing', () => {
+  /**
+   * Asked of vitest, not counted by eye or by regex.
+   *
+   * The README advertised 465 unit tests against a suite of 477 — the first
+   * testable number in that section, and wrong, which is precisely the kind of
+   * discrepancy that makes a reader start doubting the numbers on the page that
+   * are right. A regex over `it(` cannot settle it either: several files
+   * register their cases from a loop, so the call sites and the tests are
+   * different quantities.
+   *
+   * `vitest list` collects the suite without executing it, so this cannot
+   * recurse into itself; it is the same collection the run uses, which is what
+   * makes the answer authoritative rather than approximate. It costs a few
+   * seconds, and it is the only thing in this file that shells out.
+   */
+  it('states the number vitest actually collects', () => {
+    const listed = execFileSync('npx', ['vitest', 'list', '--json'], {
+      cwd: fileURLToPath(new URL('..', import.meta.url)),
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+      env: { ...process.env, CI: '1' },
+    });
+    const collected = (JSON.parse(listed) as unknown[]).length;
+    expect(collected).toBeGreaterThan(0);
+
+    const claimed = /^\s*(\d+)\s+unit tests\s+\(vitest\)\s*$/m.exec(README);
+    expect(claimed, 'the README must state a unit-test count in its Testing block').not.toBeNull();
+    expect(Number(claimed?.[1])).toBe(collected);
+  }, 120_000);
+
+  it('states the number Playwright actually collects', () => {
+    const listed = execFileSync('npx', ['playwright', 'test', '--list', '--reporter=json'], {
+      cwd: fileURLToPath(new URL('..', import.meta.url)),
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+      env: { ...process.env, CI: '1' },
+    });
+    /*
+     * Counted by walking the suite tree, not read off `stats.expected`.
+     *
+     * A listing run executes nothing, so Playwright reports every case under
+     * `stats.skipped` and leaves `expected` at zero — a field that looks like
+     * the answer and is zero for a healthy suite.
+     */
+    interface Suite {
+      specs?: { tests?: unknown[] }[];
+      suites?: Suite[];
+    }
+    const countSpecs = (suites: Suite[]): number =>
+      suites.reduce(
+        (total, suite) =>
+          total +
+          (suite.specs ?? []).reduce((n, spec) => n + Math.max(1, (spec.tests ?? []).length), 0) +
+          countSpecs(suite.suites ?? []),
+        0,
+      );
+    const report = JSON.parse(listed) as { suites?: Suite[] };
+    const collected = countSpecs(report.suites ?? []);
+    expect(collected).toBeGreaterThan(0);
+
+    const claimed = /^\s*(\d+)\s+E2E tests/m.exec(README);
+    expect(claimed, 'the README must state an E2E count in its Testing block').not.toBeNull();
+    expect(Number(claimed?.[1])).toBe(collected);
+  }, 180_000);
 });

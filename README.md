@@ -276,7 +276,7 @@ using only what you knew then" an answerable question.
 ## Testing
 
 ```
-465 unit tests   (vitest)
+479 unit tests   (vitest)
  44 E2E tests    (Playwright, real Chromium)
 ```
 
