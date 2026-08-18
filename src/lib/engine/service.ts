@@ -14,7 +14,7 @@
 
 import { type ComputedFeatures, applyCrossSectionalNormalisation } from './compute';
 import { type PipelineResult, runPipeline } from './pipeline';
-import { loadArtefact, saveArtefact, tryLoadModelBundle } from './store';
+import { loadArtefact, tryLoadModelBundle } from './store';
 import { NEUTRALITY_NOTICE, composePublicationNotice } from './narrative';
 import { buildRiskReversalHistory } from './dataset';
 import {
@@ -409,29 +409,31 @@ export async function getPublication(options: EngineOptions = {}): Promise<Publi
   const publicationDate = isoDate(sessionOpen(now));
 
   /*
-   * The key names everything the list depends on: the evaluation instant and the
-   * model's build time.
+   * The list is derived from the snapshot on every call. It is not cached to disk,
+   * and that is the third and final attempt at getting this right.
    *
-   * A published list is immutable for its date — that is the Lowe v. SEC posture,
-   * one ranking identical for every subscriber — but it is immutable *for the
-   * inputs that produced it*, and a cache key that omits one of them serves a
-   * stale answer under a new one. Both omissions have happened here. Keyed on the
-   * date alone it was returned whichever ensemble was loaded, so after a retrain
-   * /terminal served SCHW at 52.5 while /terminal/SCHW computed 33.6 from the
-   * model actually in force; the version string does not move between retrains,
-   * so `createdAt` is what distinguishes them. Then, keyed on date and model, a
-   * list computed under the previous evaluation rule survived the change to this
-   * one and published DUK at 24.5 against a symbol page reading 23.3.
+   * A published list is immutable for its date — the Lowe v. SEC posture, one
+   * ranking identical for every subscriber — and the earlier versions tried to
+   * express that by persisting it under a key naming its inputs. Keyed on the
+   * date alone it survived a retrain, so /terminal served SCHW at 52.5 while
+   * /terminal/SCHW computed 33.6 from the model actually in force. Keyed on date
+   * and model it survived a change to the evaluation rule, and published DUK at
+   * 24.5 against a symbol page reading 23.3. Keyed on date, model and evaluation
+   * instant it survived a change to the *code*: measured on this build, the
+   * stored list led with SCHW at 41.8 while every live surface computed 16.7 —
+   * a twenty-five point contradiction between the front page and the page it
+   * links to.
    *
-   * `now` is a function of the calendar, so including it costs nothing in cache
-   * hits within a day and invalidates automatically if the rule that derives it
-   * ever changes again.
+   * Each fix added another input to the key, and the next thing that changed was
+   * always one the key did not name. The mistake is the shape, not the key: a
+   * durable cache of a derived value can always outlive its derivation.
+   *
+   * So there is nothing to outlive. `getUniverseSnapshot` already memoises the
+   * expensive part per evaluation instant, and this is a sort and a slice over
+   * sixty-seven signals — microseconds. Immutability comes from determinism
+   * rather than from storage: identical inputs give an identical list, and when
+   * an input does change the list changes with it, everywhere, at once.
    */
-  const modelStamp = tryLoadModelBundle()?.createdAt ?? 0;
-  const artefactKey = `publication-${publicationDate}-${now}-${modelStamp}`;
-  const cached = loadArtefact<Publication>(artefactKey);
-  if (cached) return cached;
-
   const snapshot = await getUniverseSnapshot(options);
   /*
    * Directional names first, then the highest-scoring remainder to make five.
@@ -474,7 +476,6 @@ export async function getPublication(options: EngineOptions = {}): Promise<Publi
     neutralityNotice: NEUTRALITY_NOTICE,
     modelVersion: snapshot.modelVersion,
   };
-  saveArtefact(artefactKey, publication);
   return publication;
 }
 

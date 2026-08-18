@@ -205,13 +205,15 @@ async function main(): Promise<void> {
   const { getUniverseSnapshot, getPublication, clearEngineCache } = await import('@/lib/engine/service');
   clearEngineCache();
   process.env.AURELIUS_SEED = String(SEED);
+  /*
+   * The sweep is run for its side effects — it warms the engine's caches and the
+   * publication below is derived from it. Its rows are deliberately NOT written
+   * to an artefact: nothing read the file, and a 37 KB JSON sitting in
+   * `.data/artefacts` named `universe-snapshot` reads like a cache the engine
+   * consults, which cost real time to disprove while chasing a genuine staleness
+   * bug in the neighbouring publication artefact.
+   */
   const snapshot = await getUniverseSnapshot({ now: NOW });
-  saveArtefact('universe-snapshot', {
-    rows: snapshot.rows,
-    computedAt: snapshot.computedAt,
-    provider: snapshot.provider,
-    modelVersion: snapshot.modelVersion,
-  });
   const withSignal = snapshot.rows.filter((r) => r.direction !== 'flat').length;
   done(`${snapshot.rows.length} symbols, ${withSignal} with a directional signal`);
 
