@@ -96,7 +96,9 @@ function PublicationCard({ item }: { item: PublicationItem }) {
               <span className="font-mono text-2xs text-parchment-faint">{String(item.rank).padStart(2, '0')}</span>
               <span className="display text-lg text-parchment">{item.symbol}</span>
             </div>
-            <p className="mt-1 truncate text-[0.8125rem] text-parchment-dim" title={item.name}>
+            {/* Wraps on a phone: "The Procter & Gamble Company" needed 197px in
+                a 174px card at 375px and there is no hover to recover it. */}
+            <p className="mt-1 text-[0.8125rem] text-parchment-dim sm:truncate" title={item.name}>
               {item.name}
             </p>
           </div>

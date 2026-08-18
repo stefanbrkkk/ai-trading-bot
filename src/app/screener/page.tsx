@@ -283,9 +283,13 @@ export default function ScreenerPage() {
                   {data.rows.map((row) => (
                     <tr key={row.symbol} className="hover:bg-obsidian-light/50">
                       <Td>
+                        {/* A ticker is one to four characters — "V" paints 8x17 —
+                            and it is the only way from this table to a symbol.
+                            `tap-target` makes it a 44x44 hit region; the rows are
+                            ~50px apart so the regions never collide. */}
                         <Link
                           href={`/terminal/${row.symbol}`}
-                          className="font-mono text-parchment underline decoration-obsidian-edge hover:decoration-gold"
+                          className="tap-target font-mono text-parchment underline decoration-obsidian-edge hover:decoration-gold"
                         >
                           {row.symbol}
                         </Link>

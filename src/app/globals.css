@@ -347,6 +347,35 @@ select:focus {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6' fill='none' stroke='%23d4af37' stroke-width='1.4'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
 }
 
+/*
+ * Enlarges a small control's touch area without moving anything on screen.
+ *
+ * WCAG 2.2 SC 2.5.8 asks for 24x24 CSS px; Apple's HIG asks for 44pt, and a
+ * finger does not read specifications. Several controls here are deliberately
+ * small because the typography is the design — the wordmark is 63x17, a screener
+ * ticker is as narrow as 8x17, a transparency filter chip is 22px tall — and
+ * padding them out would change the layout everywhere they appear.
+ *
+ * A centred pseudo-element extends only the hit region. It is `position:
+ * absolute` inside a `position: relative` box, so it takes no space in flow and
+ * cannot push a neighbour; the parent's own painted box is untouched.
+ */
+.tap-target {
+  position: relative;
+}
+
+.tap-target::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: 100%;
+  min-width: 44px;
+  min-height: 44px;
+  transform: translate(-50%, -50%);
+}
+
 /* Wide charts and tables scroll inside their own container; the page body must
    never scroll horizontally. */
 .scroll-x {

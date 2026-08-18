@@ -68,6 +68,11 @@ function describe(el: HTMLElement): string {
   const heading = panel?.querySelector('h1, h2, h3, h4')?.textContent?.trim();
   if (heading) return `${heading}, scrollable`;
 
+  // The screener's table sits in a panel with no header of its own, so without
+  // this step the widest table in the product announced as "Scrollable content".
+  const page = document.querySelector('h1')?.textContent?.trim();
+  if (page) return `${page} table, scrollable`;
+
   return 'Scrollable content';
 }
 

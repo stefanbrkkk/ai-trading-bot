@@ -64,7 +64,12 @@ export function TopBar() {
     <header className="sticky top-0 z-30 border-b border-obsidian-edge bg-vanta-deep/95 backdrop-blur-sm">
       <div className="flex items-center justify-between gap-6 px-4 py-2.5 lg:px-6">
         <div className="flex items-baseline gap-3">
-          <Link href="/terminal" className="display text-[1.0625rem] leading-none tracking-tight text-parchment">
+          {/* 63x17 painted; `tap-target` gives it a 44x44 hit region without
+              moving the baseline it is aligned on. */}
+          <Link
+            href="/terminal"
+            className="tap-target display text-[1.0625rem] leading-none tracking-tight text-parchment"
+          >
             Aurelius
           </Link>
           <span className="hidden font-mono text-2xs uppercase tracking-institutional text-parchment-ghost sm:inline">

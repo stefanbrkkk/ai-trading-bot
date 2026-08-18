@@ -341,11 +341,20 @@ export function LatencyBar({ stages, totalMs, budgetMs, withinBudget, width: wid
 
       {/* Per-stage legend. HTML, not SVG: it is a table of figures that has to wrap
           on a narrow viewport, and text in an SVG cannot. */}
-      <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+      {/*
+        One column until the viewport is wide enough that this panel is too.
+        `sm:grid-cols-2` is a viewport query and this panel sits in the narrow
+        half of the page's two-column layout, so from 1024px up it was splitting a
+        ~500px panel into two ~230px columns. With the stage name set to `truncate`
+        that left it 12–19px: "attribution" needed 53 and rendered as "a…", and
+        every stage in the pipeline budget was unreadable on an iPad and on a
+        1366px laptop. The name wraps now instead of being cut.
+      */}
+      <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-1.5 xl:grid-cols-2">
         {segments.map((segment) => (
           <div key={`legend-${segment.key}`} className="flex items-baseline gap-2.5">
             <span className="mt-[3px] h-2 w-2 shrink-0" style={{ backgroundColor: segment.colour }} aria-hidden />
-            <dt className="min-w-0 flex-1 truncate text-[0.6875rem] text-parchment-dim">{segment.stage}</dt>
+            <dt className="min-w-0 flex-1 text-[0.6875rem] text-parchment-dim">{segment.stage}</dt>
             {/* The stage that crossed the line states its own figure in burgundy —
                 the legend has to name the culprit, not just the totals row. */}
             <dd

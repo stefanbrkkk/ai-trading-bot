@@ -321,7 +321,29 @@ export function runPipeline(
   const evidence = features.raw.alt_evidence ?? 0;
   const insufficient = isInsufficientEvidence(evidence, drivers.length);
 
-  const levels = conflict.winner?.levels ?? defaultLevels(price, features.artefacts.atr, direction);
+  /*
+   * A strategy supplies this signal's levels only if it agrees with the direction
+   * the signal actually published.
+   *
+   * `resolveDirection` answers to the router and the tree model; the strategies
+   * are a separate line of evidence and are free to disagree, and a strategy that
+   * fired can win the conflict resolution while pointing the other way. Its
+   * levels were being adopted anyway, so a quarter of the directional universe
+   * published a trade plan for the opposite side of itself: MRK short with the
+   * invalidation *below* the price and the target above it, PLTR short with an
+   * expected return of +14.8%. Measured across the universe, 7 of 27 directional
+   * names. `deriveExpectedReturn` blends the target into the published figure —
+   * its own comment says "a signal whose expected return contradicts its own
+   * target would be incoherent" — so one wrong input poisoned both numbers.
+   *
+   * When the winner disagrees, the signal names no strategy and falls back to
+   * ATR-derived levels, which are always built from `direction`. That the
+   * strategy fired at all is still published in `strategiesFired`, with its own
+   * direction, so the disagreement is visible rather than resolved silently.
+   */
+  const alignedStrategy =
+    conflict.winner !== null && conflict.winner.direction === direction ? conflict.winner : null;
+  const levels = alignedStrategy?.levels ?? defaultLevels(price, features.artefacts.atr, direction);
   const expectedReturn = deriveExpectedReturn(tftOut.expectedReturn, price, levels, direction);
 
   const thesis = insufficient
@@ -362,7 +384,7 @@ export function runPipeline(
     expectedReturnHigh: insufficient ? 0 : expectedReturn.high,
     referencePrice: price,
     levels,
-    strategy: conflict.winner?.id ?? null,
+    strategy: alignedStrategy?.id ?? null,
     strategiesFired: strategies.filter((s) => s.fired).map((s) => s.id),
     regime: regime.label,
     drivers: signalDrivers,
@@ -484,7 +506,19 @@ function deriveExpectedReturn(
   const targetReturn = (levels.target1 - price) / price;
   const stopReturn = (levels.invalidation - price) / price;
   const modelReturn = clamp(tftMedian, -0.25, 0.25);
-  const mid = 0.5 * modelReturn + 0.5 * targetReturn;
+  /*
+   * The agent's median only counts when it points the same way the signal does.
+   *
+   * It is a forward price forecast, not a view on this signal, so it is free to
+   * disagree — and blended in unconditionally it can carry the published figure
+   * across zero, which is how a short came to advertise a positive expected
+   * return. The target is always built from `direction`, so falling back to it
+   * alone keeps the number and the badge above it saying the same thing. The
+   * disagreement is not hidden: the agent's own probability and interval are
+   * published per agent on the attribution page.
+   */
+  const agrees = direction === 'short' ? modelReturn < 0 : modelReturn > 0;
+  const mid = agrees ? 0.5 * modelReturn + 0.5 * targetReturn : targetReturn;
   const spread = Math.max(Math.abs(targetReturn - stopReturn) / 2, Math.abs(modelReturn) * 0.5, 0.002);
   return {
     low: Math.round((mid - spread) * 1e6) / 1e6,

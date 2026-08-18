@@ -467,7 +467,8 @@ export default function TransparencyPage() {
                       type="button"
                       onClick={() => setGroup(group === g.key ? '' : g.key)}
                       aria-pressed={group === g.key}
-                      className={`border px-2 py-[3px] font-mono text-2xs uppercase tracking-institutional transition-colors ${
+                      /* 22px painted; `tap-target` supplies the hit region. */
+                      className={`tap-target border px-2 py-[3px] font-mono text-2xs uppercase tracking-institutional transition-colors ${
                         group === g.key
                           ? 'border-gold/60 bg-gold/[0.09] text-gold'
                           : 'border-obsidian-edge text-parchment-dim hover:border-parchment-ghost'

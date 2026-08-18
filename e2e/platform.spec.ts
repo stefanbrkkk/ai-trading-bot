@@ -664,3 +664,63 @@ test('the attribution page is clean at every layout width', async ({ page }) => 
     expectClean(problems, `/terminal/AAPL at ${width}px`);
   }
 });
+
+/**
+ * A signal's trade plan has to describe the trade the signal says it is.
+ *
+ * It did not, for a quarter of the directional universe. `resolveDirection`
+ * answers to the router and the tree model; the named strategies are a separate
+ * line of evidence and are free to disagree, and a strategy that fired could win
+ * the conflict resolution while pointing the other way — and its levels were
+ * adopted anyway. MRK published as SHORT with the invalidation *below* the price
+ * and the target above it; PLTR published as SHORT with an expected return of
+ * +14.83%. Seven of twenty-seven directional names, on the page whose whole
+ * proposition is that every number is checkable.
+ */
+test('every signal publishes levels and a return that match its own direction', async ({ request }) => {
+  const screener = await (await request.get('/api/screener?limit=200')).json();
+  expect(screener.rows.length, 'universe size').toBeGreaterThan(20);
+
+  const offenders: string[] = [];
+  let directional = 0;
+
+  for (const row of screener.rows) {
+    const raw = await (await request.get(`/api/signals/${encodeURIComponent(row.symbol)}`)).json();
+    const s = raw.signal ?? raw;
+    if (s.direction === 'flat') {
+      // A flat signal takes no view, so it publishes no return and no conviction.
+      expect(s.expectedReturn, `${row.symbol} flat expected return`).toBe(0);
+      expect(s.convictionScore, `${row.symbol} flat conviction`).toBe(0);
+      continue;
+    }
+    directional += 1;
+
+    const { invalidation, target1, target2, entryZoneLow, entryZoneHigh } = s.levels;
+    const p = s.referencePrice;
+    const long = s.direction === 'long';
+
+    if (entryZoneLow > entryZoneHigh) offenders.push(`${row.symbol}: entry zone inverted`);
+    // The stop is on the losing side of the entry and the targets on the winning
+    // side — that is what makes the four numbers a plan rather than four numbers.
+    if (long && !(invalidation < p && target1 > p && target2 > target1)) {
+      offenders.push(`${row.symbol}: long levels stop=${invalidation.toFixed(2)} t1=${target1.toFixed(2)} price=${p.toFixed(2)}`);
+    }
+    if (!long && !(invalidation > p && target1 < p && target2 < target1)) {
+      offenders.push(`${row.symbol}: short levels stop=${invalidation.toFixed(2)} t1=${target1.toFixed(2)} price=${p.toFixed(2)}`);
+    }
+    if (long && !(s.expectedReturn > 0)) offenders.push(`${row.symbol}: long with expected return ${s.expectedReturn}`);
+    if (!long && !(s.expectedReturn < 0)) offenders.push(`${row.symbol}: short with expected return ${s.expectedReturn}`);
+
+    // The interval has to bracket the point estimate it is an interval for.
+    expect(s.expectedReturnLow, `${row.symbol} interval low`).toBeLessThanOrEqual(s.expectedReturn);
+    expect(s.expectedReturnHigh, `${row.symbol} interval high`).toBeGreaterThanOrEqual(s.expectedReturn);
+
+    // A named strategy must be one that actually fired, and it must agree.
+    if (s.strategy !== null) {
+      expect(s.strategiesFired, `${row.symbol} names a strategy that did not fire`).toContain(s.strategy);
+    }
+  }
+
+  expect(directional, 'the universe produced no directional signal at all').toBeGreaterThan(0);
+  expect(offenders, `${offenders.length} of ${directional} directional signals are incoherent`).toEqual([]);
+});

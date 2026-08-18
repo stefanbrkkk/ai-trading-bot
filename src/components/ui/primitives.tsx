@@ -136,11 +136,23 @@ export function StatTile({
   return (
     <div className={cx('min-w-0', className)} title={title}>
       {/*
-        `title` on the label too, not only on the tile. The label truncates, and
-        at 200% zoom it truncates on most tiles — "Sharpe (annualised)" became
-        "Sharpe (ann…" with no way to read the rest.
+        Wraps on a phone, truncates from `sm` up.
+        Truncation keeps a row of tiles on one line where there is room for it,
+        and `title` recovers the rest — on a pointer device. On a phone there is
+        no hover and no room: at 375px "Local-accuracy residual" needed 170px in a
+        107px tile and rendered as "Local-accuracy resid…", unrecoverable. Two
+        lines is the better trade below `sm`; the grid stretches the row so the
+        figures stay aligned either way.
       */}
-      <p className="eyebrow mb-1.5 truncate" title={label}>
+      {/*
+        Two lines are reserved below `sm` so a wrapped label does not push its own
+        figure below its neighbour's. The grid stretches every cell to the row's
+        height, which keeps the tiles the same size but not their contents in the
+        same place; the longest label in the product is 23 characters and wraps to
+        two lines at 375px, never three. Above `sm` the label truncates to one line
+        and the reservation is released.
+      */}
+      <p className="eyebrow mb-1.5 min-h-[2em] leading-none sm:min-h-0 sm:truncate" title={label}>
         {label}
       </p>
       <p className={cx('tabular leading-none', sizeClass, toneClass)}>
