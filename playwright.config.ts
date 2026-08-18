@@ -1,4 +1,28 @@
+import { existsSync } from 'node:fs';
 import { defineConfig, devices } from '@playwright/test';
+
+/**
+ * The Chromium to drive, if a specific one has to be named.
+ *
+ * The image this was developed in ships a Chromium that does not match what
+ * `@playwright/test` would download, so the path was pinned outright. That made
+ * `npm run e2e` — and therefore `npm run verify` — pass only on that machine:
+ * anywhere else Playwright was handed a path that does not exist and failed
+ * before the first test. A handed-over repository whose verification command
+ * cannot run is not verifiable by the person receiving it.
+ *
+ * So the pin is now conditional. `CHROMIUM_PATH` wins if set; the image's build
+ * is used when it is actually present; otherwise nothing is specified and
+ * Playwright uses its own managed browser, which `npx playwright install
+ * chromium` provides.
+ */
+function resolveChromium(): string | null {
+  const candidates = [process.env.CHROMIUM_PATH, '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'];
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) return candidate;
+  }
+  return null;
+}
 
 const PORT = Number(process.env.E2E_PORT ?? 3100);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -33,7 +57,10 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         launchOptions: {
-          executablePath: process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+          // Only pinned when that exact build is present. On any other machine
+          // Playwright's own managed browser is used, so `npm run e2e` works
+          // after `npx playwright install chromium` without touching this file.
+          ...(resolveChromium() ? { executablePath: resolveChromium() as string } : {}),
         },
       },
     },

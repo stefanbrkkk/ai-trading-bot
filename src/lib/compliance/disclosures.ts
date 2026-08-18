@@ -233,7 +233,17 @@ export const NEUTRAL_FRAMING_TEMPLATE =
 export const MANDATORY_AUDIT_FIELDS: { field: string; purpose: string }[] = [
   { field: 'Unique user ID and cryptographic session token', purpose: 'Binds the action to an authenticated principal.' },
   { field: 'Millisecond-precision timestamp', purpose: 'Establishes sequence against broker and market events.' },
-  { field: 'IP address and browser user agent', purpose: 'Corroborates the origin of the request.' },
+  {
+    field: 'IP address and browser user agent',
+    // The address is only recorded when a trusted proxy attests to it — the
+    // forwarding headers are client-written, and recording an address the caller
+    // chose would corroborate nothing. Deployments without AURELIUS_TRUST_PROXY
+    // record "unattributed", and the field says so rather than implying an
+    // attribution the record does not carry.
+    purpose:
+      'Corroborates the origin of the request. Recorded as "unattributed" unless the deployment sits behind a ' +
+      'trusted proxy, because forwarding headers are written by the client.',
+  },
   { field: 'UI click coordinates (X/Y) at the Execute click', purpose: 'Evidence of physical human intent rather than automation.' },
   { field: 'Raw outbound JSON payload', purpose: 'Proves exactly what was transmitted, field for field.' },
   { field: 'Broker HTTP status and response payload', purpose: 'Distinguishes a broker failure from a platform failure.' },

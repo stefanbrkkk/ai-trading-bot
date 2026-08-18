@@ -48,9 +48,11 @@ an error. Tailwind for styling. Framer Motion for transitions.
 
 Three deliberate absences:
 
-- **No charting library.** Every chart is hand-written SVG. Sixteen of them, and
-  all sixteen are rendered — this sentence used to record that three were built
-  and unplaced, which is the kind of thing that quietly stays true forever.
+- **No charting library.** Every chart is hand-written SVG. Fifteen of them, and
+  all fifteen are rendered on a page — `src/components/charts/` holds those plus
+  a shared driver tooltip and the hover context they coordinate through. This
+  sentence used to record that three charts were built and unplaced, which is
+  the kind of thing that quietly stays true forever.
 - **No ML framework.** The gradient-boosted trees, the LSTM/BiLSTM/TFT agents and the
   reverse-mode autodiff that trains them are implemented from scratch in TypeScript.
 - **No vendor SDKs.** Three providers — Anthropic, OpenAI and DeepSeek — are served
@@ -68,7 +70,7 @@ append-only DDL runs on Postgres by registering one adapter.
 npm run dev          # dev server on :3000
 npm run seed         # full seed (~3 min) — trains and persists everything
 npm run seed:fast    # reduced budget (~20s) — for CI and E2E
-npm run verify       # typecheck → lint → 229 unit tests → build → 44 E2E tests
+npm run verify       # typecheck → lint → 248 unit tests → build → 44 E2E tests
 ```
 
 The E2E suite seeds its own data directory on first run, so `npm run e2e` works on a
@@ -264,7 +266,7 @@ using only what you knew then" an answerable question.
 ## Testing
 
 ```
-229 unit tests   (vitest)
+248 unit tests   (vitest)
  44 E2E tests    (Playwright, real Chromium)
 ```
 
@@ -308,7 +310,7 @@ src/lib/rag/          Corpus, embeddings, hybrid retrieval, claim grounding.
 src/lib/ai/           Language-model seam. Deterministic by default.
 src/lib/compliance/   Verbatim disclosures, terms, prohibited copy.
 src/components/charts/  17 hand-written SVG charts.
-src/app/              16 pages and 29 API routes.
+src/app/              16 pages and 31 API routes.
 ```
 
 ---

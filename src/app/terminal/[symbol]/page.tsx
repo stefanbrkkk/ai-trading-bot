@@ -656,7 +656,19 @@ export default function SymbolPage() {
                       />
                     </div>
                     <dl className="mt-5 space-y-0.5">
-                      <DataRow label="Probability" value={fractionAsPercent(data.predictionProbability)} />
+                      {/*
+                        Named for what it measures. It is the tree ensemble's
+                        P(this name beats the benchmark over the horizon) — not
+                        the probability that the published direction is right.
+                        The router is authoritative on direction and can, and
+                        does, publish SHORT against a probability above 50%; a
+                        bare "Probability" beside that reads as a contradiction.
+                      */}
+                      <DataRow
+                        label="P(beats benchmark)"
+                        value={fractionAsPercent(data.predictionProbability)}
+                        hint="Tree-ensemble probability of outperforming, before the router decides direction"
+                      />
                       <DataRow label="Expected return" value={signedFractionAsPercent(data.expectedReturn)} />
                       <DataRow
                         label="Return interval"
