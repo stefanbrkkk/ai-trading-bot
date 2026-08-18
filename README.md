@@ -142,9 +142,9 @@ which one prevailed and why. It never averages a disagreement away silently.
 
 ## Honest reporting
 
-The seeded model's out-of-sample accuracy is **59.8%** against an in-sample **76.2%**,
-with an AUC of **0.614** and a Brier score of **0.2400**. Its reliability curve is on
-the transparency page: expected calibration error **0.042**, measured on the 353
+The seeded model's out-of-sample accuracy is **58.1%** against an in-sample **74.6%**,
+with an AUC of **0.614** and a Brier score of **0.2393**. Its reliability curve is on
+the transparency page: expected calibration error **0.036**, measured on the 353
 held-out samples, and the curve sits slightly below the diagonal in the confident
 bands — the model is a little overconfident, and the page says so. The portfolio
 backtest returns **−3.7%** with a Sharpe of **−0.38**. Most strategies have a profit
@@ -163,9 +163,9 @@ deciding whether to trust a strategy is the one it did *not* clear.
 The same principle applies to the three temporal agents, and it caught something
 worth reporting. Each one's **discrimination** — the standard deviation of its
 predicted probability across the held-out split — is measured at training time
-and published on the model card. The 60m Temporal Fusion Transformer scores 0.0014,
-an order of magnitude below the 0.01 floor: it returns essentially the same number
-(~0.49) for whatever it is shown, across the universe. So the router
+and published on the model card. The 60m Temporal Fusion Transformer scores 0.0027,
+well below the 0.01 floor: it returns essentially the same number for whatever it is
+shown, across the universe. So the router
 gives it no weight, and the transparency page shows why in the same table as its
 loss, because a collapsed agent reports a perfectly ordinary loss — a constant
 prediction on a balanced set is unremarkable by that measure and only the spread

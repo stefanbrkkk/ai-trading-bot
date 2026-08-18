@@ -113,6 +113,15 @@ export interface ConvictionDialProps {
   size?: number;
   /** Hides the numeric readout when the score is displayed elsewhere. */
   hideValue?: boolean;
+  /**
+   * Builds the Flubber path interpolator ahead of the first morph.
+   *
+   * Set by a caller that knows a morph is coming — the symbol page's attribution
+   * toggle — and passed the same idle signal that mounts the hidden pane, so the
+   * construction happens in spare time rather than under the user's press. A
+   * dial that is only ever a ring leaves this unset and never pays for it.
+   */
+  prewarmMorph?: boolean;
 }
 
 export function ConvictionDial({
@@ -121,6 +130,7 @@ export function ConvictionDial({
   morph = 0,
   size = 200,
   hideValue = false,
+  prewarmMorph = false,
 }: ConvictionDialProps) {
   const reduceMotion = useReducedMotion();
   const clamped = Math.max(0, Math.min(100, Number.isFinite(score) ? score : 0));
@@ -197,11 +207,18 @@ export function ConvictionDial({
    * Once a dial has morphed it keeps the Flubber path for the rest of its life —
    * it has to, to animate back — but a dial that is only ever a ring never mounts
    * it and never pays for it.
+   *
+   * `prewarmMorph` lets a caller that knows better mount it early. Building the
+   * interpolator is the single most expensive thing this component does, and
+   * behind the lazy gate alone it landed entirely on the user's first press:
+   * measured at 4x CPU throttle, a 132 ms blocking task on toggle one and none
+   * on any toggle after it. The symbol page passes its idle signal here, so the
+   * work happens in spare time and the first press costs what the sixth does.
    */
   const [everMorphed, setEverMorphed] = useState(morph > 0);
   useEffect(() => {
-    if (morph > 0) setEverMorphed(true);
-  }, [morph]);
+    if (morph > 0 || prewarmMorph) setEverMorphed(true);
+  }, [morph, prewarmMorph]);
   const captionOpacity = useTransform(morphValue, [0, 0.35], [1, 0]);
   /*
    * Lifts the figure clear of the axis the ring unspools into. In px of the

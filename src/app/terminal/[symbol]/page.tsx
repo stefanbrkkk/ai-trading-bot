@@ -449,17 +449,39 @@ function AttributionPane({
   // Before the `mounted` guard: a hook cannot live behind an early return.
   const reduceMotion = useReducedMotion();
   if (!mounted) return null;
+  /*
+   * `grid-template-rows: 0fr → 1fr`, not `height: 0 → auto`.
+   *
+   * Animating to `auto` means the runtime has to learn the natural height, and
+   * it learns it by laying the collapsed subtree out synchronously at the moment
+   * of the transition. For the force plot that is a 10-segment SVG whose layout
+   * has never been computed, so the whole cost landed on the user's first press:
+   * measured at 4x CPU throttle, 226 ms from click to painted frame on toggle
+   * one against 49-60 ms on every toggle after it.
+   *
+   * A grid track interpolates between 0fr and 1fr without anyone naming a pixel
+   * height, so there is no measurement pass and no first-press penalty. The
+   * child carries `min-h-0` because a grid item's default `min-height: auto`
+   * refuses to shrink below its content and would defeat the collapse entirely.
+   * Where the browser will not animate the track it snaps instead, which is the
+   * same thing reduced-motion asks for.
+   */
   return (
-    <motion.div
-      className="overflow-hidden"
+    <div
+      className="grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none"
+      style={{ gridTemplateRows: active ? '1fr' : '0fr' }}
       aria-hidden={!active}
       inert={!active}
-      initial={false}
-      animate={{ opacity: active ? 1 : 0, height: active ? 'auto' : 0 }}
-      transition={{ duration: reduceMotion ? 0 : 0.18, ease: 'easeOut' }}
     >
-      {children}
-    </motion.div>
+      <motion.div
+        className="min-h-0 overflow-hidden"
+        initial={false}
+        animate={{ opacity: active ? 1 : 0 }}
+        transition={{ duration: reduceMotion ? 0 : 0.18, ease: 'easeOut' }}
+      >
+        {children}
+      </motion.div>
+    </div>
   );
 }
 
@@ -499,7 +521,17 @@ function SymbolPageState({ children }: { children: ReactNode }) {
 
 /** The dial unspools into an axis when the force plot is showing. */
 function MorphingConvictionDial(props: WithoutMorph<ComponentProps<typeof ConvictionDial>>) {
-  return <ConvictionDial {...props} morph={useContext(ViewContext) === 'force' ? 1 : 0} />;
+  // `prewarmMorph` on the same idle signal that mounts the hidden pane: this
+  // dial is the one in the product that certainly will morph, so building its
+  // path interpolator early costs nobody anything and takes the whole of it off
+  // the first press.
+  return (
+    <ConvictionDial
+      {...props}
+      morph={useContext(ViewContext) === 'force' ? 1 : 0}
+      prewarmMorph={useIdleMount()}
+    />
+  );
 }
 
 type WithoutMorph<T> = Omit<T, 'morph'>;

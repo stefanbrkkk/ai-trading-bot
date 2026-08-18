@@ -237,10 +237,29 @@ describe('the waterfall/force toggle is one movement, and an optional one', () =
   const pane = TERMINAL.slice(start, TERMINAL.indexOf('\n}\n', start));
 
   it('animates the pane box instead of snapping it to zero height', () => {
-    expect(pane).toContain("height: active ? 'auto' : 0");
-    // `h-0` flipped synchronously with the state: 508px to 132px in one frame,
-    // while the 180ms crossfade it belongs to was still running.
-    expect(pane).not.toContain('h-0');
+    /*
+     * Asserted as a property, not as a mechanism.
+     *
+     * This used to require the literal `height: active ? 'auto' : 0`, which is
+     * one way to animate the box and turned out to be the expensive way: an
+     * `auto` target has to be measured, and the measurement landed on the user's
+     * first press as a 132 ms blocking task. The interpolating grid track that
+     * replaced it needs no measurement. Either satisfies the thing that matters,
+     * so the test now names that instead of naming one implementation of it.
+     */
+    const animatesBox =
+      pane.includes("height: active ? 'auto' : 0") ||
+      (pane.includes("gridTemplateRows: active ? '1fr' : '0fr'") &&
+        pane.includes('transition-[grid-template-rows]'));
+    expect(animatesBox, 'the pane box must interpolate, not jump').toBe(true);
+    // The Tailwind class `h-0` flipped synchronously with the state: 508px to
+    // 132px in one frame, while the 180ms crossfade it belongs to was still
+    // running. Matched as a whole class token rather than as a substring, since
+    // `min-h-0` — which the grid form needs — contains it.
+    expect(pane).not.toMatch(/(^|[\s"'`])h-0([\s"'`]|$)/);
+    // A collapsing grid item defaults to `min-height: auto` and refuses to
+    // shrink below its content, which would defeat the collapse silently.
+    if (pane.includes('gridTemplateRows')) expect(pane).toContain('min-h-0');
   });
 
   it('honours prefers-reduced-motion, which CSS cannot do for a JS-written style', () => {
