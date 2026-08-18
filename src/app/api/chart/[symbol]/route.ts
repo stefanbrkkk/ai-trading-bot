@@ -14,7 +14,7 @@
  */
 
 import { z } from 'zod';
-import { ApiError, handler, ok, parseQuery, pendingSetup } from '@/lib/api/respond';
+import { handler, ok, parseQuery, pendingSetup, resourceNotFound } from '@/lib/api/respond';
 import { getChartSeries } from '@/lib/engine/service';
 import { getSpec } from '@/lib/market/universe';
 
@@ -29,7 +29,9 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
   const symbol = raw.toUpperCase();
 
   if (getSpec(symbol) === undefined) {
-    throw new ApiError('UNKNOWN_SYMBOL', `${symbol} is not in the published universe.`, 404);
+    // Same reasoning as the signals route: a handled page state, answered 200
+    // with `notFound` so a mistyped URL does not log a console error.
+    return resourceNotFound('UNKNOWN_SYMBOL', `${symbol} is not in the published universe.`);
   }
 
   const q = parseQuery(request, querySchema);

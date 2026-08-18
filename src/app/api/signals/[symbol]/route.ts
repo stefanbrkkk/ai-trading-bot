@@ -9,7 +9,7 @@
  */
 
 import { z } from 'zod';
-import { ApiError, handler, ok, parseQuery, pendingSetup } from '@/lib/api/respond';
+import { handler, ok, parseQuery, pendingSetup, resourceNotFound } from '@/lib/api/respond';
 import { getSignal } from '@/lib/engine/service';
 import { resolveMarketProvider } from '@/lib/market/provider';
 import { requireSpec } from '@/lib/market/universe';
@@ -30,7 +30,12 @@ export const GET = handler(async (request: Request, context: { params: Promise<{
   try {
     requireSpec(symbol);
   } catch {
-    throw new ApiError('UNKNOWN_SYMBOL', `${symbol} is not in the tradable universe.`, 404);
+    /*
+     * A mistyped or stale symbol is a page state, not a fault. `/terminal/XYZ`
+     * renders the notice and offers a way back, so this is answered 200 with
+     * `notFound` set — see `resourceNotFound`.
+     */
+    return resourceNotFound('UNKNOWN_SYMBOL', `${symbol} is not in the tradable universe.`);
   }
 
   let result;

@@ -113,7 +113,10 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (
     typeof payload === 'object' &&
     payload !== null &&
-    (payload as { setupRequired?: unknown }).setupRequired === true &&
+    ((payload as { setupRequired?: unknown }).setupRequired === true ||
+      // Same contract, different documented state: a resource that does not
+      // exist. See `resourceNotFound` for why it is answered 200.
+      (payload as { notFound?: unknown }).notFound === true) &&
     isErrorBody(payload)
   ) {
     throw new ApiRequestError(payload.error.code, payload.error.message, response.status, payload.error.detail);

@@ -81,6 +81,32 @@ export function pendingSetup(code: string, message: string): NextResponse {
   return withHeaders(NextResponse.json(body, { status: 200 }), correlationId());
 }
 
+/**
+ * A resource the caller asked for by name that does not exist.
+ *
+ * Answered `200` for the same reason `pendingSetup` is, and the reasoning is
+ * worth repeating because the two look like different situations and are not.
+ * `/terminal/NOTREAL` is a URL a person reaches by mistyping, by following a
+ * stale link, or by opening one shared before the universe changed. The page
+ * handles it: it renders "NOTREAL is not in the tradable universe" and offers a
+ * way back. Nothing is broken. But the browser logs a console error for every
+ * response over 400, so the one page in the product that was behaving perfectly
+ * — explaining the mistake in plain words — was also the one page that looked
+ * broken to anyone with devtools open, and the platform's own E2E asserts a
+ * clean console on every route.
+ *
+ * `notFound` marks the body, exactly as `setupRequired` does, so the client can
+ * still raise it as an error and the page still shows its notice. The only thing
+ * that changes is that a handled state stops being reported as a fault.
+ */
+export function resourceNotFound(code: string, message: string): NextResponse {
+  const body: ApiErrorBody & { notFound: true } = {
+    error: { code, message },
+    notFound: true,
+  };
+  return withHeaders(NextResponse.json(body, { status: 200 }), correlationId());
+}
+
 /** Thrown by handlers to short-circuit with a specific status. */
 export class ApiError extends Error {
   constructor(
