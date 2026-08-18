@@ -232,11 +232,36 @@ export function ceilingReferencePrice(
 ): number | null {
   const stated = notionalReferencePrice(intent, quote);
   if (stated === null) return null;
-  if (intent.type === 'market') return stated;
-  const aggressive = intent.side === 'buy' ? quote?.ask : quote?.bid;
+
+  /*
+   * Only two shapes can transact above the price the ceiling is sized from, and
+   * taking the aggressive side for the rest inflated the ceiling against orders
+   * that could never reach it.
+   *
+   *   * A BUY MARKET order. `notionalReferencePrice` sizes it off the last
+   *     trade, and it lifts the offer — so the ask is the honest bound.
+   *   * A SELL carrying a limit. If that limit sits at or below the bid the
+   *     order is marketable and fills at the bid, which is higher than the price
+   *     the user typed. This is the case the ceiling was written for: PG bid
+   *     288.87, SELL 368 @ limit 271.56 priced itself at $99,934 against a
+   *     $100,000 cap and filled at 288.73 for $106,253.
+   *
+   * Everything else is already bounded by the figure the user typed. A BUY LIMIT
+   * cannot fill above its limit — that is what a limit order is — so pricing it
+   * off the ask refused orders that were inside the ceiling and told the user
+   * their $99,000 order was $101,000. A SELL STOP fills at or below its stop, so
+   * pricing it off the bid overstated it by the entire distance to the touch.
+   */
+  const aggressive =
+    intent.type === 'market'
+      ? intent.side === 'buy'
+        ? quote?.ask
+        : undefined
+      : intent.side === 'sell' && (intent.type === 'limit' || intent.type === 'stop_limit')
+        ? quote?.bid
+        : undefined;
+
   if (!finitePositive(aggressive)) return stated;
-  // Worse-for-the-user in both directions is simply the higher price: a buy
-  // paying the ask, a sell whose shares are worth the bid it hits.
   return Math.max(stated, aggressive);
 }
 

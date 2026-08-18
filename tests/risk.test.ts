@@ -12,6 +12,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { ceilingReferencePrice } from '@/lib/risk/engine';
 import {
   ADV_PARTICIPATION_LIMIT,
   MAX_NOTIONAL_PER_ORDER_USD,
@@ -494,5 +495,71 @@ describe('intent tokens', () => {
     const a = mintIntentToken(mintInput, { secret: 'test-secret-value-32-chars-long!!' });
     const b = mintIntentToken({ ...mintInput, clickTsMs: NOW + 1 }, { secret: 'test-secret-value-32-chars-long!!' });
     expect(a.payload.nonce).not.toBe(b.payload.nonce);
+  });
+});
+
+describe('ceilingReferencePrice', () => {
+  /*
+   * The fat-finger ceiling is sized off the worst price the order can actually
+   * transact at. Only two shapes can transact above the price the user typed;
+   * pricing the rest off the touch refused orders that were inside the ceiling
+   * and quoted the user a notional they never entered.
+   */
+  const quote = {
+    symbol: 'X',
+    bid: 100,
+    ask: 101,
+    last: 100.5,
+    bidSize: 500,
+    askSize: 500,
+    timestamp: 0,
+  } as unknown as Parameters<typeof ceilingReferencePrice>[1];
+
+  const at = (
+    type: 'market' | 'limit' | 'stop' | 'stop_limit',
+    side: 'buy' | 'sell',
+    limitPrice: number | null,
+    stopPrice: number | null,
+  ) =>
+    ceilingReferencePrice(
+      { type, side, limitPrice, stopPrice } as Parameters<typeof ceilingReferencePrice>[0],
+      quote,
+    );
+
+  it('prices a marketable sell limit off the bid it would hit', () => {
+    // The motivating case: the limit is below the bid, so it fills at the bid.
+    expect(at('limit', 'sell', 95, null)).toBe(100);
+  });
+
+  it('prices a resting sell limit off the limit itself', () => {
+    expect(at('limit', 'sell', 110, null)).toBe(110);
+  });
+
+  it('never prices a buy limit above the limit the user typed', () => {
+    // A buy limit cannot fill above its limit — that is what a limit order is.
+    expect(at('limit', 'buy', 99, null)).toBe(99);
+    expect(at('limit', 'buy', 105, null)).toBe(105);
+  });
+
+  it('prices a buy market order off the offer it lifts', () => {
+    expect(at('market', 'buy', null, null)).toBe(101);
+  });
+
+  it('leaves a sell market order at the reference the ticket shows', () => {
+    // It hits the bid, which is below `last`; the stated figure already bounds it.
+    expect(at('market', 'sell', null, null)).toBe(100.5);
+  });
+
+  it('never prices a sell stop off the bid it sits below', () => {
+    // A sell stop triggers below the market and fills at or under its stop.
+    expect(at('stop', 'sell', null, 90)).toBe(90);
+  });
+
+  it('prices a sell stop-limit off the bid when its limit is marketable', () => {
+    expect(at('stop_limit', 'sell', 95, 96)).toBe(100);
+  });
+
+  it('returns null when there is no reference price at all', () => {
+    expect(at('limit', 'buy', null, null)).toBeNull();
   });
 });

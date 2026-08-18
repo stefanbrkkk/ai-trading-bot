@@ -211,10 +211,33 @@ export function composeGenericNarrative(
   value: number,
   contributionPercent: number,
   supports: boolean,
-  signalDirection: 'long' | 'short',
+  signalDirection: 'long' | 'short' | 'flat',
 ): string {
   const pct = Math.round(contributionPercent);
   const formatted = formatFeatureValue(definition, value);
+
+  /*
+   * A flat signal has no stance to attribute anything to.
+   *
+   * Both shapes below name one — "this bullish conviction", "a headwind" — and a
+   * flat signal is published with the thesis "the model holds no directional
+   * conviction; aggregate driver contributions offset to within the noise
+   * floor". Printing "46% of this bullish conviction is driven by …" underneath
+   * that contradicts it in the same panel, and roughly a third of the universe
+   * publishes flat on any given day.
+   *
+   * So a flat signal describes the direction each driver pushed the model,
+   * which is true regardless of where the aggregate landed, and claims nothing
+   * about a conviction that does not exist.
+   */
+  if (signalDirection === 'flat') {
+    const opening = `${state.predicate} (${definition.label} at ${formatted})`;
+    const capitalised = `${opening.charAt(0).toUpperCase()}${opening.slice(1)}`;
+    return supports
+      ? `${capitalised} pushes the model's probability up by ${pct}% of total attribution, ${state.implication}.`
+      : `${capitalised} pushes it down by ${pct}% of total attribution, ${state.implication}.`;
+  }
+
   const stance = signalDirection === 'long' ? 'bullish' : 'bearish';
 
   if (supports) {
@@ -239,7 +262,9 @@ export interface TranslatedDriver extends SignalDriver {
    * Whether this driver argues for the direction that was published.
    *
    * Distinct from `direction`, which is the raw SHAP sign. On a short signal a
-   * driver with a negative SHAP value is a *supporting* one.
+   * driver with a negative SHAP value is a *supporting* one. On a flat signal
+   * there is no published direction to support, so this degenerates to the raw
+   * sign — the flat copy reads it as "pushed the probability up".
    */
   supports: boolean;
   /**
@@ -282,7 +307,13 @@ export function translateExplanation(
     topK: options.topK ?? 12,
     minShare: options.minShare ?? 0.002,
   });
-  const signalDirection = options.signalDirection === 'short' ? 'short' : 'long';
+  /*
+   * Kept as the three-valued direction, not collapsed to long/short.
+   *
+   * Collapsing 'flat' to 'long' made every flat signal's driver sentences claim
+   * a bullish conviction the page had just said did not exist.
+   */
+  const signalDirection = options.signalDirection;
 
   return ranked.map((c) => {
     const definition = featureDefinition(c.feature);
@@ -296,7 +327,7 @@ export function translateExplanation(
      * the two coincide; for a short they are opposites.
      */
     const direction: ImpactDirection = c.shap >= 0 ? 'positive' : 'negative';
-    const supports = signalDirection === 'long' ? c.shap >= 0 : c.shap < 0;
+    const supports = signalDirection === 'short' ? c.shap < 0 : c.shap >= 0;
     const contributionPercentage = clamp(c.share * 100, 0, 100);
 
     if (!definition) {
@@ -345,7 +376,8 @@ export function translateExplanation(
      * the vocabulary is identical and only the framing changes.
      */
     const narrative =
-      entry && supports
+      // A flat signal has no stance, and every matrix row asserts one.
+      entry && supports && signalDirection !== 'flat'
         ? hydrateTemplate(entry.template, contributionPercentage, c.value)
         : composeGenericNarrative(definition, state, c.value, contributionPercentage, supports, signalDirection);
 
@@ -365,7 +397,7 @@ export function translateExplanation(
       domain: domainForFeature(definition.key, definition.group),
       semanticKey: entry?.semanticKey ?? `${definition.key}_${state.state.toLowerCase()}`,
       contributionPercentage,
-      fromMatrix: Boolean(entry) && supports,
+      fromMatrix: Boolean(entry) && supports && signalDirection !== 'flat',
     };
   });
 }

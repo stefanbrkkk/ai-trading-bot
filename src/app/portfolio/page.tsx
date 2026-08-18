@@ -43,7 +43,6 @@ import {
   money,
   nyDateTime,
   price,
-  probability,
   ratio,
   signedFractionAsPercent,
 } from '@/lib/ui/format';
@@ -143,12 +142,10 @@ interface TailRiskResponse {
   holdings: number;
   sessions?: number;
   quantile?: number;
-  draws?: number;
-  jointTailProbability?: number;
-  independenceBaseline?: number;
   concentrationMultiple?: number;
-  averageLowerTailDependence?: number;
-  averageUpperTailDependence?: number;
+  expectedCoMovers?: number;
+  lowerTailDependence?: number;
+  upperTailDependence?: number;
   logLikelihood?: number;
   aic?: number;
   pairs?: TailPair[];
@@ -213,46 +210,49 @@ function TailRiskPanel({ account }: { account: 'paper' | 'live' }) {
   }
 
   const multiple = data.concentrationMultiple ?? 0;
+  const lambda = data.lowerTailDependence ?? 0;
+  const coMovers = data.expectedCoMovers ?? 0;
   const quantilePct = fractionAsPercent(data.quantile ?? 0.05, 0);
+  const others = Math.max(0, data.holdings - 1);
 
   return (
     <Panel className="mb-5">
       <PanelHeader
         eyebrow="Joint downside"
-        title="Everything falling at once"
-        detail={`A C-vine copula fitted to ${integer(data.sessions ?? 0)} sessions of log returns across ${integer(
+        title="What happens when one of them breaks"
+        detail={`The first tree of a C-vine, fitted to ${integer(data.sessions ?? 0)} sessions of log returns across ${integer(
           data.holdings,
-        )} holdings. It separates each position's own return distribution from the dependence between them, so the number below is co-movement alone — not volatility wearing a different name.`}
+        )} holdings: the ${integer(Math.max(0, data.holdings - 1))} pairwise dependences between the most-connected position and every other. A copula separates each position's own return distribution from the dependence between them, so the figures below are co-movement alone — not volatility wearing a different name.`}
       />
 
       <StatGrid columns={3} className="mt-4">
         <StatTile
           label="Concentration multiple"
-          value={`${ratio(multiple, multiple >= 100 ? 0 : 1)}×`}
-          tone={multiple >= 100 ? 'burgundy' : multiple >= 20 ? 'gold' : 'sage'}
-          footnote="Versus the same book with no dependence"
+          value={`${ratio(multiple, multiple >= 10 ? 1 : 2)}×`}
+          tone={multiple >= 5 ? 'burgundy' : multiple >= 2 ? 'gold' : 'sage'}
+          footnote="Against chance, which is 1.0×"
         />
         <StatTile
-          label={`P(all below own ${quantilePct})`}
-          value={probability(data.jointTailProbability ?? 0)}
-          footnote={`${integer(data.draws ?? 0)} seeded draws on the fitted vine`}
+          label={`P(a peer is also below its own ${quantilePct})`}
+          value={fractionAsPercent(lambda, 1)}
+          footnote="Exact from the fitted copulas — no sampling"
         />
         <StatTile
-          label="Lower-tail dependence"
-          value={ratio(data.averageLowerTailDependence ?? 0, 3)}
-          footnote="Mean lower-tail dependence across the first-tree edges"
+          label="Expected co-movers"
+          value={`${ratio(coMovers, 2)} of ${integer(others)}`}
+          footnote="Other holdings joining a name on its worst days"
         />
       </StatGrid>
 
       <Divider className="my-4" />
 
       <p className="text-[0.75rem] leading-relaxed text-parchment-dim">
-        Independence would put that joint probability at{' '}
-        <span className="tabular text-parchment">{probability(data.independenceBaseline ?? 0)}</span>. The fitted
-        dependence makes it <span className="tabular text-gold">{ratio(multiple, multiple >= 100 ? 0 : 1)}×</span>{' '}
-        likelier. That gap is the cost of holding names that move together, and it is invisible to a correlation
-        matrix — correlation is one number for the whole distribution, and these pairs are more dependent in the
-        left tail than in the middle.
+        On any given day a holding is below its own {quantilePct} threshold {quantilePct} of the time — that is what
+        the threshold means. But on a day when one of these names is down there, another is below its own threshold{' '}
+        <span className="tabular text-parchment">{fractionAsPercent(lambda, 1)}</span> of the time:{' '}
+        <span className="tabular text-gold">{ratio(multiple, multiple >= 10 ? 1 : 2)}×</span> more often than chance.
+        That excess is the cost of holding names that break together, and a correlation matrix cannot show it —
+        correlation is one number for the whole distribution, while this is measured in the left tail specifically.
       </p>
 
       {data.pairs && data.pairs.length > 0 ? (
@@ -301,8 +301,10 @@ function TailRiskPanel({ account }: { account: 'paper' | 'live' }) {
             Kendall&rsquo;s <span className="text-parchment">τ</span> is rank correlation; lower-tail dependence{' '}
             <span className="text-parchment">λ</span>
             <sub>L</sub> is the limiting probability that one name is in its own left tail given that the other
-            already is. Each family was selected by AIC against the pair&rsquo;s own pseudo-observations, not
-            assumed. Fit log-likelihood {ratio(data.logLikelihood ?? 0, 1)}, AIC {ratio(data.aic ?? 0, 1)}.
+            already is, and it has a closed form for every family here — Gaussian and Frank are exactly zero, which
+            is itself worth knowing when it happens. Each family was selected by AIC against the pair&rsquo;s own
+            pseudo-observations, not assumed. First-tree log-likelihood {ratio(data.logLikelihood ?? 0, 1)}, AIC{' '}
+            {ratio(data.aic ?? 0, 1)}.
           </p>
         </>
       ) : null}

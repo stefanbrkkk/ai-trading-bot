@@ -401,6 +401,29 @@ describe('narrative direction is signal-relative', () => {
     });
   }
 
+  it('claims no stance at all on a flat signal', () => {
+    /*
+     * A flat signal publishes "the model holds no directional conviction".
+     * The per-driver sentences used to sit underneath that saying "46% of this
+     * bullish conviction is driven by …", because 'flat' was collapsed to 'long'
+     * before the stance word was chosen. About a third of the universe publishes
+     * flat on a given day.
+     */
+    const flat = translateExplanation(explanation, { signalDirection: 'flat' });
+    expect(flat.length).toBeGreaterThan(0);
+    for (const d of flat) {
+      expect(d.narrative, d.featureKey).not.toContain('bullish');
+      expect(d.narrative, d.featureKey).not.toContain('bearish');
+      expect(d.narrative, d.featureKey).not.toContain('conviction');
+      expect(d.narrative, d.featureKey).not.toContain('headwind');
+      expect(d.narrative, d.featureKey).toContain('total attribution');
+      // And it still says which way the driver pushed the model.
+      expect(/pushes (the model's probability up|it down)/.test(d.narrative), d.narrative).toBe(true);
+    }
+    // A verbatim matrix row asserts a stance, so none may be used on a flat signal.
+    expect(flat.every((d) => !d.fromMatrix)).toBe(true);
+  });
+
   it('uses the stance word that matches the published direction', () => {
     const short = translateExplanation(explanation, { signalDirection: 'short' });
     const supporting = short.find((d) => d.supports);

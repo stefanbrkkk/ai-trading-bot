@@ -117,35 +117,6 @@ export function ratio(value: number, digits = 3): string {
   return fixed(value, digits);
 }
 
-/**
- * A probability, rendered so that a very small one is still readable.
- *
- * Joint-tail probabilities span six orders of magnitude — 3.4e-3 for a
- * concentrated book, 6.3e-6 for the same book under independence — and neither a
- * percentage nor a fixed number of decimals can show both. "0.000625%" is a
- * string a reader counts zeros in; "6.25 × 10⁻⁶" is a number they can compare at
- * a glance to the one beside it.
- *
- * Above a tenth of a percent the exponent is noise, so it reads as a plain
- * percentage instead — one formatter, chosen by magnitude, so two probabilities
- * in the same panel are never written in two different systems by accident.
- */
-export function probability(value: number, digits = 2): string {
-  if (!Number.isFinite(value) || value < 0) return '—';
-  if (value === 0) return '0';
-  if (value >= 0.001) return fractionAsPercent(value, digits);
-  const exponent = Math.floor(Math.log10(value));
-  const mantissa = value / 10 ** exponent;
-  const superscripts: Record<string, string> = {
-    '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
-    '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
-  };
-  const digitsOfExponent = String(Math.abs(exponent))
-    .split('')
-    .map((d) => superscripts[d] ?? d)
-    .join('');
-  return `${fixed(mantissa, digits)} × 10⁻${digitsOfExponent}`;
-}
 
 /**
  * `toFixed` with the typographic minus, and without a signed zero.
