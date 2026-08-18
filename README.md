@@ -48,9 +48,9 @@ an error. Tailwind for styling. Framer Motion for transitions.
 
 Three deliberate absences:
 
-- **No charting library.** Every chart is hand-written SVG. Seventeen of them, of
-  which fourteen are rendered; `CalibrationPlot`, `DepthLadder` and `Sparkline`
-  are built and not yet placed, and this sentence exists so that stays visible.
+- **No charting library.** Every chart is hand-written SVG. Sixteen of them, and
+  all sixteen are rendered — this sentence used to record that three were built
+  and unplaced, which is the kind of thing that quietly stays true forever.
 - **No ML framework.** The gradient-boosted trees, the LSTM/BiLSTM/TFT agents and the
   reverse-mode autodiff that trains them are implemented from scratch in TypeScript.
 - **No vendor SDKs.** Three providers — Anthropic, OpenAI and DeepSeek — are served
@@ -68,7 +68,7 @@ append-only DDL runs on Postgres by registering one adapter.
 npm run dev          # dev server on :3000
 npm run seed         # full seed (~3 min) — trains and persists everything
 npm run seed:fast    # reduced budget (~20s) — for CI and E2E
-npm run verify       # typecheck → lint → 202 unit tests → build → 43 E2E tests
+npm run verify       # typecheck → lint → 229 unit tests → build → 44 E2E tests
 ```
 
 The E2E suite seeds its own data directory on first run, so `npm run e2e` works on a
@@ -118,8 +118,11 @@ in `tests/`.
 - **GBDT** with second-order Newton boosting; **LSTM, BiLSTM and a Temporal Fusion
   Transformer** with a monotonic quantile head, trained by matrix-level reverse-mode
   autodiff.
-- ECDF normalisation, C-vine copulas, PCA, Rogers-Satchell volatility, and the usual
-  indicator set.
+- ECDF normalisation, PCA, Rogers-Satchell volatility, and the usual indicator set.
+- **C-vine copulas** with per-pair family selection by AIC — Clayton, Gumbel,
+  Student-t, Gaussian, Frank — behind the joint-downside panel on `/portfolio`. It
+  answers the question a correlation matrix cannot: how much likelier the fitted
+  dependence makes every holding falling together than independence would.
 
 ### The conflict-resolution router
 
@@ -132,9 +135,13 @@ which one prevailed and why. It never averages a disagreement away silently.
 
 ## Honest reporting
 
-The seeded model's out-of-sample accuracy is **56.1%** against an in-sample **73.2%**,
-and the portfolio backtest returns **−3.7%** with a Sharpe of **−0.31**. Most
-strategies have a profit factor below 1.
+The seeded model's out-of-sample accuracy is **59.8%** against an in-sample **76.2%**,
+with an AUC of **0.614** and a Brier score of **0.2400**. Its reliability curve is on
+the transparency page: expected calibration error **0.042**, measured on the 353
+held-out samples, and the curve sits slightly below the diagonal in the confident
+bands — the model is a little overconfident, and the page says so. The portfolio
+backtest returns **−3.7%** with a Sharpe of **−0.38**. Most strategies have a profit
+factor below 1.
 
 Those numbers are on the transparency and backtest pages, in the same size type as
 everything else, and the survival scorecard shows every threshold that was missed
@@ -257,8 +264,8 @@ using only what you knew then" an answerable question.
 ## Testing
 
 ```
-202 unit tests   (vitest)
- 43 E2E tests    (Playwright, real Chromium)
+229 unit tests   (vitest)
+ 44 E2E tests    (Playwright, real Chromium)
 ```
 
 The unit tests check against independent references wherever one exists, because

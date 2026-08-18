@@ -50,6 +50,7 @@ import {
   type BrokerStatePort,
   type PaperAccountState,
   type PaperOrderRecord,
+  type PaperPositionState,
   type QuoteSource,
 } from '@/lib/broker/types';
 
@@ -552,7 +553,14 @@ export class PaperBroker implements BrokerAdapter {
       return;
     }
 
-    const existing = state.positions[index];
+    /*
+     * `index` came from `findIndex` and the `-1` case returned above, so this
+     * element exists. Under `noUncheckedIndexedAccess` the compiler cannot see
+     * that, and asserting it once here is honest — the alternative is nine
+     * separate non-null assertions on the lines below, which would be nine
+     * places for the invariant to be forgotten instead of one.
+     */
+    const existing = state.positions[index] as PaperPositionState;
     const adding = existing.quantity === 0 || Math.sign(existing.quantity) === Math.sign(signed);
     let realised = -commission;
 

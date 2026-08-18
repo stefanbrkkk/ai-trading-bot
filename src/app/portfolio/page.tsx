@@ -240,7 +240,7 @@ function TailRiskPanel({ account }: { account: 'paper' | 'live' }) {
         <StatTile
           label="Lower-tail dependence"
           value={ratio(data.averageLowerTailDependence ?? 0, 3)}
-          footnote="Mean λ‾ across the first-tree edges"
+          footnote="Mean lower-tail dependence across the first-tree edges"
         />
       </StatGrid>
 
@@ -261,10 +261,17 @@ function TailRiskPanel({ account }: { account: 'paper' | 'live' }) {
           <TableShell minWidth={520}>
             <thead>
               <tr>
+                {/*
+                  Words, not Greek letters. `Th` renders `uppercase`, which turns
+                  τ into Τ — visually a Latin T — and λ‾ into Λ¯. Case is not
+                  decoration on a mathematical symbol: Λ is a different quantity
+                  from λ. The symbols are named in the footnote below, where they
+                  survive intact.
+                */}
                 <Th>Pair</Th>
                 <Th>Family</Th>
-                <Th align="right">τ</Th>
-                <Th align="right">λ‾</Th>
+                <Th align="right">Kendall tau</Th>
+                <Th align="right">Lower tail</Th>
                 <Th>What it means</Th>
               </tr>
             </thead>
@@ -291,8 +298,11 @@ function TailRiskPanel({ account }: { account: 'paper' | 'live' }) {
             </tbody>
           </TableShell>
           <p className="mt-3 text-[0.75rem] leading-relaxed text-parchment-faint">
-            Each family was selected by AIC against the pair&rsquo;s own pseudo-observations, not assumed. Fit
-            log-likelihood {ratio(data.logLikelihood ?? 0, 1)}, AIC {ratio(data.aic ?? 0, 1)}.
+            Kendall&rsquo;s <span className="text-parchment">τ</span> is rank correlation; lower-tail dependence{' '}
+            <span className="text-parchment">λ</span>
+            <sub>L</sub> is the limiting probability that one name is in its own left tail given that the other
+            already is. Each family was selected by AIC against the pair&rsquo;s own pseudo-observations, not
+            assumed. Fit log-likelihood {ratio(data.logLikelihood ?? 0, 1)}, AIC {ratio(data.aic ?? 0, 1)}.
           </p>
         </>
       ) : null}

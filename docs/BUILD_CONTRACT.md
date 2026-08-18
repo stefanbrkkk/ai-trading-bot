@@ -7,11 +7,22 @@ subsystems consistent.
 
 1. **TypeScript strict.** `tsconfig.json` sets `strict`, `noUnusedLocals`,
    `noUnusedParameters`, `noImplicitOverride`, `noFallthroughCasesInSwitch`.
+   `noUncheckedIndexedAccess` is deliberately **off**, and that is a measured
+   position rather than an oversight: turning it on produces 18 errors, and every
+   one of them was read and found to be provably guarded — a `findIndex` whose
+   `-1` case returned above it, an `Object.keys` loop indexing its own object, an
+   array walk bounded by `Math.min` of both lengths, a JSON-Pointer leaf after an
+   explicit empty-pointer branch. It would buy 18 assertions and no safety. Note
+   that it is not part of `strict`, so "TypeScript strict" remains exactly true.
+   The defensive `] as T` index casts throughout the codebase are written as
+   though it were on, which costs nothing and keeps the option open.
    `@typescript-eslint/no-explicit-any` is an **error** — never use `any`. Use
    `unknown` plus a narrowing guard.
-2. **No new dependencies.** The installed set is exactly: `next@15.5.23`,
-   `react@19.2`, `zustand@5`, `framer-motion@12`, `flubber@0.4.2`, `zod@3.25`,
-   and dev-only `vitest@3.2`, `@playwright/test`, `tailwindcss@3.4`, `eslint`.
+2. **No new dependencies.** The runtime set is exactly: `next@15.5.23`,
+   `react@19.2`, `zustand@5`, `framer-motion@12`, `flubber@0.4.2`, `zod@3.25`.
+   Dev-only: `vitest@3.2`, `@playwright/test`, `tailwindcss@3.4`, `eslint` with
+   `@eslint/eslintrc`, `typescript`, `tsx` (load-bearing — `npm run seed` and the
+   `postbuild` hook run through it), `postcss`, `autoprefixer` and `@types/*`.
    Node built-ins are fine (`node:crypto`, `node:sqlite`, `node:fs`). Nothing
    else may be added. (`node-sql-parser@5.4` was provisioned for the SQL
    validator's AST layer and then never imported — the validator tokenises and
