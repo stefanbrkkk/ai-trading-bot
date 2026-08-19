@@ -24,10 +24,20 @@
  * three) put the arc's head 90° away from the terminal tick that is supposed to
  * mark it. C = 2πr = 527.79.
  *
- * The morph is built lazily. Flubber's mixer is expensive enough that creating it
- * unconditionally cost 12.5s of blocked main thread on the five-dial publication
- * list, so `MorphingArc` — the only code that touches Flubber — mounts on the
- * first morph and not before. A dial that is never unspooled never loads it.
+ * The morph is built lazily, with one deliberate exception. Flubber's mixer is
+ * expensive enough that creating it unconditionally cost 12.5s of blocked main
+ * thread on the five-dial publication list, so `MorphingArc` — the only code that
+ * touches Flubber — mounts on the first morph, or earlier if a caller sets
+ * `prewarmMorph`. The publication list sets neither and builds no mixer at all;
+ * the symbol page sets `prewarmMorph` from its idle signal, so the one dial in
+ * the product that is certain to morph builds its mixer in spare time rather than
+ * under the user's first press.
+ *
+ * This paragraph used to end "a dial that is never unspooled never loads it".
+ * `prewarmMorph` made that false for the symbol page, and the verb was never
+ * right in any case: `interpolate` is imported at module scope, so Flubber is in
+ * the bundle of every page that renders a dial. What the gate saves is the
+ * construction, not the download.
  *
  * Both entrances are gated on the dial's own visibility, the same contract
  * `reveal.ts` states for every chart in this directory. The dial was the one
@@ -321,8 +331,8 @@ export function ConvictionDial({
 
 /**
  * The Flubber-backed arc. Split out so the mixer is constructed on mount, and the
- * module's only `interpolate` call sits behind a component that a page which never
- * morphs never renders.
+ * module's only `interpolate` call sits behind a component that a dial with no
+ * morph and no `prewarmMorph` never renders.
  */
 function MorphingArc({
   morphValue,

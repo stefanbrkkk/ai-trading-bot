@@ -1,12 +1,13 @@
 /**
  * The three states every data page has.
  *
- * Loading, failed and empty are rendered here once rather than in fifteen pages,
- * and the failure case is the reason this component exists in its own file: a
- * request that fails must show the server's *own* message. Several of those
- * messages are mandated copy — a risk rejection, a subscription gate, an
- * unseeded engine — and a page that substituted a friendly "something went
- * wrong" would replace a compliance-relevant string with marketing.
+ * Loading, failed and empty are rendered here once rather than separately in
+ * every page that loads data, and the failure case is the reason this component
+ * exists in its own file: a request that fails must show the server's *own*
+ * message. Several of those messages are mandated copy — a risk rejection, a
+ * subscription gate, an unseeded engine — and a page that substituted a friendly
+ * "something went wrong" would replace a compliance-relevant string with
+ * marketing.
  *
  * The distinction between "not ready" and "broken" is also made here. An
  * unseeded engine and a missing model are operational states with a known
@@ -95,7 +96,7 @@ export function ErrorPanel({
  * `label` is written as an action, because that is what a visible caption above a
  * skeleton should say: "Loading the account", "Sweeping the universe". The live
  * region then interpolated the same string as a noun and announced "Loading the
- * account loaded." — on every async panel in the product, sixteen of them, and
+ * account loaded." — on every async panel in the product, seventeen of them, and
  * "Loading your decision history: nothing to show." for the empty ones.
  *
  * A leading present participle is dropped, which turns the caption back into the

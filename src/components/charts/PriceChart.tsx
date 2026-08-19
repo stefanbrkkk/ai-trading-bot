@@ -16,6 +16,12 @@
  * pre-computed; this component owns no statistics and fetches nothing. The single
  * piece of local state is the crosshair, which is per-pointer, never persisted and
  * never lifted — a cursor position is not application state.
+ *
+ * The static layers are drawn in one order for one reason: every rule first, then
+ * the published level readouts last, each on an opaque plate. Anything drawn after
+ * a label crosses it, and these five figures — the entry zone, the invalidation,
+ * both targets and VWAP — are the numbers a reader acts on. The collisions that
+ * forced it are listed on `levelLabelPlate`.
  */
 
 import { useMemo, useState } from 'react';
@@ -41,6 +47,7 @@ import {
   BURGUNDY,
   BURGUNDY_BRIGHT,
   CHAMPAGNE,
+  CHARCOAL,
   GOLD,
   OBSIDIAN_EDGE,
   PARCHMENT,
@@ -63,6 +70,38 @@ const GRID_TICKS = 5;
 const DATE_LABELS = 6;
 const AXIS_TEXT = 9;
 const LEVEL_TEXT = 9;
+/**
+ * Minimum vertical distance between two level labels, handed to `spreadLabels`.
+ *
+ * Also the ceiling on a label plate's height: the plates are only guaranteed not
+ * to overlap each other because every label is at least this far from its
+ * neighbour, so a plate that grew past this gap would knock out the label above
+ * it — the defect it exists to prevent, reintroduced by the fix. The two numbers
+ * have to be read together, so they are defined together.
+ */
+const LEVEL_LABEL_GAP = LEVEL_TEXT + 3;
+/**
+ * Advance width of one glyph of the label face, and the padding around a plate.
+ *
+ * The labels are drawn in JetBrains Mono, whose every glyph — digits, capitals
+ * and the en dash in the entry range alike — advances 0.6em, so 9px text is
+ * 5.4px per character and the box is exact rather than measured. `useChartWidth`
+ * gives this component a width but no text metrics, and a plate sized from a
+ * `getBBox()` after paint would be a second layout pass for a rectangle whose
+ * size is arithmetic.
+ *
+ * The padding is 3px rather than 0 so that a fallback face — `ui-monospace`,
+ * Menlo — has somewhere to go: the widest label here is 19 characters, so an
+ * advance 0.02em wider than JetBrains Mono's overruns by 3.4px, which the
+ * padding all but absorbs. It is also small enough that the plate stops 3px
+ * short of the plot's right edge, leaving the leader lane at `f.x1 - 2` clear.
+ */
+const LEVEL_CHAR_PX = LEVEL_TEXT * 0.6;
+const LEVEL_PLATE_PAD_X = 3;
+/** JetBrains Mono caps and digits stand 0.73em above the baseline. */
+const LEVEL_CAP_PX = LEVEL_TEXT * 0.73;
+/** Clearance above the cap line and below the baseline on a label plate. */
+const LEVEL_PLATE_PAD_Y = 2.2;
 /** Above this many bars the monotone cubic is invisible and just costs DOM. */
 const SMOOTH_LIMIT = 120;
 
@@ -130,6 +169,10 @@ interface VolumeBar {
  * target prices at 3.40:1 — the invalidation price, unreadable, on the chart the
  * whole page is about. Every other chart here already draws text from the
  * `_BRIGHT` tokens; this was the one that did not.
+ *
+ * Those ratios are against the panel the chart sits on. The labels now sit on a
+ * plate of their own instead — see `levelLabelPlate` — where each is a little
+ * higher again.
  */
 interface LevelMark {
   /** Where the line is drawn — the price. */
@@ -182,6 +225,57 @@ function isDrawable(bar: Bar | undefined): bar is Bar {
 function traced(points: readonly Point[]): string {
   if (points.length === 0) return '';
   return points.length <= SMOOTH_LIMIT ? smoothPath(points) : linePath(points);
+}
+
+/** The opaque rectangle painted under a level label, in viewBox units. */
+export interface LabelPlate {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * The plate that knocks a level label out of everything drawn beneath it.
+ *
+ * `spreadLabels` separates the labels from each *other*, and that was read as
+ * having solved collision. It had not: the rules stayed where the prices put
+ * them while the text moved, so every label was pushed onto some neighbouring
+ * horizontal, and the labels were painted straight onto the plot with nothing
+ * behind them. On AAPL's published levels, at every width — the geometry is
+ * width-independent, since the height is fixed and the viewBox scales uniformly:
+ *
+ *   T1 131.83            struck by its own sage rule 2.5px above the baseline,
+ *                        38% of the way up the digits
+ *   T2 124.16            its own rule across the cap line, a grid rule at the feet
+ *   ENTRY 140.60–142.80  the champagne VWAP rule at the baseline and the gold
+ *                        entry band through the lower half of the glyphs
+ *   VWAP 140.85          the burgundy INVALIDATION rule through the upper fifth
+ *   INVALIDATION 148.28  clear of every rule, printed over red candle bodies
+ *
+ * These are the five numbers a reader acts on. So each is given a plate in the
+ * panel surface colour before its glyphs are drawn, and the whole label block is
+ * painted after every rule (see the render below) so that no rule can land on
+ * top of one either.
+ *
+ * `anchor` mirrors the `text-anchor` of the label it backs — the level readouts
+ * end at the right edge of the plot, VWAP starts at the left — and `baseline` is
+ * the text's own `y`. The box is sized from the mono advance rather than
+ * measured; see `LEVEL_CHAR_PX`.
+ */
+export function levelLabelPlate(
+  label: string,
+  x: number,
+  baseline: number,
+  anchor: 'start' | 'end',
+): LabelPlate {
+  const text = label.length * LEVEL_CHAR_PX;
+  return {
+    x: (anchor === 'end' ? x - text : x) - LEVEL_PLATE_PAD_X,
+    y: baseline - LEVEL_CAP_PX - LEVEL_PLATE_PAD_Y,
+    width: text + 2 * LEVEL_PLATE_PAD_X,
+    height: LEVEL_CAP_PX + 2 * LEVEL_PLATE_PAD_Y,
+  };
 }
 
 function computeLayout(props: PriceChartProps): Layout | null {
@@ -350,7 +444,8 @@ function computeLayout(props: PriceChartProps): Layout | null {
         labelY: top,
         label: `ENTRY ${price(Math.min(levels.entryZoneLow, levels.entryZoneHigh))}–${price(Math.max(levels.entryZoneLow, levels.entryZoneHigh))}`,
         colour: GOLD,
-        // Gold already measures 8.9:1 on obsidian; it is the reference, not an exception.
+        // Gold measures 8.76:1 on the plate the labels are drawn on; it is the
+        // reference the `_BRIGHT` tokens exist to reach, not an exception to it.
         textColour: GOLD,
       });
     }
@@ -365,10 +460,15 @@ function computeLayout(props: PriceChartProps): Layout | null {
    * each other, 103px of overlap on a 1298px chart. The lines stay exactly where
    * the prices are; only the text is pushed apart, and each label keeps a leader
    * to the line it belongs to.
+   *
+   * Which is also why the labels need plates. Moving the text off its own line
+   * moves it onto somebody else's — a neighbouring level, the VWAP rule, a grid
+   * line — so label-from-label separation is only half of the problem and
+   * `levelLabelPlate` is the other half.
    */
   const labelYs = spreadLabels(
     levelMarks.map((mark) => mark.y),
-    LEVEL_TEXT + 3,
+    LEVEL_LABEL_GAP,
     priceY0 + LEVEL_TEXT,
     priceY1,
   );
@@ -497,6 +597,14 @@ export function PriceChart(props: PriceChartProps) {
   const cursorX = cursor ? centre(clampIndex(cursor.index)) : 0;
   // The readout sits opposite the pointer so it never covers the bar being read.
   const readoutOnRight = cursorX < (f.x0 + f.x1) / 2;
+
+  // VWAP is a published level like the other four, so its rule and its readout
+  // join the two-pass draw below rather than being one self-contained group.
+  const vwapShown = vwapY !== null && vwapY >= priceY0 && vwapY <= priceY1;
+  const vwapBaseline = (vwapY ?? 0) - 3;
+  const vwapLabel = vwapShown ? `VWAP ${price(vwap as number)}` : '';
+  const vwapPlate = levelLabelPlate(vwapLabel, f.x0 + 2, vwapBaseline, 'start');
+  const drawnMarks = levelMarks.filter((mark) => mark.y >= priceY0 - 0.5 && mark.y <= priceY1 + 0.5);
 
   return (
     <div className="relative">
@@ -659,45 +767,93 @@ export function PriceChart(props: PriceChartProps) {
           />
         )}
 
-        {/* ── 5. Signal levels ─────────────────────────────────────────────── */}
+        {/* ── 5. Signal level rules, and the VWAP rule ─────────────────────── */}
         {entryZone ? (
           <rect x={f.x0} y={entryZone.y} width={f.innerWidth} height={entryZone.height} fill={GOLD} fillOpacity={0.1} aria-hidden />
         ) : null}
         <g aria-hidden>
-          {levelMarks.map((mark) => {
-            if (mark.y < priceY0 - 0.5 || mark.y > priceY1 + 0.5) return null;
+          {drawnMarks.map((mark) => (
+            <g key={mark.label}>
+              {mark.dash ? (
+                <line
+                  x1={f.x0}
+                  x2={f.x1}
+                  y1={mark.y}
+                  y2={mark.y}
+                  stroke={mark.colour}
+                  strokeWidth={1}
+                  strokeDasharray={mark.dash}
+                  shapeRendering="crispEdges"
+                />
+              ) : null}
+              {Math.abs(mark.labelY - mark.y) > 1 ? (
+                /*
+                 * The label was moved off its line, so a leader says which line
+                 * it names. It runs down the lane between the plate's right edge
+                 * and the plot's, so the label pass below cannot bury it.
+                 */
+                <line
+                  x1={f.x1 - 2}
+                  x2={f.x1 - 2}
+                  y1={mark.y}
+                  y2={mark.labelY - 3}
+                  stroke={mark.colour}
+                  strokeWidth={1}
+                  strokeOpacity={0.5}
+                />
+              ) : null}
+            </g>
+          ))}
+          {vwapShown ? (
+            <line
+              x1={f.x0}
+              x2={f.x1}
+              y1={vwapY as number}
+              y2={vwapY as number}
+              stroke={CHAMPAGNE}
+              strokeOpacity={0.8}
+              strokeWidth={1}
+              strokeDasharray="1 3"
+              shapeRendering="crispEdges"
+            />
+          ) : null}
+        </g>
+
+        {/*
+          ── 6. The level readouts ───────────────────────────────────────────
+
+          Last of the static layers, and each on its own opaque plate, so that
+          neither a rule drawn earlier nor a candle behind it can cross a
+          published price. Splitting the labels out of their marks is what makes
+          the paint order right: drawn inside the mark groups above, every rule
+          after the first was painted over the label before it — the VWAP dashes
+          across ENTRY, the burgundy invalidation rule across VWAP — and no
+          amount of plating fixes something drawn on top. `levelLabelPlate`
+          carries the measured collisions.
+
+          The labels sit inside the right edge of the plot rather than beyond it:
+          the right margin already belongs to the price axis, and overlapping the
+          two would make both unreadable. VWAP keeps the left edge, which is the
+          one place a fifth label can go without joining that column.
+
+          The plate is `CHARCOAL`, the plinth's lower gradient stop. By the level
+          block the gradient has run most of the way there — #181818, which is
+          what the ratios in `LevelMark` were measured against — so the plate is
+          four 8-bit levels darker than what surrounds it, and reads as a faint
+          chip rather than a seam. It raises every label's contrast slightly
+          rather than lowering it: burgundy-bright 5.16:1 to 5.35:1, sage-bright
+          6.20 to 6.44, gold 8.44 to 8.76, champagne 14.61 to 15.16.
+        */}
+        <g aria-hidden>
+          {drawnMarks.map((mark) => {
+            const baseline = mark.labelY - 3;
+            const plate = levelLabelPlate(mark.label, f.x1 - 6, baseline, 'end');
             return (
               <g key={mark.label}>
-                {mark.dash ? (
-                  <line
-                    x1={f.x0}
-                    x2={f.x1}
-                    y1={mark.y}
-                    y2={mark.y}
-                    stroke={mark.colour}
-                    strokeWidth={1}
-                    strokeDasharray={mark.dash}
-                    shapeRendering="crispEdges"
-                  />
-                ) : null}
-                {/* Labels sit inside the right edge of the plot: the right margin
-                    already belongs to the price axis, and overlapping the two
-                    would make both unreadable. */}
-                {Math.abs(mark.labelY - mark.y) > 1 ? (
-                  // The label was moved off its line, so a leader says which line it names.
-                  <line
-                    x1={f.x1 - 2}
-                    x2={f.x1 - 2}
-                    y1={mark.y}
-                    y2={mark.labelY - 3}
-                    stroke={mark.colour}
-                    strokeWidth={1}
-                    strokeOpacity={0.5}
-                  />
-                ) : null}
+                <rect x={plate.x} y={plate.y} width={plate.width} height={plate.height} fill={CHARCOAL} />
                 <text
                   x={f.x1 - 6}
-                  y={mark.labelY - 3}
+                  y={baseline}
                   textAnchor="end"
                   fontSize={LEVEL_TEXT}
                   fill={mark.textColour}
@@ -708,27 +864,28 @@ export function PriceChart(props: PriceChartProps) {
               </g>
             );
           })}
+          {vwapShown ? (
+            <>
+              <rect
+                x={vwapPlate.x}
+                y={vwapPlate.y}
+                width={vwapPlate.width}
+                height={vwapPlate.height}
+                fill={CHARCOAL}
+              />
+              <text
+                x={f.x0 + 2}
+                y={vwapBaseline}
+                fontSize={LEVEL_TEXT}
+                fill={CHAMPAGNE}
+                fillOpacity={0.8}
+                className="tabular"
+              >
+                {vwapLabel}
+              </text>
+            </>
+          ) : null}
         </g>
-
-        {/* ── 6. VWAP ──────────────────────────────────────────────────────── */}
-        {vwapY !== null && vwapY >= priceY0 && vwapY <= priceY1 ? (
-          <g aria-hidden>
-            <line
-              x1={f.x0}
-              x2={f.x1}
-              y1={vwapY}
-              y2={vwapY}
-              stroke={CHAMPAGNE}
-              strokeOpacity={0.8}
-              strokeWidth={1}
-              strokeDasharray="1 3"
-              shapeRendering="crispEdges"
-            />
-            <text x={f.x0 + 2} y={vwapY - 3} fontSize={LEVEL_TEXT} fill={CHAMPAGNE} fillOpacity={0.8} className="tabular">
-              VWAP {price(vwap as number)}
-            </text>
-          </g>
-        ) : null}
 
         {/* ── 7. Volume panel ──────────────────────────────────────────────── */}
         {showVolumePanel ? (

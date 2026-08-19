@@ -36,7 +36,7 @@ architecture, and most of the unusual decisions in this codebase follow from it:
 | --- | --- |
 | Analysis must be impersonal | No signal, level, narrative or ranking reads your holdings. The account is read for the pre-trade margin check and to display back to you — nowhere else. |
 | No discretionary trading | Order routing is reachable only from a physical click carrying a single-use authorisation. There is no scheduler, no completion hook, no autonomous path to a broker. |
-| No position sizing | Every order field starts blank and stays blank. The published Kelly fraction is an impersonal model statistic and is not readable from the ticket. |
+| No position sizing | Quantity, order type and the price fields start blank and stay blank; side, time in force and account carry visible conventional defaults derived from nothing about you and nothing about a model output. The published Kelly fraction is an impersonal model statistic and is not readable from the ticket. |
 | Every claim must be checkable | Attributions are exact, not sampled. The local-accuracy residual is displayed. Generated SQL is shown. Retrieved answers are graded claim by claim. |
 
 ---
@@ -102,8 +102,13 @@ DATABASE_URL=                         # embedded SQLite; Postgres needs a driver
 
 Provider resolution treats an unset and an empty credential as the same thing, so
 there is no "demo key" path. A named provider whose key is missing degrades to the
-deterministic engine and says so on the transparency page rather than failing the
-process.
+deterministic engine and says so on the control centre (`/control`), under "Provider
+status — what is actually serving", rather than failing the process. The AI indicator
+in the top bar carries the same live-or-deterministic state on wide viewports, but
+only that panel prints the reason in full: which provider was named, and which
+credential was absent. It is the control centre and not the transparency page: the
+latter carries the model card, the feature registry and the attribution method, and
+has no provider surface at all.
 
 ---
 
@@ -276,7 +281,7 @@ using only what you knew then" an answerable question.
 ## Testing
 
 ```
-479 unit tests   (vitest)
+581 unit tests   (vitest)
  44 E2E tests    (Playwright, real Chromium)
 ```
 

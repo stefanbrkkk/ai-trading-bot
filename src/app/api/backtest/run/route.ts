@@ -58,7 +58,29 @@ export const POST = handler(async (request: Request) => {
   if (!user) throw new ApiError('UNAUTHENTICATED', 'Sign in to run a backtest.', 401);
 
   const body = await parseBody(request, bodySchema);
-  const history = loadArtefact<Record<string, { time: number; raw: Record<string, number> }[]>>('agent-history');
+  /*
+   * One read of the feature history, not two.
+   *
+   * This call used to have a twin on the line above it: the same
+   * `loadArtefact('agent-history')`, bound to a `{ time: number; raw: … }[]`
+   * shape the artefact has never had — its entries are keyed `symbol`, `now`,
+   * `raw`, `vector`, `values`, `artefacts`, and nothing ever read the binding.
+   * A `void history;` below the guard kept it alive, which is precisely the
+   * idiom that silences the unused-variable rule, so neither `tsc` nor eslint
+   * ever mentioned it; and the minifier could not drop the call either, because
+   * `loadArtefact` is not provably side-effect-free. The shipped bundle really
+   * did read and parse the file twice and throw the first copy away.
+   *
+   * That is not free. Measured on the seeded artefact — 115,688,529 bytes —
+   * each load costs ~1.4 s of blocking read-and-parse and ~250 MB of
+   * allocation, against ~0.2 s for everything else this handler does: the
+   * simulator, the nearest-bar snap, the risk-reversal history and the
+   * backtest itself. `loadArtefact` (src/lib/engine/store.ts) is uncached, so
+   * nothing downstream absorbed the duplicate. `src/lib/engine/service.ts`
+   * memoises this same artefact for the universe sweep, but behind a
+   * module-private accessor, so this handler still pays for its own read — once
+   * per request, which is what this note is about.
+   */
   const featureSnapshots = loadArtefact<Record<string, ComputedFeatures[]>>('agent-history');
   if (!featureSnapshots) {
     return pendingSetup(
@@ -66,7 +88,6 @@ export const POST = handler(async (request: Request) => {
       'Feature history is unavailable. Seed the deployment before running a backtest.',
     );
   }
-  void history;
 
   const now = referenceNow(Date.now());
   const provider = new SimulatorProvider({ seed: process.env.AURELIUS_SEED ?? 20240117, now, years: 3 });

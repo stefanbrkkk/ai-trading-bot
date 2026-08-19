@@ -378,15 +378,55 @@ select:focus {
 }
 
 /*
- * A table's minimum width, applied only from `sm` up.
+ * A table's minimum width, applied at every width.
  *
- * `TableShell` publishes its floor as `--table-min-width`; the media query is
- * what makes it conditional, which a React inline style cannot be.
+ * `TableShell` publishes its floor as `--table-min-width`; this rule reads it.
+ *
+ * The rule used to be wrapped in `@media (min-width: 640px)`, on the theory
+ * that a phone is better served by releasing the floor and letting the table
+ * lay out to the width it has and wrap. It does not lay out to the width it
+ * has. An `auto`-layout table cannot be narrower than its own min-content
+ * width, so releasing the floor does not fit the table into the scrollport — it
+ * parks it at min-content, which is every column crushed to its longest
+ * unbreakable token at once. Measured on the running build at 375: /control's
+ * pre-trade limits table is 563px inside a 333px scrollport, so it scrolls
+ * sideways anyway, which is the one thing releasing the floor was meant to
+ * avoid — and it does that with its first three rows 193, 271 and 329px tall
+ * against 76px each at 1280, and its limit-price collar row 485px against
+ * 115px. That collar row is a 91px cell reading "6%" centred in half a screen
+ * of black, because the rationale beside it was given 122px to wrap a paragraph
+ * into. /backtest's walk-forward folds give "Aug 14, 2023 → Feb 02, 2024" a
+ * 61px column and wrap it over seven lines, turning a 37px row into a 154px
+ * one.
+ *
+ * Restoring the floor at every width buys the rows back where the crush was:
+ * /control's tallest row 485px → 154px and its median 232px → 95px,
+ * /backtest's walk-forward folds 154px → 56px, /transparency's temporal-agents
+ * table 95px → 56px. Every one of those already overflowed a 333px port, so no
+ * sideways scroll is new there — only the crushing is gone. It is not free
+ * everywhere: three tables that did fit — /backtest's "By strategy" (396px of
+ * natural width), /compliance's prohibited-language table (707px) and its
+ * audit-field table (1313px) — are floored at 900px now and scroll where they
+ * did not before. That is the default's fault rather than the rule's. A table
+ * whose content fits a phone should publish its own floor through
+ * `TableShell`'s `minWidth` prop, the way /portfolio (520), /terminal (560) and
+ * /admin (980) already do; the blanket 900px default is a default, not a
+ * measurement of any one table, and switching the floor off for every table is
+ * not the way to spare three of them.
+ *
+ * None of this reaches the page. `documentElement.scrollWidth` is unchanged
+ * before and after, at 320 and at 375, on every page that carries a table: the
+ * `min-width: 0` guard below is what keeps a wide table's overflow inside its
+ * own region, and the floor does not touch it.
+ *
+ * The property stays in the stylesheet rather than moving into `TableShell`'s
+ * inline style now that it is unconditional, because it only works in company:
+ * the `min-width: 0` clipping guard and the edge fade `ScrollAffordance`
+ * stamps both live here, and a floor declared in one file that depends on two
+ * rules in another is how one of the three gets deleted.
  */
-@media (min-width: 640px) {
-  .scroll-x > table {
-    min-width: var(--table-min-width, 900px);
-  }
+.scroll-x > table {
+  min-width: var(--table-min-width, 900px);
 }
 
 /* Wide charts and tables scroll inside their own container; the page body must

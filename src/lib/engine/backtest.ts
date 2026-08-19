@@ -10,9 +10,11 @@
  *
  * This engine therefore does the opposite of a parameter sweep. Parameters are
  * fixed (they are the documented ones), and what is measured is *out-of-sample
- * degradation*: every fold reports its in-sample and out-of-sample Sharpe and the
- * efficiency ratio between them. It also reports the four Combine survival
- * thresholds so a strategy can be judged against the legacy engine's own bar:
+ * degradation*: every fold reports its in-sample and out-of-sample Sharpe, plus
+ * the efficiency ratio between them wherever the in-sample window earned a
+ * positive Sharpe for the test window to reproduce or lose. It also reports the
+ * four Combine survival thresholds so a strategy can be judged against the legacy
+ * engine's own bar:
  *
  *   Win rate      > 60%
  *   Profit factor ≥ 2.0
@@ -283,9 +285,34 @@ export function runBacktest(input: BacktestInput): BacktestResult {
         const levels = candidate.levels;
         if (!levels) continue;
 
-        // Fixed-fractional risk sizing on the *backtest's own* capital. This is
-        // a simulation parameter, never a user-facing suggestion.
-        const atrValue = Math.max(last(atrBySymbol.get(slice.symbol) ?? [], bar.close * 0.02), bar.close * 0.004);
+        /*
+         * Fixed-fractional risk sizing on the *backtest's own* capital. This is
+         * a simulation parameter, never a user-facing suggestion.
+         *
+         * Indexed at `i`, not `last()`. `atrBySymbol` holds one series per
+         * symbol computed over the whole test window, and taking its final
+         * element handed every entry — including the first — the volatility of
+         * the last bar in the run. That is look-ahead of the plainest kind, and
+         * it moved real sizes: truncating the bar data at index 680 changed the
+         * quantity of 8 of the 26 trades entered strictly before that index,
+         * which nothing that happens afterwards is allowed to do. The error was
+         * not small either — on JPM the ratio of the final ATR to the
+         * contemporaneous one ranged 0.15 to 1.04 with a median of 0.41, so a
+         * position opened in a volatile stretch was sized as though the market
+         * had been two and a half times calmer than it was.
+         *
+         * Every other ATR consumer in the codebase is already causal — the
+         * strategies call `last(atr(ctx.dailyBars, 14))` on a slice truncated at
+         * the decision bar — so this site was the anomaly rather than the
+         * convention. The series is aligned to the bar index, so reading it
+         * positionally costs nothing and needs no recomputation.
+         */
+        const atrSeries = atrBySymbol.get(slice.symbol);
+        const atrRaw = atrSeries?.[i];
+        const atrValue = Math.max(
+          Number.isFinite(atrRaw) ? (atrRaw as number) : bar.close * 0.02,
+          bar.close * 0.004,
+        );
         const riskPerShare = Math.max(Math.abs(bar.close - levels.invalidation), atrValue * 0.5);
         const riskBudget = equity * config.riskPerTrade;
         const quantity = Math.max(1, Math.floor(riskBudget / Math.max(riskPerShare, EPS)));
@@ -740,8 +767,15 @@ function monthlyReturns(equityCurve: readonly EquityPoint[]): BacktestResult['mo
 
 /**
  * Walk-forward folds. Each fold reports the in-sample Sharpe of the training
- * window, the out-of-sample Sharpe of the following test window, and the
- * efficiency ratio — the single number that reveals curve-fitting.
+ * window, the out-of-sample Sharpe of the following test window, and — where the
+ * training window actually made money — the efficiency ratio between them, the
+ * single number that reveals curve-fitting.
+ *
+ * A fold whose in-sample Sharpe is not positive reports `NaN` rather than a
+ * ratio: there is no in-sample edge for the test window to fail to reproduce, so
+ * the quantity the column is named for does not exist for that fold. The comment
+ * on `efficiency` below records what the unguarded signed ratio published in its
+ * place, and `hasDefinedEfficiency` is the predicate to read a stored fold with.
  */
 export function walkForwardFolds(
   equityCurve: readonly EquityPoint[],
@@ -777,12 +811,61 @@ export function walkForwardFolds(
       outOfSampleSharpe,
       outOfSampleReturn: firstEquity <= 0 ? 0 : (lastEquity - firstEquity) / firstEquity,
       trades: foldTrades.length,
-      efficiency: Math.abs(inSampleSharpe) < EPS ? 0 : outOfSampleSharpe / inSampleSharpe,
+      /*
+       * Efficiency exists only where the training window had an edge to lose.
+       *
+       * This was `Math.abs(inSampleSharpe) < EPS ? 0 : outOfSampleSharpe /
+       * inSampleSharpe` — a guard on a near-zero denominator, but none on a
+       * negative one, and the sign of the denominator is what carries the
+       * meaning. Everything published around this number reads it as "below 1.0
+       * means the in-sample result did not survive": the scorecard note says so
+       * in words and /backtest colours the column sage at ≥ 0.5 and burgundy
+       * below. Divide by a negative in-sample Sharpe and the ratio says the
+       * opposite of that, one fold at a time.
+       *
+       * On the seeded fixture that exposed this, only 3 of 15 folds had a
+       * positive in-sample Sharpe: eight were negative and four were flat at
+       * exactly zero. All five negative folds whose out-of-sample Sharpe was
+       * strictly worse than in-sample published above 1.0 and rendered green —
+       * fold 11 went −3.01 in sample to −4.64 out of it and reported 1.54 —
+       * while the two folds with the largest out-of-sample improvement in the
+       * run, −1.74 → +3.24 and −2.73 → +4.67, published −1.86 and −1.71 and
+       * rendered red. Seven of the fifteen rows ranked backwards, and on a
+       * portfolio whose headline Sharpe is negative a losing training window is
+       * the normal case, not an edge one.
+       *
+       * A fold whose training window lost money has no in-sample result for the
+       * test window to fail to reproduce, so there is no degradation ratio to
+       * publish and the honest value is none rather than a number. The same goes
+       * for the flat window the old guard mapped to 0.0, which read as total
+       * degradation of something that was never measured. NaN reaches the client
+       * as `null` through `JSON.stringify` and /backtest already renders a
+       * non-finite efficiency as "—"; `combineScorecard` averages only the folds
+       * that have one.
+       */
+      efficiency: inSampleSharpe > EPS ? outOfSampleSharpe / inSampleSharpe : NaN,
     });
     index += 1;
     start += testBars;
   }
   return folds;
+}
+
+/**
+ * Whether a fold's efficiency ratio means anything.
+ *
+ * The rule is the one `walkForwardFolds` applies: a ratio exists only where the
+ * training window earned a positive Sharpe for the test window to reproduce or
+ * lose. Stated as a predicate over the fold rather than only as a `NaN` because
+ * both halves are needed by a reader of a *stored* result — a fixture written by
+ * an older build carries the signed ratio as a finite number, and `.data/` is
+ * git-ignored and re-seeded per deployment rather than migrated, so a scorecard
+ * recomputed from one of those has to reject the fold on its in-sample Sharpe.
+ * The finiteness half catches the current form, including the `null` that `NaN`
+ * becomes on the way through `JSON.stringify`.
+ */
+export function hasDefinedEfficiency(fold: Pick<WalkForwardFold, 'inSampleSharpe' | 'efficiency'>): boolean {
+  return fold.inSampleSharpe > EPS && Number.isFinite(fold.efficiency);
 }
 
 function sharpeOfCurve(curve: readonly EquityPoint[]): number {
@@ -811,7 +894,13 @@ export interface CombineScorecardRow {
 export interface CombineScorecard {
   rows: CombineScorecardRow[];
   survived: boolean;
-  /** Out-of-sample degradation across folds — what the Combine never measured. */
+  /**
+   * Out-of-sample degradation across folds — what the Combine never measured.
+   * Averaged over the folds where the ratio is defined, which is the folds whose
+   * in-sample Sharpe was positive; `note` says how many of the run's folds that
+   * was. Averaging the rest in mixed two incompatible sign conventions into one
+   * figure — see `walkForwardFolds`.
+   */
   meanEfficiency: number;
   note: string;
 }
@@ -861,7 +950,10 @@ export function combineScorecard(result: BacktestResult): CombineScorecard {
         'Deepest peak-to-trough loss; algorithms breaching 15% on historical data are discarded from the live roster.',
     },
   ];
-  const meanEfficiency = result.folds.length === 0 ? 0 : mean(result.folds.map((f) => f.efficiency));
+  // Only the folds whose in-sample Sharpe was positive carry an efficiency, and
+  // averaging the others in mixed two sign conventions into one figure.
+  const measured = result.folds.filter(hasDefinedEfficiency);
+  const meanEfficiency = measured.length === 0 ? 0 : mean(measured.map((f) => f.efficiency));
   return {
     rows,
     survived: rows.every((r) => r.passed),
@@ -869,7 +961,9 @@ export function combineScorecard(result: BacktestResult): CombineScorecard {
     note:
       result.folds.length === 0
         ? 'Walk-forward analysis was disabled, so out-of-sample degradation is unmeasured. A scorecard without it is an in-sample result.'
-        : `Mean out-of-sample Sharpe efficiency across ${result.folds.length} folds is ${meanEfficiency.toFixed(2)}. Values well below 1.0 indicate the in-sample result does not survive out of sample.`,
+        : measured.length === 0
+          ? `None of the ${result.folds.length} walk-forward folds had a positive in-sample Sharpe, so out-of-sample efficiency is undefined for every one of them: a training window that lost money leaves no in-sample result for the test window to fail to reproduce.`
+          : `Mean out-of-sample Sharpe efficiency is ${meanEfficiency.toFixed(2)}, over the ${measured.length} of ${result.folds.length} folds whose in-sample Sharpe was positive. Values well below 1.0 indicate the in-sample result does not survive out of sample.`,
   };
 }
 

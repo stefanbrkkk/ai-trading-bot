@@ -178,8 +178,15 @@ async function buildInput(
 
 /**
  * Artefact reads are memoised per process: `loadArtefact` hits the filesystem and
- * parses JSON, and the universe sweep would otherwise do that 64 times per
- * artefact.
+ * parses JSON, and the universe sweep would otherwise do that once per tradable
+ * symbol for each of the three artefacts below.
+ *
+ * The count is not written out. It said "64 times", which held while
+ * `UNIVERSE_SWEEP_LIMIT` was 64 and stayed behind when the limit moved to 128 —
+ * so one file used the same 64 for two incompatible things: the truncating limit
+ * its docstring above records as a defect, and the number of symbols the sweep
+ * actually processes. The sweep covers all of `TRADABLE_SYMBOLS`, which is a
+ * number that moves whenever the table is edited by hand.
  */
 let agentHistoryCache: Record<string, ComputedFeatures[]> | null | undefined;
 let riskReversalCache: Record<string, number[]> | null | undefined;

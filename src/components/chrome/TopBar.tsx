@@ -18,8 +18,13 @@ import { nyTime } from '@/lib/ui/format';
  * from a one-character placeholder into a 24px-tall bordered control at the same
  * moment. Measured with a buffered `layout-shift` observer on a cold context, the
  * cluster's left edge jumped 362px and the row grew 40px → 45px, taking the whole
- * document column down 5px with it: 0.198 of CLS from the chrome alone, on every
- * route, and 12 of 13 routes over the 0.1 budget.
+ * document column down 5px with it: 0.198 of CLS from the chrome alone — twice
+ * the 0.1 budget before a single piece of page content has moved. `TopBar`
+ * returns its `<header>` unconditionally and the root layout that renders it has
+ * no sibling, so that was every one of the sixteen routes, /login, /signup and
+ * /onboarding included. The denominator here used to be three short: it left out
+ * those three auth pages, which carry the same header as every other route and
+ * are the three a new client sees first.
  *
  * The reservations are measured, not guessed, and every value set they cover is a
  * closed union — `ProviderName` in `lib/market/provider`, `ProviderId` in

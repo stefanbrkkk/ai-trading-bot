@@ -29,14 +29,72 @@
  */
 
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { buttonClass, cx } from '@/components/ui/primitives';
 import { request, useApi, type MeResponse } from '@/lib/ui/api';
 
+/**
+ * Whether a navigation has landed somewhere the session has not been read yet.
+ *
+ * A named export rather than an inline `!==` because vitest runs this project in
+ * a `node` environment with no DOM: the effect below cannot be mounted in a
+ * test, but the rule it enforces can be, and that rule is the whole of the fix.
+ * Fire on a change of route, and *only* on a change — the route the header
+ * mounted on has already been fetched, and re-fetching it would double the
+ * request on every cold load for nothing.
+ */
+export function sessionNeedsReread(readOn: string | null, pathname: string | null): boolean {
+  return pathname !== null && readOn !== pathname;
+}
+
 export function AccountMenu() {
   // Polled on the same cadence as the rest of the chrome so signing in or out in
-  // another tab is reflected here rather than going stale until a navigation.
+  // *another* tab is reflected here without a navigation in this one. The poll is
+  // not what covers a sign-in in *this* tab — the route-change re-read below is.
   const me = useApi<MeResponse>('/auth/me', { pollMs: 60_000 });
+  const { reload } = me;
+  const pathname = usePathname();
+  const readOn = useRef<string | null>(pathname);
+
+  /*
+   * The session is re-read on every navigation, not only on the poll.
+   *
+   * This control is mounted by the one root layout, which has no sibling and no
+   * conditional, so it survives every client-side navigation in the product —
+   * including the ones that change who the session belongs to. `AuthForm`
+   * follows a successful sign-in with `router.push` and then `router.refresh()`,
+   * and a refresh refetches the server payload without unmounting a client
+   * component: `useApi` fires from an effect keyed on its path, the path here is
+   * the constant '/auth/me', and nothing else was calling `reload()`. So the
+   * header went on rendering the answer it got while the visitor was still
+   * anonymous.
+   *
+   * Measured against a running build: sign up, accept the clickwrap, land on
+   * /terminal at t+1.0s, and the header still read "Sign in" at t+56s while
+   * `/api/auth/me` fetched from that same page returned the full user. It
+   * flipped at t+61s. For that whole window the only account control in the
+   * chrome told a client who had just read a clickwrap end to end that they were
+   * signed out, and offered them /login — with Sign out unreachable throughout,
+   * because it lives inside a popover only the signed-in control opens.
+   *
+   * The poll cannot close that window, because its period runs from the mount
+   * rather than from the sign-in: the stale interval is 0–60s, and it sits near
+   * the full minute on the ordinary returning-user path, where the browser
+   * autofills and the form is submitted within seconds of the layout mounting.
+   * `pathname` is the one signal available inside the header that moves at the
+   * instant a sign-in or a terms acceptance completes, because both of them
+   * navigate. Signing out needs nothing here — it leaves by
+   * `window.location.assign`, which remounts the whole shell — and `reload()`
+   * keeps the last payload on screen while the next one is in flight, so a
+   * navigation never drops the control back to its placeholder.
+   */
+  useEffect(() => {
+    if (!sessionNeedsReread(readOn.current, pathname)) return;
+    readOn.current = pathname;
+    reload();
+  }, [pathname, reload]);
+
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -75,7 +133,10 @@ export function AccountMenu() {
      * out of a 7px box: a 24px-tall bordered control roughly 105px wide, which
      * grew the header row from 40px to 45px and pushed every page's content down
      * five pixels. That single swap was the largest contributor to a CLS the
-     * header was running on all thirteen routes.
+     * header was running on all sixteen routes: the root layout renders this
+     * control on every one of them, so there is no route the shift did not land
+     * on. This count used to be three short, leaving out /login, /signup and
+     * /onboarding, which is where a new client meets this placeholder first.
      *
      * All three states share the same 6.5rem floor and 10rem ceiling — this
      * placeholder, the signed-out link and the signed-in trigger — because

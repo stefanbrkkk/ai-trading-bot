@@ -280,17 +280,25 @@ export function runPipeline(
    *
    * `discrimination` is the standard deviation of each agent's probability across
    * the validation split, measured at training time. On the bundled seed the 60m
-   * TFT scores 1.4e-3 against 0.17 for the 5m LSTM: it returns ~0.492 for
-   * whatever it is shown, so its vote is one fixed offset applied to all 67
-   * names rather than a reading of any of them. An earlier fit made that plain
-   * by landing its constant well above a coin flip, where the same fixed vote
-   * carried the whole universe long at once.
+   * TFT scores below `AGENT_DISCRIMINATION_FLOOR` while the 5m LSTM and the 15m
+   * BiLSTM clear it several times over: it returns essentially the same
+   * probability for whatever it is shown, so its vote is one fixed offset applied
+   * to all 67 names rather than a reading of any of them. An earlier fit made
+   * that plain by landing its constant well above a coin flip, where the same
+   * fixed vote carried the whole universe long at once.
    *
    * Zeroing its conviction is not a correction of its opinion; it is a refusal to
    * treat a constant as an opinion. The router's own guard handles the case where
-   * every agent collapses, and /transparency publishes the measured figures — so
-   * the values quoted here describe the seeded model and are not a contract; the
-   * floor below is.
+   * every agent collapses, and the floor — not any particular measurement — is
+   * the contract.
+   *
+   * No figure is quoted. This read "scores 1.4e-3 against 0.17 for the 5m LSTM"
+   * and closed by asserting that described the seeded model, and a retrain
+   * falsified both halves without touching the line: `.data/` is git-ignored, so
+   * the seed is re-fitted per deployment and nothing carries a transcription of
+   * it forward. Same lesson as the feature width in this file's header, on a
+   * number that moves per install rather than per registry edit. /api/model-card
+   * and /transparency publish what the seed on this deployment measured.
    */
   const discrimination = model.training.discrimination;
   const agentWeight = (spread: number): number => (spread >= AGENT_DISCRIMINATION_FLOOR ? 1 : 0);

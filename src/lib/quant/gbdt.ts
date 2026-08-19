@@ -320,15 +320,26 @@ export function trainGbdt(
    * `ctx` accumulates across the whole run and `buildTree` discards its per-node
    * gain, so without these the counters describe every tree that was ever built,
    * including the ones truncated away below. That is not a rounding difference:
-   * the shipped 92-tree ensemble published 734 splits against 605 real internal
-   * nodes — 17.6% of the feature importance on the model card belonged to trees
-   * the model does not contain. `sector_rel_strength` was credited with 46
-   * splits and has 40.
+   * the 92-tree ensemble that exposed this published 734 splits against 605 real
+   * internal nodes — 17.6% of the feature importance on the model card belonged
+   * to trees the model did not contain, and `sector_rel_strength` was credited
+   * with 46 splits where it had 40.
    *
    * The snapshots are cumulative rather than per-tree so that the value wanted
    * at the end is a single index rather than a sum: entry i is the total through
-   * tree i. Two arrays of `dims` numbers per round — 112 × 89 on the shipped
-   * model — which is nothing next to the trees themselves.
+   * tree i. Two arrays of `dims` numbers for every round the loop runs — the
+   * kept ones and the patience window that follows them — which is nothing next
+   * to the trees themselves.
+   *
+   * Those figures are in the past tense on purpose. They describe the bundle
+   * that exposed the defect, not the one on disk now: `.data/` is git-ignored and
+   * the ensemble is re-fitted per deployment, so any transcription of its size is
+   * stale the moment someone runs `npm run seed`. This block spent a while
+   * asserting "112 × 89 on the shipped model" and "the shipped 92-tree ensemble"
+   * in the present tense, of a bundle a retrain had already replaced with a
+   * smaller one; substituting the new dimensions would only have reset the clock
+   * on the same defect. `engine/model.ts` declines to write out the
+   * agent-discrimination measurements for the same reason.
    */
   const gainThroughTree: number[][] = [];
   const splitsThroughTree: number[][] = [];
@@ -403,12 +414,12 @@ export function trainGbdt(
    * `trees` was already truncated; `history` and the importance counters were
    * not, and both are published. `engine/model.ts` reads the *last* history
    * entry for the model card's training and validation loss, so it was reporting
-   * the losses of the discarded tail: the shipped card claimed a training loss
-   * of 0.5751 (round 111) where the served 92-tree model's is 0.5910 — 2.7%
-   * understated, in the flattering direction — and a validation loss of 0.6736
-   * where the served model's is 0.6728, marginally better than advertised.
-   * Neither number described the model behind the ranking, which is the whole
-   * claim the transparency page makes.
+   * the losses of the discarded tail: on the 92-tree bundle that exposed this,
+   * the card claimed a training loss of 0.5751 (round 111) where the served
+   * model's was 0.5910 — 2.7% understated, in the flattering direction — and a
+   * validation loss of 0.6736 where the served model's was 0.6728, marginally
+   * better than advertised. Neither number described the model behind the
+   * ranking, which is the whole claim the transparency page makes.
    *
    * Truncating here rather than at the read site keeps the invariant local:
    * anything a caller derives from a returned `GbdtModel` is about `trees`.

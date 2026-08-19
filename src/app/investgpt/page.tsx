@@ -15,6 +15,16 @@
  *
  * `source` is always displayed. A user is never left guessing whether they are
  * reading deterministic SQL or a model's.
+ *
+ * The corollary is that every panel here has to describe the statement above it and
+ * nothing else. Two of them did not. The ROWS tile read "Complete result" over a
+ * result the statement's own `LIMIT 25` had cut — so the page dropped matching
+ * symbols and asserted it had dropped none, on a screen where rephrasing the
+ * question as a count proved it wrong. And the structured reading printed an
+ * ordering and a row limit unconditionally, including for the COUNT statements that
+ * carry neither. Both are fixed below by tying the claim to what actually ran: the
+ * truncation flag is now measured in the executor rather than assumed, and a clause
+ * chip renders only when the displayed statement carries that clause.
  */
 
 'use client';
@@ -114,6 +124,17 @@ export default function InvestGptPage() {
   const errors = result?.validation.issues.filter((i) => i.severity === 'error') ?? [];
   const warnings = result?.validation.issues.filter((i) => i.severity === 'warning') ?? [];
 
+  // Read off the statement, not off the plan. `plan` is always the compiler's
+  // reading of the *question* — index.ts sets it on the model path too — and for an
+  // aggregate intent it still carries the ordering and limit the compiler would
+  // have used had the question been a list. The COUNT statement it emits has no
+  // ORDER BY and no LIMIT (compile.ts guards both, and a repo test pins the
+  // absence), so printing them here contradicted the SQL block directly above — and
+  // put a "limit 25" chip directly beneath a count larger than 25, which reads as a
+  // total the platform had truncated.
+  const statementOrdersRows = result !== null && /\border\s+by\b/i.test(result.sql);
+  const statementLimitsRows = result !== null && /\blimit\b/i.test(result.sql);
+
   return (
     <PageShell wide>
       <PageHeader
@@ -196,7 +217,7 @@ export default function InvestGptPage() {
               label="Rows"
               value={integer(result.rowCount)}
               tone="gold"
-              footnote={result.truncated ? 'Truncated by the row cap' : 'Complete result'}
+              footnote={result.truncated ? 'Truncated; more rows matched' : 'Complete result'}
             />
             <StatTile
               label="Schema pruned"
@@ -275,10 +296,20 @@ export default function InvestGptPage() {
                         ))}
                       </ul>
                     )}
-                    <p className="mt-3 font-mono text-[0.75rem] text-parchment-faint">
-                      order by {result.plan.orderBy?.column ?? '—'} {result.plan.orderBy?.direction ?? ''} · limit{' '}
-                      {result.plan.limit}
-                    </p>
+                    {statementOrdersRows || statementLimitsRows ? (
+                      <p className="mt-3 font-mono text-[0.75rem] text-parchment-faint">
+                        {statementOrdersRows
+                          ? `order by ${result.plan.orderBy?.column ?? '—'} ${result.plan.orderBy?.direction ?? ''}`
+                          : null}
+                        {statementOrdersRows && statementLimitsRows ? ' · ' : null}
+                        {statementLimitsRows ? `limit ${result.plan.limit}` : null}
+                      </p>
+                    ) : (
+                      <p className="mt-3 text-[0.75rem] text-parchment-faint">
+                        The statement carries no ordering and no row limit — it returns one aggregate row counted over
+                        every match.
+                      </p>
+                    )}
                   </div>
                   <div>
                     <p className="eyebrow mb-2">Retrieved schema surfaces</p>
@@ -307,7 +338,9 @@ export default function InvestGptPage() {
                 detail={
                   result.rowCount === 0
                     ? 'No symbol in the current snapshot satisfies every condition. The statement above is the query that returned nothing.'
-                    : undefined
+                    : result.truncated
+                      ? 'More symbols satisfy every condition than are shown. The LIMIT in the statement above is what stopped it — ask for a wider one (“top 100 …”) to see the rest.'
+                      : undefined
                 }
               />
             </div>

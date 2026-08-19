@@ -394,8 +394,39 @@ export interface TrainingConfig {
 
 export interface TrainingReport {
   epochs: number;
+  /**
+   * Training loss of the last epoch run. Not the training loss of the returned
+   * parameters where early stopping rewound them — `bestValidLoss` is the figure
+   * that describes those.
+   */
   finalTrainLoss: number;
+  /** Validation loss of the last epoch run, on the same footing as `finalTrainLoss`. */
   finalValidLoss: number | null;
+  /**
+   * Best validation loss observed, and — because both training loops restore
+   * that epoch's parameters before returning — the validation loss of the model
+   * that leaves `train()`.
+   *
+   * They did not restore anything, which is why this doc exists. Both loops
+   * tracked `bestValid`/`bestEpoch`, broke on patience and returned the object
+   * still carrying the *last* epoch's weights, so a caller publishing this number
+   * described a fit the platform had thrown away. `engine/model.ts` publishes it
+   * as the model card's agent "Valid loss", and trains every agent with a
+   * `patience` well under its `epochs`, so the divergence is not hypothetical: on
+   * a production-budget run the 15m BiLSTM's best epoch was its first, and the
+   * epochs of overfitting after it were the ones kept — advertised at the loss of
+   * the one that was not. `quant/gbdt.ts` states the invariant this violated —
+   * "every diagnostic returned has to describe the ensemble that survived early
+   * stopping, not the one that was built" — and honours it by truncating `trees`
+   * to `bestRound + 1`. Rewinding the weights is the same repair for a network,
+   * and it leaves behind the better of the two objects by the measure early
+   * stopping selected on rather than only a truer account of the worse one.
+   *
+   * One gap this does not close: the offset `calibrate()` fits afterwards is not
+   * in this figure, because training has no way to know a caller will apply one.
+   * Anything publishing a loss for a *calibrated* agent has to re-score it after
+   * calibration; this is the loss of the returned weights as they leave here.
+   */
   bestValidLoss: number | null;
   history: { epoch: number; trainLoss: number; validLoss: number | null }[];
 }
@@ -848,6 +879,9 @@ export class TftAgent {
     const history: { epoch: number; trainLoss: number; validLoss: number | null }[] = [];
     let bestValid: number | null = null;
     let bestEpoch = 0;
+    // The weights of `bestEpoch`, restored below so the agent that leaves here is
+    // the one `bestValidLoss` describes. See `TrainingReport.bestValidLoss`.
+    let bestParams: SerialisedWeights | null = null;
     let lastTrain = 0;
     let lastValid: number | null = null;
 
@@ -885,6 +919,7 @@ export class TftAgent {
         if (bestValid === null || lastValid < bestValid - 1e-6) {
           bestValid = lastValid;
           bestEpoch = epoch;
+          bestParams = serialiseParams(params);
         }
       }
 
@@ -892,6 +927,11 @@ export class TftAgent {
       config.onEpoch?.(epoch, lastTrain, lastValid);
       if (patience > 0 && lastValid !== null && epoch - bestEpoch >= patience) break;
     }
+
+    // Rewind to the epoch the run stopped for. Without this the patience window's
+    // epochs are the ones kept and `bestValidLoss` describes weights nothing
+    // holds any more — see `TrainingReport.bestValidLoss`.
+    if (bestParams !== null) loadParams(params, bestParams);
 
     return {
       epochs: history.length,
@@ -919,6 +959,9 @@ function trainBinary(
   const history: { epoch: number; trainLoss: number; validLoss: number | null }[] = [];
   let bestValid: number | null = null;
   let bestEpoch = 0;
+  // The weights of `bestEpoch`, restored below so the agent that leaves here is
+  // the one `bestValidLoss` describes. See `TrainingReport.bestValidLoss`.
+  let bestParams: SerialisedWeights | null = null;
   let lastTrain = 0;
   let lastValid: number | null = null;
 
@@ -949,6 +992,7 @@ function trainBinary(
       if (bestValid === null || lastValid < bestValid - 1e-6) {
         bestValid = lastValid;
         bestEpoch = epoch;
+        bestParams = serialiseParams(params);
       }
     }
 
@@ -956,6 +1000,11 @@ function trainBinary(
     config.onEpoch?.(epoch, lastTrain, lastValid);
     if (patience > 0 && lastValid !== null && epoch - bestEpoch >= patience) break;
   }
+
+  // Rewind to the epoch the run stopped for. Without this the patience window's
+  // epochs are the ones kept and `bestValidLoss` describes weights nothing holds
+  // any more — see `TrainingReport.bestValidLoss`.
+  if (bestParams !== null) loadParams(params, bestParams);
 
   return { epochs: history.length, finalTrainLoss: lastTrain, finalValidLoss: lastValid, bestValidLoss: bestValid, history };
 }

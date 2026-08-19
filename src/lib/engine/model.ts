@@ -28,6 +28,7 @@ import {
   serialiseParams,
 } from '@/lib/quant/nn';
 import { createRng } from '@/lib/quant/rng';
+import { clamp } from '@/lib/quant/stats';
 import { MODEL_FEATURE_COUNT, MODEL_FEATURE_KEYS } from './features';
 
 export const MODEL_VERSION = 'aurelius-ensemble-1.0.0';
@@ -505,15 +506,23 @@ export function trainModelBundle(dataset: TrainingDataset, options: TrainOptions
 
   report('lstm', `5m tactical agent, ${trainSamples.length} sequences`);
   const lstm = new LstmAgent(AGENT_INPUT_SIZE, AGENT_HIDDEN.lstm, sequenceLength, rand);
-  const lstmReport = lstm.train(trainSamples, { epochs: options.agentEpochs ?? 5, learningRate: 5e-3, patience: 3 }, validSamples);
+  /*
+   * The `TrainingReport` each `train()` returns is deliberately discarded.
+   *
+   * Its `bestValidLoss` is measured before `calibrate()` fits the logit offset
+   * that every served prediction applies, and the model card prints Valid loss
+   * beside two columns computed after calibration. The published figure is
+   * re-scored below, once the agent is the one that will actually serve.
+   */
+  lstm.train(trainSamples, { epochs: options.agentEpochs ?? 5, learningRate: 5e-3, patience: 3 }, validSamples);
 
   report('bilstm', `15m contextual agent, ${trainSamples.length} sequences`);
   const bilstm = new BiLstmAgent(AGENT_INPUT_SIZE, AGENT_HIDDEN.bilstm, sequenceLength, rand);
-  const bilstmReport = bilstm.train(trainSamples, { epochs: options.agentEpochs ?? 5, learningRate: 5e-3, patience: 3 }, validSamples);
+  bilstm.train(trainSamples, { epochs: options.agentEpochs ?? 5, learningRate: 5e-3, patience: 3 }, validSamples);
 
   report('tft', `60m macro agent with quantile head, ${trainSamples.length} sequences`);
   const tft = new TftAgent(AGENT_INPUT_SIZE, AGENT_HIDDEN.tft, sequenceLength, rand, { heads: 3 });
-  const tftReport = tft.train(
+  tft.train(
     trainSamples,
     { epochs: options.tftEpochs ?? 4, learningRate: 4e-3, patience: 2 },
     validSamples,
@@ -541,22 +550,64 @@ export function trainModelBundle(dataset: TrainingDataset, options: TrainOptions
   /*
    * How much each agent's output actually moves with its input.
    *
-   * The 60m TFT returns ~0.492 for every symbol in the universe — a spread of
-   * 1.4e-3 across validation sequences, against 0.17 for the LSTM — so whatever
-   * it contributes to the router's aggregate is a constant, identical for all 67
-   * names. An earlier fit put that constant on the other side of a coin flip and
-   * every one of the 67 came out long at once. A collapsed agent is not a neutral
-   * one: it votes, with conviction, for whatever its bias happens to be.
+   * The 60m TFT collapses. Across the validation sequences it returns essentially
+   * the same probability for whatever it is shown — a spread below
+   * `AGENT_DISCRIMINATION_FLOOR`, while the 5m LSTM and the 15m BiLSTM clear that
+   * floor several times over. What a collapsed agent contributes to the router's
+   * aggregate is therefore a constant, identical for all 67 names. An earlier fit
+   * put that constant on the other side of a coin flip and every one of the 67
+   * came out long at once. A collapsed agent is not a neutral one: it votes, with
+   * conviction, for whatever its bias happens to be.
    *
    * The spread is measured here, published on the model card, and read by the
-   * router, which gives an agent that does not discriminate no weight. The
-   * figures above describe the seeded model; the model card publishes whatever
-   * this measurement actually returns.
+   * router, which gives an agent that does not discriminate no weight.
+   *
+   * The measurements themselves are not written out. This comment used to open
+   * "~0.492 … a spread of 1.4e-3 … against 0.17 for the LSTM" and close by
+   * asserting that described the seeded model; a retrain then replaced the bundle
+   * and moved the README onto the new figures, leaving these lines quoting a
+   * superseded seed — the TFT spread out by a factor of two, the LSTM's by nearly
+   * two and a half, and the LSTM figure it named matching no agent at all by then.
+   * `.data/` is git-ignored, so the seed is re-fitted per deployment and a
+   * transcription of it is stale the moment anyone runs `npm run seed`. Same
+   * reason `AGENT_FEATURE_KEYS` above names the feature width rather than
+   * repeating it, on a number that moves per install rather than per registry
+   * edit. `/api/model-card` and /transparency publish whatever this measurement
+   * actually returns.
    */
   const discrimination = {
     lstm: probabilitySpread(lstm, validSamples),
     bilstm: probabilitySpread(bilstm, validSamples),
     tft: probabilitySpread(tft, validSamples),
+  };
+
+  /*
+   * Validation loss re-scored after calibration, so the whole row describes one
+   * model.
+   *
+   * `TrainingReport.bestValidLoss` is measured inside `train()`, which finishes
+   * before `calibrate()` fits the logit offset — and every served prediction
+   * applies that offset. The model card prints Valid loss beside Spread and
+   * Edge, both of which are computed further down from the calibrated agent, so
+   * a reader comparing the three columns of one row was comparing two different
+   * models. The offset is exactly what fixed the agents' pathological mean, so
+   * the pre-calibration figure is also the least flattering one available and
+   * reporting it looked conservative while simply being inconsistent.
+   *
+   * Re-scored here rather than inside `train()` because calibration is not the
+   * trainer's business: it is fitted on the same held-out split, from the
+   * outside, after the weights are final.
+   */
+  const calibratedValidLoss = (agent: {
+    predict(sequence: readonly number[][]): { probability: number };
+  }): number => {
+    if (validSamples.length === 0) return 0;
+    let total = 0;
+    for (const sample of validSamples) {
+      const p = clamp(agent.predict(sample.sequence).probability, 1e-9, 1 - 1e-9);
+      total += -(sample.target * Math.log(p) + (1 - sample.target) * Math.log(1 - p));
+    }
+    return total / validSamples.length;
   };
 
   const trainProbs = trainX.map((row) => predictProbability(gbdt, row));
@@ -592,9 +643,9 @@ export function trainModelBundle(dataset: TrainingDataset, options: TrainOptions
     validationAccuracy,
     auc,
     brier,
-    lstmValidLoss: lstmReport.bestValidLoss,
-    bilstmValidLoss: bilstmReport.bestValidLoss,
-    tftValidLoss: tftReport.bestValidLoss,
+    lstmValidLoss: calibratedValidLoss(lstm),
+    bilstmValidLoss: calibratedValidLoss(bilstm),
+    tftValidLoss: calibratedValidLoss(tft),
     discrimination,
     reliability,
     ece,

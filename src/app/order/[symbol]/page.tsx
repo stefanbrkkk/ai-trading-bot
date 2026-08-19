@@ -51,6 +51,7 @@ import {
 import { ApiRequestError, clickProvenance, request, useApi, type MeResponse } from '@/lib/ui/api';
 import { duration, integer, money, price } from '@/lib/ui/format';
 import { getSpec } from '@/lib/market/universe';
+import type { RiskLimitUnit } from '@/lib/risk/limits';
 
 interface RiskCheck {
   code: string | null;
@@ -86,7 +87,7 @@ interface PreflightResponse {
   equity: number | null;
   accountError: string | null;
   entitlement: { paper: boolean; live: boolean; reason: string };
-  limits: { code: string; label: string; value: number; unit: string; rationale: string }[];
+  limits: { code: string; label: string; value: number; unit: RiskLimitUnit; rationale: string }[];
   sizingNotice: string;
 }
 
@@ -333,6 +334,14 @@ export default function OrderTicketPage() {
 
   const signedIn = me.data?.user !== null && me.data?.user !== undefined;
   const liveAllowed = me.data?.entitlement.live === true;
+  // Read only by the RESULT panel below, which renders only once `routed` is
+  // set; computed here so the label, the figure and the sentence explaining
+  // them all come out of one call and cannot drift apart.
+  const receipt = fillReceiptNotional(
+    routed?.filledQuantity ?? 0,
+    routed?.averageFillPrice ?? null,
+    routed?.notionalUsd ?? null,
+  );
 
   /*
    * An unknown symbol gets a refusal, not a ticket.
@@ -665,11 +674,10 @@ export default function OrderTicketPage() {
                       label="Average fill"
                       value={routed.averageFillPrice === null || routed.averageFillPrice === undefined ? '—' : price(routed.averageFillPrice)}
                     />
-                    <DataRow
-                      label="Notional"
-                      value={routed.notionalUsd === null || routed.notionalUsd === undefined ? '—' : money(routed.notionalUsd)}
-                    />
+                    <DataRow label={receipt.label} value={receipt.value} />
                   </dl>
+
+                  <p className="mt-3 text-[0.75rem] leading-relaxed text-parchment-faint">{receipt.caption}</p>
 
                   {routed.timestamps !== undefined ? (
                     <>
@@ -778,8 +786,72 @@ export default function OrderTicketPage() {
   );
 }
 
-/** Renders a limit in its declared unit. */
-function formatLimit(value: number, unit: string): string {
+/**
+ * The notional the fill receipt publishes, and the sentence that names it.
+ *
+ * This row rendered `routed.notionalUsd` under a bare "Notional" label, two rows
+ * beneath the average fill price it contradicted. That figure is the *pre-trade*
+ * notional: `POST /api/orders/submit` prices it at `notionalReferencePrice`,
+ * which for a priced order is the user's own limit verbatim — deliberately, and
+ * correctly, because someone who typed 148.00 is owed a ceiling tested at
+ * 148.00. It is the wrong number to put on a receipt. Measured against the paper
+ * broker at 11:00 New York with AAPL 141.21 / 141.23: BUY 50 limit 148.00 fills
+ * 50 at 141.26 and takes $7,063.00 out of the account, while this row read
+ * $7,400.00 — 4.8% over, directly under an "Average fill" of 141.26 that was
+ * right. The collar is tiered at 20% under $25, so on a cheap name the same row
+ * can be a fifth out.
+ *
+ * The ticket has already resolved this exact ambiguity once, for the
+ * reference-quote tile in the market-context column, and the resolution was to
+ * name the price the figure was computed at rather than to drop the figure. So a
+ * filled order now publishes what the fill cost — filled quantity at the average
+ * fill price, the number the cash balance moved by — and an order that has not
+ * filled keeps the pre-trade notional, which is the only figure that exists yet,
+ * labelled as such. Both arms carry a caption saying which of the two the reader
+ * is looking at. The risk engine and the daily quota are untouched: they go on
+ * measuring every ceiling at the conservative pre-trade price.
+ */
+function fillReceiptNotional(
+  filledQuantity: number,
+  averageFillPrice: number | null,
+  orderNotionalUsd: number | null,
+): { label: string; value: string; caption: string } {
+  if (filledQuantity > 0 && averageFillPrice !== null && Number.isFinite(averageFillPrice)) {
+    return {
+      label: 'Notional filled',
+      value: money(filledQuantity * averageFillPrice),
+      caption:
+        'Notional filled is the filled quantity at the average fill price above — the amount the cash balance moved by. The pre-trade figure, priced at your own limit or stop, or at the last trade for a market order, is the one in the reference-quote panel, and the two differ whenever the order did not fill at that price.',
+    };
+  }
+  return {
+    label: 'Order notional',
+    value: orderNotionalUsd === null ? '—' : money(orderNotionalUsd),
+    caption:
+      'Nothing has filled, so this is the order priced at the reference price the ticket quoted — your own limit or stop, or the last trade for a market order. It is not an amount the account has been charged.',
+  };
+}
+
+/**
+ * Renders a limit in its declared unit.
+ *
+ * Kept arm for arm — and character for character — with the copy on /control.
+ * `/api/orders/preflight` and `/api/risk/limits` both return
+ * `RISK_LIMIT_DESCRIPTORS` verbatim, so the eight rows this panel renders are
+ * eight of the twelve that page renders, out of one array. The two copies had
+ * drifted twice regardless. `messages_per_second` matched no case in either, so
+ * ORDER_MESSAGE_RATE fell through a `default: return String(value)` and printed
+ * as a bare "5" on both surfaces; and ADV_LOOKBACK read "30d" here against
+ * "30 d" there — one published number in two shapes, for no reason but two
+ * hand-written copies of one formatter.
+ *
+ * `unit` is the descriptor union rather than `string` now, and there is no
+ * catch-all, so a unit that is renamed or added upstream stops the compile
+ * instead of quietly rendering unitless. The duplication itself remains: these
+ * two switches are still two copies, and the honest repair is one formatter in
+ * `@/lib/ui/format` that both import.
+ */
+function formatLimit(value: number, unit: RiskLimitUnit): string {
   switch (unit) {
     case 'currency':
       return money(value, { whole: true });
@@ -790,10 +862,14 @@ function formatLimit(value: number, unit: string): string {
     case 'shares':
       return `${integer(value)} sh`;
     case 'days':
-      return `${integer(value)}d`;
+      return `${integer(value)} d`;
     case 'milliseconds':
       return duration(value);
-    default:
+    case 'messages_per_second':
+      return `${integer(value)}/s`;
+    case 'http_status':
+      // A status code is a label, not a quantity: it takes no unit suffix, and
+      // no thousands separator either.
       return String(value);
   }
 }

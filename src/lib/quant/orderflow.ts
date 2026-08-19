@@ -414,10 +414,19 @@ export function microstructureMetrics(
  *
  * — where three hundred shares of perfectly one-sided flow must read 1.0, and
  * does when the same shares arrive as three hundred-lots. The error is not
- * cosmetic: `compute.ts` sizes a bucket at three times mean bar volume, so it
- * fires on any bar three times the average — a volume spike, which is exactly
- * the condition toxicity is being measured for — and the number feeds the
- * router's `ABORT_TOXIC_FLOW` gate.
+ * cosmetic: `compute.ts` sizes a bucket at `VPIN_BARS_PER_BUCKET` times mean bar
+ * volume, so it fires on any bar carrying a whole bucket by itself — a volume
+ * spike, which is exactly the condition toxicity is being measured for — and the
+ * number feeds the router's `ABORT_TOXIC_FLOW` gate.
+ *
+ * The depth is named rather than transcribed on purpose. This sentence read
+ * "three times mean bar volume, so it fires on any bar three times the average",
+ * which was true for as long as `compute.ts` multiplied by three; the commit that
+ * introduced bulk-volume classification moved it to six and left the claim here
+ * false by a factor of two, worked example included. The derivation of the depth
+ * — the √(2/3πn) sampling floor a bucket of n equal bars carries, and why six is
+ * where it balances against having enough buckets left to average — lives beside
+ * the constant in `compute.ts`, which is the file anyone retuning it is editing.
  */
 export function vpin(
   trades: readonly { volume: number; signedVolume: number }[],

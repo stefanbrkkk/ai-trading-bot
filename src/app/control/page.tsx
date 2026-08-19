@@ -38,12 +38,21 @@ import {
 } from '@/components/ui/primitives';
 import { useApi, type HealthResponse, type MeResponse } from '@/lib/ui/api';
 import { duration, integer, money, nyDateTime } from '@/lib/ui/format';
+import type { RiskLimitUnit } from '@/lib/risk/limits';
 
 interface RiskLimit {
   code: string;
   label: string;
   value: number;
-  unit: string;
+  /**
+   * The descriptor's own union, not `string`.
+   *
+   * `GET /api/risk/limits` returns `RISK_LIMIT_DESCRIPTORS` verbatim, so the
+   * payload cannot carry a unit the union does not name — and typing the field
+   * as the union is what lets `formatLimit` below be checked for exhaustiveness
+   * instead of quietly falling through to a catch-all.
+   */
+  unit: RiskLimitUnit;
   rationale: string;
   regulatoryBasis: string;
 }
@@ -109,8 +118,24 @@ function ReasonRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** Formats a limit in the unit it declares. */
-function formatLimit(value: number, unit: string): string {
+/**
+ * Formats a limit in the unit it declares.
+ *
+ * The arm that renders the rate limit used to read `case 'per_second'`, and
+ * `RiskLimitUnit` has never had such a member: the unit the descriptor publishes
+ * is `messages_per_second`. So the branch was unreachable, the unit that is
+ * actually emitted fell through to a `default: return String(value)`, and the
+ * one throttle on this page — ORDER_MESSAGE_RATE, five order messages per second
+ * per user — printed as a bare "5" in the gold Threshold column while the code
+ * written to print "5/s" sat two lines below it, dead.
+ *
+ * Nothing could have caught that while `unit` was typed `string`. It is typed as
+ * the descriptor union now and the catch-all is gone, so a renamed or added unit
+ * is a compile error at every call site rather than a silently unitless number —
+ * the same treatment `formatFeatureValue` on the terminal page carries, for the
+ * same reason.
+ */
+function formatLimit(value: number, unit: RiskLimitUnit): string {
   switch (unit) {
     case 'currency':
       return money(value, { whole: true });
@@ -124,9 +149,11 @@ function formatLimit(value: number, unit: string): string {
       return `${integer(value)} d`;
     case 'milliseconds':
       return duration(value);
-    case 'per_second':
+    case 'messages_per_second':
       return `${integer(value)}/s`;
-    default:
+    case 'http_status':
+      // A status code is a label, not a quantity: it takes no unit suffix, and
+      // no thousands separator either.
       return String(value);
   }
 }

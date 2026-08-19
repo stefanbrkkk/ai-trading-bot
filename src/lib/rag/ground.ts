@@ -168,11 +168,32 @@ function extractTemporal(text: string): string[] {
  * A claim about a company's regulatory exposure is an entity attribute; only a
  * claim about advice, discretion or individualisation is a regulatory claim in
  * the sense that matters here.
+ *
+ * The same mistake then recurred one word smaller. The list carried the bare
+ * adjective 'discretionary', meaning "discretionary authority" — but the substring
+ * test that reads it also matches "Consumer Discretionary", a GICS sector name
+ * that seven of the universe's symbols carry and that every one of their 10-K risk
+ * sections names in its opening sentence. Those sentences were routed to
+ * `verifyRegulatory`, graded against the platform's own status document, and came
+ * back unverifiable — so the research page marked a sentence copied character for
+ * character out of a filing "no passage in the retrieved set supports this
+ * sentence" while displaying that very passage as a citation on the same screen,
+ * and reported 66.7% grounding for an answer that was fully extractive.
+ * "Repurchases are discretionary and may be suspended at any time", a buyback
+ * disclosure, went the same way.
+ *
+ * The adjective earned nothing on its own either: `platform-regulatory-status`,
+ * the only document `verifyRegulatory` will accept, does not contain the word at
+ * all — it says the platform "does not exercise discretion over any account",
+ * which the separate 'discretion over' term already catches. So the qualifying
+ * noun is part of the term now. A term on this list has to name advice, discretion
+ * or individualisation on its face, not share a stem with something that does.
  */
 const REGULATORY_TERMS = [
-  'advice', 'adviser', 'advisor', 'recommendation', 'recommend', 'discretionary', 'discretion over',
-  'fiduciary', 'suitability', 'publisher', 'individualised', 'individualized', 'tailored to',
-  'not tailored', 'on your behalf', 'investment advice',
+  'advice', 'adviser', 'advisor', 'recommendation', 'recommend', 'discretion over',
+  'discretionary authority', 'discretionary account', 'discretionary trading',
+  'discretionary basis', 'fiduciary', 'suitability', 'publisher', 'individualised',
+  'individualized', 'tailored to', 'not tailored', 'on your behalf', 'investment advice',
 ];
 
 const COMPARATIVE_TERMS = [
@@ -195,6 +216,11 @@ export function classifyClaim(text: string): ClaimCategory {
   // also contains a number. Computational outranks numerical for the same
   // reason — a SHAP figure is not in any filing and grading it as numerical
   // would mark a correct sentence unverified.
+  //
+  // Running first is also why REGULATORY_TERMS has to be exact. Nothing below can
+  // recover a sentence this line claims: a filing sentence swept up here is graded
+  // against a document it has no reason to appear in, and is published unverified
+  // beside the citation it was copied from.
   if (REGULATORY_TERMS.some((term) => lower.includes(term))) return 'regulatory';
   if (COMPUTATIONAL_TERMS.some((term) => lower.includes(term))) return 'computational';
   if (COMPARATIVE_TERMS.some((term) => lower.includes(term)) && extractQuantities(text).length > 0) return 'comparative';
