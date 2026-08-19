@@ -65,9 +65,21 @@ afterAll(() => {
   rmSync(SCRATCH_DATA, { recursive: true, force: true });
 });
 
-/** The sweep-level cases need a trained ensemble; the rest do not. */
+/**
+ * The sweep-level cases need a trained ensemble; the rest do not.
+ *
+ * `skipIf`, not `seeded ? it : it.skip`. The ternary decides at COLLECTION time,
+ * so on a clone with no `.data/` these eight cases were never registered at all
+ * and `vitest list` returned 573 where a seeded machine returned 581. That is a
+ * suite whose size depends on the machine, and `tests/fix-docs.test.ts` asserts
+ * the README's published count against exactly that listing — so the documented
+ * verification gate passed here and failed on the customer's clean clone, which
+ * is the only place it really had to pass. `skipIf` registers the case either
+ * way and skips it at run time, so collection is deterministic and the number in
+ * the README means the same thing on every machine.
+ */
 const seeded = tryLoadModelBundle() !== null;
-const withEngine = seeded ? it : it.skip;
+const withEngine = it.skipIf(!seeded);
 
 let sweep: UniverseSnapshot | null = null;
 async function universe(): Promise<UniverseSnapshot> {
