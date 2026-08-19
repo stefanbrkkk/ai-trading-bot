@@ -289,16 +289,24 @@ describe('the Testing section counts the suite it is describing', () => {
    * different quantities.
    *
    * `vitest list` collects the suite without executing it, so this cannot
-   * recurse into itself; it is the same collection the run uses, which is what
-   * makes the answer authoritative rather than approximate. It costs a few
-   * seconds, and it is the only thing in this file that shells out.
+   * recurse into itself. It costs a few seconds, and it is the only thing in
+   * this file that shells out.
+   *
+   * `AURELIUS_LIST_ALL=1` is passed because a listing omits skipped cases, and
+   * eight of this suite's cases skip themselves when no ensemble has been
+   * trained. Without the flag the listing is 581 here and 573 on a clone that
+   * has never run a build — so this assertion passed on the machine that wrote
+   * it and failed the documented `npm run verify` on the customer's, which is
+   * the only machine where it had to pass. The flag makes collection register
+   * every case on both; it cannot make any of them run, because listing does not
+   * execute.
    */
   it('states the number vitest actually collects', () => {
     const listed = execFileSync('npx', ['vitest', 'list', '--json'], {
       cwd: fileURLToPath(new URL('..', import.meta.url)),
       encoding: 'utf8',
       maxBuffer: 32 * 1024 * 1024,
-      env: { ...process.env, CI: '1' },
+      env: { ...process.env, CI: '1', AURELIUS_LIST_ALL: '1' },
     });
     const collected = (JSON.parse(listed) as unknown[]).length;
     expect(collected).toBeGreaterThan(0);

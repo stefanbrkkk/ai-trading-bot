@@ -79,7 +79,18 @@ afterAll(() => {
  * the README means the same thing on every machine.
  */
 const seeded = tryLoadModelBundle() !== null;
-const withEngine = it.skipIf(!seeded);
+/*
+ * `AURELIUS_LIST_ALL` exists so the suite has one size everywhere.
+ *
+ * `vitest list` omits a skipped case however it was skipped, so the listing is
+ * 581 on a seeded machine and 573 on a clone that has never trained a model —
+ * and `tests/fix-docs.test.ts` checks the README's published figure against that
+ * listing. Only the listing consults this flag: `vitest list` collects without
+ * executing, so forcing the gate open there registers the eight cases without
+ * running them. A normal `vitest run` never sets it and still skips them when
+ * there is no ensemble to sweep.
+ */
+const withEngine = it.skipIf(!seeded && process.env.AURELIUS_LIST_ALL !== '1');
 
 let sweep: UniverseSnapshot | null = null;
 async function universe(): Promise<UniverseSnapshot> {
