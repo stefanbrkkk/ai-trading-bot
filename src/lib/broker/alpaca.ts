@@ -137,7 +137,16 @@ export class AlpacaBroker implements BrokerAdapter {
     this.baseUrl = (options.credentials.baseUrl ?? ALPACA_PAPER_BASE_URL).replace(/\/+$/, '');
     // The host distinguishes the sandbox from the live venue. Reported rather
     // than assumed, because the mode is what gates the subscription check.
-    this.mode = this.baseUrl.includes('paper-api') ? 'paper' : 'live';
+    // Derive mode from the endpoint host. Checking for a substring lets a
+    // live host with a path such as `/paper-api` masquerade as paper while
+    // requests still go to live credentials.
+    let endpointHost = '';
+    try {
+      endpointHost = new URL(this.baseUrl).hostname.toLowerCase();
+    } catch {
+      endpointHost = '';
+    }
+    this.mode = endpointHost === 'paper-api.alpaca.markets' ? 'paper' : 'live';
     this.headers = {
       'APCA-API-KEY-ID': options.credentials.keyId,
       'APCA-API-SECRET-KEY': options.credentials.secretKey,
@@ -166,6 +175,21 @@ export class AlpacaBroker implements BrokerAdapter {
    * preserved as `{ raw }` rather than discarded — an HTML error page from a proxy
    * is still the broker's answer, and the ledger has to be able to show it.
    */
+  /** A paper request must never reach live credentials, even through a direct adapter call. */
+  private accountMismatch<T>(account: 'paper' | 'live'): BrokerResult<T> | null {
+    if (account === this.mode) return null;
+    return {
+      ok: false,
+      status: 403,
+      body: { code: 'account_mode_mismatch', message: 'The requested account does not match this broker endpoint.' },
+      data: null,
+      error: 'The requested account does not match this broker endpoint.',
+      latencyMs: 0,
+      requestPayload: null,
+      rawRequest: null,
+    };
+  }
+
   private async call(
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
@@ -233,6 +257,8 @@ export class AlpacaBroker implements BrokerAdapter {
     request: BrokerOrderRequest,
     ctx: BrokerCallContext,
   ): Promise<BrokerResult<BrokerOrderAck>> {
+    const mismatch = this.accountMismatch<BrokerOrderAck>(request.account);
+    if (mismatch !== null) return mismatch;
     // Parameters are transmitted exactly as the user supplied them. Quantities and
     // prices go out as strings, which is Alpaca's contract and also avoids the
     // float re-formatting that would make the stored payload differ from the wire.
@@ -310,6 +336,8 @@ export class AlpacaBroker implements BrokerAdapter {
     account: 'paper' | 'live',
     ctx: BrokerCallContext,
   ): Promise<BrokerResult<AccountSnapshot>> {
+    const mismatch = this.accountMismatch<AccountSnapshot>(account);
+    if (mismatch !== null) return mismatch;
     const accountResult = await this.call('GET', '/v2/account', ctx, null);
     if (!(accountResult.status >= 200 && accountResult.status < 300) || !isRecord(accountResult.body)) {
       return {
@@ -350,6 +378,8 @@ export class AlpacaBroker implements BrokerAdapter {
     account: 'paper' | 'live',
     ctx: BrokerCallContext,
   ): Promise<BrokerResult<Position[]>> {
+    const mismatch = this.accountMismatch<Position[]>(account);
+    if (mismatch !== null) return mismatch;
     const result = await this.call('GET', '/v2/positions', ctx, null);
     const success = result.status >= 200 && result.status < 300;
     const rows = Array.isArray(result.parsed) ? result.parsed : [];

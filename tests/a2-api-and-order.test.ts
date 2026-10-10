@@ -33,11 +33,11 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { PaperBroker } from '@/lib/broker/paper';
-import { simulatorQuote } from '@/lib/market/provider';
 import { RISK_LIMIT_DESCRIPTORS } from '@/lib/risk/limits';
 import { notionalReferencePrice, orderNotionalUsd } from '@/lib/risk/engine';
 import { duration, integer, money } from '@/lib/ui/format';
 import type { ComputedFeatures } from '@/lib/engine/compute';
+import type { Quote } from '@/lib/domain/types';
 import type { RiskLimitUnit } from '@/lib/risk/limits';
 
 function read(relative: string): string {
@@ -154,7 +154,14 @@ const fillReceiptNotional = lift<
 const DISPATCH_AT = Date.parse('2026-08-18T15:00:00Z');
 
 async function routeOne(clientOrderId: string, limitPrice: number, quantity: number) {
-  const broker = new PaperBroker({ quotes: simulatorQuote, clock: () => DISPATCH_AT });
+  // Receipt tests need a marketable limit, independent of the simulator's
+  // generated price trajectory. The full simulator is exercised elsewhere.
+  const quote: Quote = {
+    symbol: 'AAPL', timestamp: DISPATCH_AT, bid: 140, ask: 141,
+    bidSize: 10000, askSize: 10000, last: 140.5, lastSize: 100,
+    volume: 1000000, previousClose: 140,
+  };
+  const broker = new PaperBroker({ quotes: () => quote, clock: () => DISPATCH_AT });
   const ctx = { correlationId: `corr-${clientOrderId}`, userId: 'user-receipt', dispatchedAt: DISPATCH_AT };
   const before = await broker.getAccount('paper', ctx);
   const result = await broker.submitOrder(
@@ -184,7 +191,7 @@ async function routeOne(clientOrderId: string, limitPrice: number, quantity: num
   // What `POST /api/orders/submit` returns as `notionalUsd`: the order priced at
   // the pre-trade reference, which for a limit order is the typed limit verbatim.
   const intent = { quantity, notional: null, type: 'limit' as const, limitPrice, stopPrice: null };
-  const reference = notionalReferencePrice(intent, simulatorQuote('AAPL', DISPATCH_AT));
+  const reference = notionalReferencePrice(intent, quote);
   expect(reference).toBe(limitPrice);
 
   return {

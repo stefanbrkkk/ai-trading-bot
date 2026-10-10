@@ -120,6 +120,18 @@ export class ApiError extends Error {
   }
 }
 
+/** Reject browser mutations initiated by another origin, including sibling sites. */
+function assertMutationOrigin(request: Request): void {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(request.method.toUpperCase())) return;
+  const origin = request.headers.get('origin');
+  if (
+    request.headers.get('sec-fetch-site') === 'cross-site' ||
+    (origin !== null && origin !== new URL(request.url).origin)
+  ) {
+    throw new ApiError('FORBIDDEN_ORIGIN', 'This action must originate from this application.', 403);
+  }
+}
+
 /**
  * Wraps a handler so every thrown error becomes a well-formed response.
  *
@@ -132,6 +144,8 @@ export function handler<A extends unknown[]>(
   return async (...args: A): Promise<NextResponse> => {
     const correlation = correlationId();
     try {
+      const request = args[0];
+      if (request instanceof Request) assertMutationOrigin(request);
       const response = await fn(...args);
       if (!response.headers.has('x-correlation-id')) {
         response.headers.set('x-correlation-id', correlation);
@@ -175,10 +189,41 @@ export function handler<A extends unknown[]>(
 
 /** Parses and validates a JSON body. */
 export async function parseBody<S extends z.ZodTypeAny>(request: Request, schema: S): Promise<z.infer<S>> {
+  const contentType = request.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
+  if (contentType !== 'application/json') {
+    throw new ApiError('UNSUPPORTED_MEDIA_TYPE', 'Send the request body as application/json.', 415);
+  }
+  // Bound bytes before parsing: a schema's string limits do not bound an incoming stream.
+  const maxBytes = 64 * 1024;
+  const tooLarge = (): ApiError => new ApiError('PAYLOAD_TOO_LARGE', 'The request body exceeds 64 KiB.', 413);
+  const declaredLength = Number(request.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) throw tooLarge();
+
   let raw: unknown;
   try {
-    raw = await request.json();
-  } catch {
+    if (request.body === null) throw new Error('Missing JSON body.');
+    const reader = request.body.getReader();
+    const decoder = new TextDecoder();
+    let bytes = 0;
+    let text = '';
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        bytes += chunk.value.byteLength;
+        if (bytes > maxBytes) {
+          await reader.cancel();
+          throw tooLarge();
+        }
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      text += decoder.decode();
+    } finally {
+      reader.releaseLock();
+    }
+    raw = JSON.parse(text) as unknown;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw new ApiError('INVALID_JSON', 'The request body was not valid JSON.', 400);
   }
   return schema.parse(raw) as z.infer<S>;

@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+# Market-feature identifiers, confirmed to contain no credentials.
+[[allowlists]]
+description = "Five feature dictionary identifiers misclassified as API keys"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^(?:.*/)?src/lib/engine/features\.ts$''']
+regexTarget = "secret"
+regexes = ['''^(?:price_vs_ema20|trend_slope_20|dist_from_20d_low|mlofi_pc1_variance|vol_percentile_252)$''']

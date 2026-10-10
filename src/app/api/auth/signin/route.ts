@@ -27,12 +27,17 @@ export const POST = handler(async (request: Request) => {
   const ctx = await requestContext();
   const attributable = ctx.ipAddress !== 'unattributed' && ctx.ipAddress !== 'unavailable';
   const buckets = [
+    // Without an attributable address, rotating account names must not bypass
+    // all limits before the synchronous password KDF runs.
+    ...(attributable ? [] : ['auth:signin:global']),
     `auth:signin:acct:${body.email.trim().toLowerCase()}`,
     ...(attributable ? [`auth:signin:ip:${ctx.ipAddress}`] : []),
   ];
   for (const bucket of buckets) {
     const verdict = hitRateLimit(bucket, {
-      limit: CREDENTIAL_ATTEMPTS_PER_MINUTE,
+      limit: bucket === 'auth:signin:global'
+        ? CREDENTIAL_ATTEMPTS_PER_MINUTE * 20
+        : CREDENTIAL_ATTEMPTS_PER_MINUTE,
       windowMs: CREDENTIAL_WINDOW_MS,
     });
     if (!verdict.allowed) {
