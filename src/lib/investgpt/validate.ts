@@ -514,7 +514,15 @@ export function validateSql(sql: string, options: ValidateOptions = {}): Validat
     push('error', 'NOT_A_SELECT', 'A WITH clause must terminate in a SELECT.');
   }
 
-  for (const token of code) {
+  for (const [index, token] of code.entries()) {
+    // SQLite accepts quoted function names. Inspect identifier calls as well
+    // as bare words so quoting cannot bypass the dangerous-function denylist.
+    if (
+      token.kind === 'identifier' && code[index + 1]?.raw === '(' &&
+      FORBIDDEN_FUNCTIONS.includes(token.value.toLowerCase())
+    ) {
+      push('error', 'FORBIDDEN_FUNCTION', `The function ${token.raw} is not permitted.`);
+    }
     if (token.kind !== 'word') continue;
     if (FORBIDDEN_KEYWORDS.includes(token.value)) {
       push('error', 'FORBIDDEN_KEYWORD', `The keyword ${token.value} is not permitted in a generated query.`);

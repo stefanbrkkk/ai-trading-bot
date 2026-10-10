@@ -30,3 +30,16 @@ yarn-error.log*
 # to redistribute. Nothing in src/ reads it — it was reference material for the
 # build, and it does not belong in a repository that changes hands.
 info and research files for coders/
+
+# Credentials and local request captures
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.har
+cookies.txt
+cookies*.txt
